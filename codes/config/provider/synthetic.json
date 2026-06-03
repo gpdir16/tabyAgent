@@ -1,0 +1,5 @@
+{
+    "id": "synthetic",
+    "type": "openai-compatible",
+    "baseURL": "https://api.synthetic.new/openai/v1"
+}

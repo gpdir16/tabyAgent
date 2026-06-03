@@ -1,0 +1,15 @@
+services:
+    tabyagent:
+        build: .
+        container_name: tabyagent
+        env_file:
+            - .env
+        environment:
+            TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+        # Persistent state (config, memory, MCP, cron). Defaults: codes/templates/user
+        volumes:
+            - tabyagent-user:/app/user
+        restart: unless-stopped
+
+volumes:
+    tabyagent-user:

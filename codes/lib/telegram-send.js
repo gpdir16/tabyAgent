@@ -1,0 +1,51 @@
+import fs from "node:fs";
+import path from "node:path";
+import { InputFile } from "grammy";
+import { USER_DIR } from "./paths.js";
+
+const MAX_BYTES = 50 * 1024 * 1024;
+
+function isAllowedSendPath(resolved) {
+    const userRoot = path.resolve(USER_DIR);
+    const tmpRoot = path.resolve("/tmp");
+    return resolved === userRoot || resolved.startsWith(`${userRoot}${path.sep}`) || resolved.startsWith(`${tmpRoot}${path.sep}`);
+}
+
+function isImagePath(filePath, mimeType) {
+    if (mimeType?.startsWith("image/")) return true;
+    return /\.(png|jpe?g|gif|webp)$/i.test(filePath);
+}
+
+/**
+ * Send a local file to the user's Telegram chat (photo vs document by type).
+ */
+export async function sendTelegramFile(bot, chatId, filePath, { caption = "" } = {}) {
+    if (!bot?.api) return { error: "Telegram bot is not available in this context" };
+    if (!chatId) return { error: "chatId is required" };
+
+    const resolved = path.resolve(String(filePath || "").trim());
+    if (!resolved) return { error: "path is required" };
+    if (!isAllowedSendPath(resolved)) {
+        return { error: `path must be under ${USER_DIR} or /tmp` };
+    }
+    if (!fs.existsSync(resolved)) return { error: `file not found: ${resolved}` };
+
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile()) return { error: "path is not a file" };
+    if (stat.size > MAX_BYTES) return { error: "file too large for Telegram (max 50MB)" };
+
+    const fileName = path.basename(resolved);
+    const input = new InputFile(resolved, fileName);
+    const cap =
+        String(caption || "")
+            .trim()
+            .slice(0, 1024) || undefined;
+
+    if (isImagePath(resolved)) {
+        await bot.api.sendPhoto(chatId, input, { caption: cap });
+        return { ok: true, kind: "photo", path: resolved, fileName, sizeBytes: stat.size };
+    }
+
+    await bot.api.sendDocument(chatId, input, { caption: cap });
+    return { ok: true, kind: "document", path: resolved, fileName, sizeBytes: stat.size };
+}

@@ -1,0 +1,143 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { loadMcpConfig } from "../config-loader.js";
+
+/** @type {Map<string, { client: Client, tools: object[] }>} */
+const servers = new Map();
+
+function mcpToolName(serverName, toolName) {
+    return `mcp__${serverName}__${toolName}`;
+}
+
+function parseMcpToolName(name) {
+    if (!name.startsWith("mcp__")) return null;
+    const rest = name.slice(5);
+    const sep = rest.indexOf("__");
+    if (sep < 0) return null;
+    return { serverName: rest.slice(0, sep), toolName: rest.slice(sep + 2) };
+}
+
+function mcpToolToOpenAI(serverName, tool) {
+    const schema = tool.inputSchema || { type: "object", properties: {} };
+    return {
+        type: "function",
+        function: {
+            name: mcpToolName(serverName, tool.name),
+            description: tool.description || `MCP tool ${tool.name} from ${serverName}`,
+            parameters: schema,
+        },
+    };
+}
+
+async function connectServer(server) {
+    const transport = new StdioClientTransport({
+        command: server.command,
+        args: server.args || [],
+        env: { ...process.env, ...(server.env || {}) },
+    });
+    const client = new Client({ name: "tabyagent", version: "0.1.0" }, { capabilities: {} });
+    await client.connect(transport);
+    const { tools } = await client.listTools();
+    servers.set(server.name, {
+        client,
+        tools: tools.map((t) => mcpToolToOpenAI(server.name, t)),
+    });
+    return tools.length;
+}
+
+export const mcpAdminToolDefinitions = [
+    {
+        type: "function",
+        function: {
+            name: "mcp_reload",
+            description:
+                "Reload all MCP servers from /app/user/mcp.json (disconnect and reconnect). Same effect as the user sending /reload in Telegram. Call after you edit mcp.json.",
+            parameters: { type: "object", properties: {} },
+        },
+    },
+];
+
+export async function connectMcpServers() {
+    const config = loadMcpConfig();
+    const report = { connected: [], failed: [], skipped: [] };
+
+    for (const server of config.servers || []) {
+        if (servers.has(server.name)) {
+            report.skipped.push(server.name);
+            continue;
+        }
+        try {
+            const toolCount = await connectServer(server);
+            report.connected.push({ name: server.name, tools: toolCount });
+        } catch (err) {
+            report.failed.push({ name: server.name, error: err.message || String(err) });
+        }
+    }
+
+    return report;
+}
+
+export async function reloadMcpServers() {
+    await disconnectMcpServers();
+    const config = loadMcpConfig();
+    const report = { connected: [], failed: [] };
+
+    for (const server of config.servers || []) {
+        try {
+            const toolCount = await connectServer(server);
+            report.connected.push({ name: server.name, tools: toolCount });
+        } catch (err) {
+            report.failed.push({ name: server.name, error: err.message || String(err) });
+        }
+    }
+
+    return report;
+}
+
+export function getMcpToolDefinitions() {
+    const defs = [...mcpAdminToolDefinitions];
+    for (const entry of servers.values()) {
+        defs.push(...entry.tools);
+    }
+    return defs;
+}
+
+export async function executeMcpTool(name, args) {
+    if (name === "mcp_reload") {
+        return reloadMcpServers();
+    }
+
+    const parsed = parseMcpToolName(name);
+    if (!parsed) return { error: "Invalid MCP tool name" };
+    const entry = servers.get(parsed.serverName);
+    if (!entry) {
+        return {
+            error: `MCP server not connected: ${parsed.serverName}. Edit /app/user/mcp.json then call mcp_reload or ask the user to send /reload.`,
+        };
+    }
+
+    try {
+        const result = await entry.client.callTool({
+            name: parsed.toolName,
+            arguments: args || {},
+        });
+        const text = (result.content || [])
+            .filter((c) => c.type === "text")
+            .map((c) => c.text)
+            .join("\n");
+        return { content: text || JSON.stringify(result) };
+    } catch (err) {
+        return { error: err.message || String(err) };
+    }
+}
+
+export async function disconnectMcpServers() {
+    for (const entry of servers.values()) {
+        try {
+            await entry.client.close();
+        } catch {
+            // ignore
+        }
+    }
+    servers.clear();
+}

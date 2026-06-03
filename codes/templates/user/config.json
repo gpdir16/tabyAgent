@@ -1,0 +1,5 @@
+{
+    "language": "en",
+    "telegram": { "botToken": "" },
+    "provider": { "id": "default", "apiKey": "", "model": "" }
+}

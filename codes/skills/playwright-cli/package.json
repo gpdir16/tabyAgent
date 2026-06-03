@@ -1,0 +1,16 @@
+{
+    "name": "playwright-cli",
+    "version": "1.0.0",
+    "description": "Playwright automation for tabyAgent (terminal_run)",
+    "main": "run.js",
+    "scripts": {
+        "setup": "npm install"
+    },
+    "dependencies": {
+        "playwright": "^1.57.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "license": "MIT"
+}
