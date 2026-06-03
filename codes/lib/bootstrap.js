@@ -1,8 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { USER_DIR, DOWNLOAD_DIR, TEMPLATES_USER_DIR, AGENTS_SKILLS_LINK } from "./paths.js";
-import { migrateLegacyProfileJson, ensureOnboardingMarker } from "./profile.js";
-
 function copyDirRecursive(src, dest) {
     fs.mkdirSync(dest, { recursive: true });
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -66,8 +64,6 @@ export function ensureUserDir() {
     fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
     seedUserFromTemplates();
-    migrateLegacyProfileJson();
-    ensureOnboardingMarker();
 
     const mcpPath = path.join(USER_DIR, "mcp.json");
     if (!fs.existsSync(mcpPath)) {

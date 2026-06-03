@@ -6,8 +6,8 @@ import { CODES_DIR } from "../paths.js";
 import { readMemoryFile } from "../tools/memory.js";
 import { loadAgentConfig } from "../config-loader.js";
 import { loadUserConfig } from "../config-loader.js";
-import { getProfileContextBlock } from "../profile.js";
 import { buildUserMessageContent, estimateContentTokens } from "../llm/vision.js";
+import { buildDateTimePromptVars, renderSystemPrompt } from "./system-prompt.js";
 
 const SYSTEM_PATH = path.join(CODES_DIR, "lib", "prompts", "system.txt");
 
@@ -47,25 +47,33 @@ export function countMessagesTokens(messages, model) {
     return total;
 }
 
-function loadSystemPrompt() {
+function loadSystemPromptTemplate() {
     return fs.readFileSync(SYSTEM_PATH, "utf8");
+}
+
+function loadMemoryForPrompt({ truncateMemory = false, maxMemoryChars = 120000 } = {}) {
+    let memory = readMemoryFile();
+    if (truncateMemory && memory.length > maxMemoryChars) {
+        memory = `${memory.slice(0, maxMemoryChars)}\n\n...[memory truncated]...`;
+    }
+    return memory;
+}
+
+/** Assemble final system message from system.txt placeholders + runtime values. */
+export function buildSystemMessageContent(lang, { truncateMemory = false, maxMemoryChars = 120000 } = {}) {
+    const template = loadSystemPromptTemplate();
+    return renderSystemPrompt(template, {
+        ...buildDateTimePromptVars(lang),
+        MEMORY: loadMemoryForPrompt({ truncateMemory, maxMemoryChars }),
+    });
 }
 
 export function buildInitialMessages(
     userMessage,
     { truncateMemory = false, maxMemoryChars = 120000, history = [], compressedSummary = null, visionAttachment = null, modelMeta = null } = {},
 ) {
-    const system = loadSystemPrompt();
-    let memory = readMemoryFile();
-    if (truncateMemory && memory.length > maxMemoryChars) {
-        memory = `${memory.slice(0, maxMemoryChars)}\n\n...[memory truncated]...`;
-    }
-
     const lang = loadUserConfig().language || "en";
-    const profileBlock = getProfileContextBlock(lang);
-    const systemContent = profileBlock
-        ? `${system}\n\n---\n\n${profileBlock}\n\n---\n\n## Current memory.md\n\n${memory}`
-        : `${system}\n\n---\n\n## Current memory.md\n\n${memory}`;
+    const systemContent = buildSystemMessageContent(lang, { truncateMemory, maxMemoryChars });
 
     const messages = [{ role: "system", content: systemContent }];
 

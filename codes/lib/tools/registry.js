@@ -2,7 +2,6 @@ import { memoryToolDefinitions, executeMemoryTool } from "./memory.js";
 import { configToolDefinitions, executeConfigTool } from "./config-tool.js";
 import { skillsToolDefinitions, executeSkillsTool } from "./skills.js";
 import { terminalToolDefinitions, executeTerminalTool } from "./terminal.js";
-import { profileToolDefinitions, executeProfileTool } from "./profile-tool.js";
 import { cronToolDefinitions, executeCronTool } from "./cron-tool.js";
 import { sendFileToolDefinitions, executeSendFileTool } from "./send-file-tool.js";
 import { getMcpToolDefinitions, executeMcpTool, connectMcpServers, disconnectMcpServers } from "./mcp-bridge.js";
@@ -21,7 +20,6 @@ export async function shutdownTools() {
 export function getAllToolDefinitions() {
     return [
         ...memoryToolDefinitions,
-        ...profileToolDefinitions,
         ...configToolDefinitions,
         ...skillsToolDefinitions,
         ...cronToolDefinitions,
@@ -33,7 +31,6 @@ export function getAllToolDefinitions() {
 
 export async function executeTool(name, args, ctx = {}) {
     if (name.startsWith("memory_")) return executeMemoryTool(name, args);
-    if (name === "profile_complete") return executeProfileTool(name, args);
     if (name === "config_set") return executeConfigTool(name, args);
     if (name.startsWith("skills_")) return executeSkillsTool(name, args);
     if (name.startsWith("cron_")) return executeCronTool(name, args);
