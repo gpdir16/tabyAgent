@@ -6,6 +6,7 @@
  *   {{UTC_DATETIME}}   — current UTC time
  *   {{ISO_UTC}}        — ISO 8601 UTC timestamp
  *   {{TIMEZONE}}       — active time zone name
+ *   {{SKILLS_LIST}}    — built-in + user skill names and summaries
  *   {{MEMORY}}         — memory.md contents (may be truncated)
  */
 

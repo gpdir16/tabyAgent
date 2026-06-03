@@ -42,7 +42,7 @@ One line: when to use this skill.
 ## Rules
 
 - Store skills under `/app/user/skills` (not under `/app/codes/skills` — that tree is shipped with the image).
-- After create/update, call `skills_list` to verify.
+- After create/update, the skill appears in the system prompt skill list on the next turn; use `skills_read` to verify content.
 - Keep skills short and actionable; system prompt stays minimal — **details live in the skill**.
 - Prefer updating an existing skill over duplicating a new one.
 
