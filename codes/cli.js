@@ -1,6 +1,9 @@
 #!/usr/bin/env node
+import { Bot } from "grammy";
 import { ensureUserDir } from "./lib/bootstrap.js";
 import { approveCode } from "./lib/auth.js";
+import { notifyOwnerTransfer } from "./lib/auth-access.js";
+import { loadUserConfig } from "./lib/config-loader.js";
 
 ensureUserDir();
 
@@ -14,6 +17,15 @@ if (command === "approve" && arg) {
         process.exit(1);
     }
     console.log(`Approved: ${result.chatId}`);
+    const token = loadUserConfig().telegram?.botToken?.trim();
+    if (token) {
+        const bot = new Bot(token);
+        await notifyOwnerTransfer(bot, {
+            previousOwner: result.previousOwner,
+            newChatId: result.chatId,
+            approvedByChatId: null,
+        });
+    }
     process.exit(0);
 }
 

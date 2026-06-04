@@ -1,6 +1,6 @@
 import { Bot } from "grammy";
 import { loadUserConfig, loadAgentConfig } from "./config-loader.js";
-import { isApproved, approveChatId } from "./auth.js";
+import { requireApprovedAccess, runOwnerApprove } from "./auth-access.js";
 import { runAgent } from "./agent/loop.js";
 import { appendChatTurn } from "./agent/chat-history.js";
 import { TelegramDraftStream } from "./telegram-draft.js";
@@ -130,8 +130,8 @@ export async function startTelegramBot() {
             await openConfigWizard(ctx, bot);
             return;
         }
-        if (!isApproved(chatId)) {
-            approveChatId(chatId);
+        if (!(await requireApprovedAccess(ctx, { claimFirst: true }))) {
+            return;
         }
         const lang = loadUserConfig().language || "en";
         const base =
@@ -151,6 +151,10 @@ export async function startTelegramBot() {
             return;
         }
 
+        if (!(await requireApprovedAccess(ctx))) {
+            return;
+        }
+
         try {
             const report = await runReload();
             await sendTelegramReply(bot, String(ctx.chat.id), formatReloadReport(report, lang), null);
@@ -161,7 +165,33 @@ export async function startTelegramBot() {
     });
 
     bot.command("config", async (ctx) => {
+        if (isConfigReady() && !(await requireApprovedAccess(ctx))) {
+            return;
+        }
         await openConfigWizard(ctx, bot);
+    });
+
+    bot.command("approve", async (ctx) => {
+        const chatId = String(ctx.chat.id);
+        const lang = loadUserConfig().language || "en";
+        const code = (ctx.match || "").trim();
+
+        if (!isConfigReady()) {
+            await ctx.reply(t("auth_denied_command", lang));
+            return;
+        }
+
+        if (!(await requireApprovedAccess(ctx))) {
+            return;
+        }
+
+        if (!code) {
+            await ctx.reply(t("auth_approve_usage", lang));
+            return;
+        }
+
+        const result = await runOwnerApprove(bot, chatId, code);
+        await ctx.reply(result.message);
     });
 
     bot.callbackQuery(/^cfg:/, async (ctx) => {
@@ -175,11 +205,11 @@ export async function startTelegramBot() {
             return;
         }
 
-        if (!isApproved(chatId)) {
-            approveChatId(chatId);
-        }
-
         const lang = loadUserConfig().language || "en";
+
+        if (!(await requireApprovedAccess(ctx, { claimFirst: true }))) {
+            return;
+        }
 
         try {
             await scheduleWork("user", async () => {
@@ -211,11 +241,11 @@ export async function startTelegramBot() {
             return;
         }
 
-        if (!isApproved(chatId)) {
-            approveChatId(chatId);
-        }
-
         const lang = loadUserConfig().language || "en";
+
+        if (!(await requireApprovedAccess(ctx, { claimFirst: true }))) {
+            return;
+        }
 
         try {
             await scheduleWork("user", async () => {

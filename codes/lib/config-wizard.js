@@ -3,7 +3,8 @@ import path from "node:path";
 import { InlineKeyboard } from "grammy";
 import { USER_DIR } from "./paths.js";
 import { loadUserConfig, saveUserConfig } from "./config-loader.js";
-import { approveChatId } from "./auth.js";
+import { claimOwnerIfNone, hasOwner, isApproved, issuePendingCode } from "./auth.js";
+import { t } from "./i18n.js";
 import { fetchProviderModels, providerFromWizardState, partitionModelsForPicker, buildVendorPickerItems, MODELS_PER_PAGE } from "./llm/models.js";
 
 const STATE_PATH = path.join(USER_DIR, "temp", "onboarding.json");
@@ -353,6 +354,15 @@ export async function openConfigWizard(ctx, bot) {
 }
 
 async function finishWizard(bot, chatId, state, { userMessageId } = {}) {
+    if (hasOwner() && !isApproved(chatId)) {
+        const lang = state.data.language || "en";
+        await clearActivePrompt(bot, chatId, state);
+        await deleteMessageSafe(bot, chatId, userMessageId);
+        clearState();
+        await bot.api.sendMessage(chatId, t("auth_denied_command", lang));
+        return;
+    }
+
     applyConfig({
         language: state.data.language,
         providerId: state.data.providerId,
@@ -366,7 +376,9 @@ async function finishWizard(bot, chatId, state, { userMessageId } = {}) {
     await clearActivePrompt(bot, chatId, state);
     await deleteMessageSafe(bot, chatId, userMessageId);
     clearState();
-    approveChatId(chatId);
+    if (!isApproved(chatId)) {
+        claimOwnerIfNone(chatId);
+    }
     await bot.api.sendMessage(chatId, doneText);
 }
 
@@ -584,6 +596,12 @@ export async function handleConfigWizardText(ctx, bot) {
 
     if (!state) {
         if (!isConfigReady()) {
+            if (hasOwner() && !isApproved(chatId)) {
+                const lang = loadUserConfig().language || "en";
+                const { code, minutes } = issuePendingCode(chatId);
+                await ctx.reply(t("auth_pending", lang, { code, minutes }));
+                return;
+            }
             state = emptyState(chatId);
             saveState(state);
             await replaceStep(bot, chatId, state, texts("en").welcome, languageKeyboard("en"));

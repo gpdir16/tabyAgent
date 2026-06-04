@@ -1,4 +1,4 @@
 {
-    "approved": { "chatIds": [] },
+    "approved": { "chatId": null },
     "pending": {}
 }

@@ -1,8 +1,48 @@
 const MESSAGES = {
     auth_pending: {
-        en: "Access not approved. On the server run:\n\ndocker compose exec tabyagent approve {code}\n\nCode expires in {minutes} minutes.",
-        ko: "승인되지 않았습니다. 서버에서 실행하세요:\n\ndocker compose exec tabyagent approve {code}\n\n코드는 {minutes}분 후 만료됩니다.",
-        ja: "未承認です。サーバーで実行してください:\n\ndocker compose exec tabyagent approve {code}\n\nコードは{minutes}分で期限切れになります。",
+        en: "Access not approved.\n\nOn the server:\ndocker compose exec tabyagent approve {code}\n\nOr ask the approved user to send in Telegram:\n/approve {code}\n\nCode expires in {minutes} minutes.",
+        ko: "접근이 승인되지 않았습니다.\n\n서버에서:\ndocker compose exec tabyagent approve {code}\n\n또는 승인된 사용자에게 Telegram에서 다음을 보내달라고 요청하세요:\n/approve {code}\n\n코드는 {minutes}분 후 만료됩니다.",
+        ja: "未承認です。\n\nサーバーで:\ndocker compose exec tabyagent approve {code}\n\nまたは承認済みユーザーに Telegram で次を送ってもらってください:\n/approve {code}\n\nコードは{minutes}分で期限切れになります。",
+    },
+    auth_denied_command: {
+        en: "This command requires an approved account. Send any message to get an approval code, or ask the owner to approve you.",
+        ko: "이 명령은 승인된 계정만 사용할 수 있습니다. 아무 메시지를 내면 승인 코드를 받을 수 있고, 소유자에게 승인을 요청할 수도 있습니다.",
+        ja: "このコマンドは承認済みアカウントのみ使用できます。メッセージを送ると承認コードが届きます。オーナーに承認を依頼することもできます。",
+    },
+    auth_owner_only: {
+        en: "Only the approved account can run /approve.",
+        ko: "승인된 계정만 /approve 명령을 실행할 수 있습니다.",
+        ja: "承認済みアカウントのみ /approve を実行できます。",
+    },
+    auth_approve_fail: {
+        en: "Invalid or expired approval code.",
+        ko: "승인 코드가 잘못되었거나 만료되었습니다.",
+        ja: "承認コードが無効か期限切れです。",
+    },
+    auth_approve_ok: {
+        en: "Approved chat {chatId}. The previous user was disconnected.",
+        ko: "채팅 {chatId}을(를) 승인했습니다. 이전 사용자 연결은 끊어졌습니다.",
+        ja: "チャット {chatId} を承認しました。以前のユーザーは切断されました。",
+    },
+    auth_approve_self: {
+        en: "You are already the approved user.",
+        ko: "이미 승인된 사용자입니다.",
+        ja: "すでに承認済みユーザーです。",
+    },
+    auth_disconnected: {
+        en: "Your access was revoked because another user was approved. This bot allows only one user at a time.",
+        ko: "다른 사용자가 승인되어 연결이 끊어졌습니다. 이 봇은 한 번에 한 명만 사용할 수 있습니다.",
+        ja: "別のユーザーが承認されたため、接続が切断されました。このボットは同時に1人のみ利用できます。",
+    },
+    auth_granted: {
+        en: "You are now the approved user. You can send messages to the bot.",
+        ko: "승인되었습니다. 이제 봇에 메시지를 보낼 수 있습니다.",
+        ja: "承認されました。ボットにメッセージを送れます。",
+    },
+    auth_approve_usage: {
+        en: "Usage: /approve <6-digit code>",
+        ko: "사용법: /approve <6자리 코드>",
+        ja: "使い方: /approve <6桁コード>",
     },
     auth_expired: {
         en: "Your approval code expired. Send any message to receive a new code.",

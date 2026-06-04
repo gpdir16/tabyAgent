@@ -6,9 +6,13 @@ import { loadAgentConfig } from "./config-loader.js";
 
 const APPROVED_PATH = path.join(USER_DIR, "approved.json");
 
+function emptyApprovedFile() {
+    return { approved: { chatId: null }, pending: {} };
+}
+
 function readApprovedFile() {
     if (!fs.existsSync(APPROVED_PATH)) {
-        return { approved: { chatIds: [] }, pending: {} };
+        return emptyApprovedFile();
     }
     return JSON.parse(fs.readFileSync(APPROVED_PATH, "utf8"));
 }
@@ -28,14 +32,57 @@ function pruneExpired(data) {
     return data;
 }
 
-export function isApproved(chatId) {
+function loadApprovedState() {
     const data = pruneExpired(readApprovedFile());
     writeApprovedFile(data);
-    return data.approved?.chatIds?.includes(String(chatId)) ?? false;
+    return data;
+}
+
+export function getOwnerChatId() {
+    const chatId = loadApprovedState().approved?.chatId;
+    return chatId ? String(chatId) : null;
+}
+
+export function hasOwner() {
+    return getOwnerChatId() !== null;
+}
+
+export function isApproved(chatId) {
+    const owner = getOwnerChatId();
+    return owner !== null && owner === String(chatId);
+}
+
+/** First contact only: becomes the sole owner when none exists yet. */
+export function claimOwnerIfNone(chatId) {
+    const data = loadApprovedState();
+    const id = String(chatId);
+    const existing = data.approved?.chatId;
+
+    if (existing) {
+        if (String(existing) === id) {
+            return { ok: true, chatId: id, alreadyOwner: true };
+        }
+        return { ok: false, reason: "owner_exists", ownerChatId: String(existing) };
+    }
+
+    data.approved = { chatId: id };
+    writeApprovedFile(data);
+    return { ok: true, chatId: id, alreadyOwner: false };
+}
+
+/** Replace the sole owner (CLI or /approve). Returns the previous owner chat id if replaced. */
+export function setOwner(chatId) {
+    const data = loadApprovedState();
+    const id = String(chatId);
+    const previous = data.approved?.chatId;
+    const previousOwner = previous && String(previous) !== id ? String(previous) : null;
+    data.approved = { chatId: id };
+    writeApprovedFile(data);
+    return { ok: true, chatId: id, previousOwner };
 }
 
 export function issuePendingCode(chatId) {
-    const data = pruneExpired(readApprovedFile());
+    const data = loadApprovedState();
     const agent = loadAgentConfig();
     const ttlMin = agent.authCodeTtlMinutes ?? 15;
 
@@ -53,33 +100,29 @@ export function issuePendingCode(chatId) {
     return { code, expiresAt, minutes: ttlMin };
 }
 
-export function approveChatId(chatId) {
-    const data = pruneExpired(readApprovedFile());
-    data.approved = data.approved || { chatIds: [] };
-    const id = String(chatId);
-    if (!data.approved.chatIds.includes(id)) {
-        data.approved.chatIds.push(id);
-    }
-    writeApprovedFile(data);
-    return { ok: true, chatId: id };
-}
-
 export function approveCode(code) {
-    const data = pruneExpired(readApprovedFile());
-    const entry = data.pending?.[code];
+    const normalized = String(code || "").trim();
+    const data = loadApprovedState();
+    const entry = data.pending?.[normalized];
     if (!entry) return { ok: false, reason: "invalid_or_expired" };
     if (new Date(entry.expiresAt).getTime() < Date.now()) {
-        delete data.pending[code];
+        delete data.pending[normalized];
         writeApprovedFile(data);
         return { ok: false, reason: "invalid_or_expired" };
     }
 
-    data.approved = data.approved || { chatIds: [] };
     const chatId = String(entry.chatId);
-    if (!data.approved.chatIds.includes(chatId)) {
-        data.approved.chatIds.push(chatId);
-    }
-    delete data.pending[code];
+    delete data.pending[normalized];
     writeApprovedFile(data);
-    return { ok: true, chatId };
+
+    const { previousOwner } = setOwner(chatId);
+    return { ok: true, chatId, previousOwner };
+}
+
+/** @deprecated Use claimOwnerIfNone or setOwner */
+export function approveChatId(chatId) {
+    if (!hasOwner()) {
+        return claimOwnerIfNone(chatId);
+    }
+    return setOwner(chatId);
 }
