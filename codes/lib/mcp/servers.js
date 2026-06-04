@@ -45,27 +45,11 @@ async function connectServer(server) {
     return tools.length;
 }
 
-export const mcpAdminToolDefinitions = [
-    {
-        type: "function",
-        function: {
-            name: "mcp_reload",
-            description:
-                "Reload all MCP servers from /app/user/mcp.json (disconnect and reconnect). Same effect as the user sending /reload in Telegram. Call after you edit mcp.json.",
-            parameters: { type: "object", properties: {} },
-        },
-    },
-];
-
 export async function connectMcpServers() {
     const config = loadMcpConfig();
-    const report = { connected: [], failed: [], skipped: [] };
+    const report = { connected: [], failed: [] };
 
     for (const server of config.servers || []) {
-        if (servers.has(server.name)) {
-            report.skipped.push(server.name);
-            continue;
-        }
         try {
             const toolCount = await connectServer(server);
             report.connected.push({ name: server.name, tools: toolCount });
@@ -94,19 +78,15 @@ export async function reloadMcpServers() {
     return report;
 }
 
-export function getMcpToolDefinitions() {
-    const defs = [...mcpAdminToolDefinitions];
+export function getDynamicMcpToolDefinitions() {
+    const defs = [];
     for (const entry of servers.values()) {
         defs.push(...entry.tools);
     }
     return defs;
 }
 
-export async function executeMcpTool(name, args) {
-    if (name === "mcp_reload") {
-        return reloadMcpServers();
-    }
-
+export async function invokeMcpTool(name, args) {
     const parsed = parseMcpToolName(name);
     if (!parsed) return { error: "Invalid MCP tool name" };
     const entry = servers.get(parsed.serverName);

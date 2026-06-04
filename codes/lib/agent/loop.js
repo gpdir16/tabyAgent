@@ -1,7 +1,7 @@
 import { loadAgentConfig } from "../config-loader.js";
 import { createLlmClient } from "../llm/client.js";
 import { assistantMessageToPlain } from "../llm/messages.js";
-import { executeTool, getAllToolDefinitions, toolResultContent } from "../tools/registry.js";
+import { executeTool, getAllToolDefinitions, toolResultContent } from "./tool-registry.js";
 import { ensureWithinContextLimit } from "./summarize.js";
 import { countMessagesTokens } from "./context.js";
 
@@ -52,6 +52,7 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
     let toolCallCount = 0;
     let modelCallCount = 0;
     const toolSigCounts = new Map();
+    const fileSnapshots = new Map();
     let forceReplyNext = false;
 
     for (let round = 0; round < maxRounds; round++) {
@@ -123,7 +124,14 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
                 continue;
             }
 
-            const result = await executeTool(tc.function.name, args, { chatId, bot });
+            const result = await executeTool(tc.function.name, args, {
+                chatId,
+                bot,
+                messages,
+                model: llm.provider.model,
+                modelMeta: llm.modelMeta,
+                fileSnapshots,
+            });
             messages.push({
                 role: "tool",
                 tool_call_id: tc.id,

@@ -1,5 +1,5 @@
 import { ensureUserDir } from "./lib/bootstrap.js";
-import { initTools, shutdownTools } from "./lib/tools/registry.js";
+import { initTools, shutdownTools } from "./lib/agent/tool-registry.js";
 import { startTelegramBot } from "./lib/telegram.js";
 import { bootstrapBotTokenFromEnv, hasBotToken } from "./lib/readiness.js";
 

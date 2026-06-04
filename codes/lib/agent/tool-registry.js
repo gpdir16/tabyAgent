@@ -1,10 +1,11 @@
-import { memoryToolDefinitions, executeMemoryTool } from "./memory.js";
-import { configToolDefinitions, executeConfigTool } from "./config-tool.js";
-import { skillsToolDefinitions, executeSkillsTool } from "./skills.js";
-import { terminalToolDefinitions, executeTerminalTool } from "./terminal.js";
-import { cronToolDefinitions, executeCronTool } from "./cron-tool.js";
-import { sendFileToolDefinitions, executeSendFileTool } from "./send-file-tool.js";
-import { getMcpToolDefinitions, executeMcpTool, connectMcpServers, disconnectMcpServers } from "./mcp-bridge.js";
+import { fileToolDefinitions, executeFileRead, executeFilePatch } from "../tools/file.js";
+import { configToolDefinitions, executeConfigTool } from "../tools/config-tool.js";
+import { skillsToolDefinitions, executeSkillsTool } from "../tools/skills.js";
+import { terminalToolDefinitions, executeTerminalTool } from "../tools/terminal.js";
+import { cronToolDefinitions, executeCronTool } from "../tools/cron-tool.js";
+import { sendFileToolDefinitions, executeSendFileTool } from "../tools/send-file-tool.js";
+import { getMcpToolDefinitions, executeMcpTool } from "../tools/mcp.js";
+import { connectMcpServers, disconnectMcpServers } from "../mcp/servers.js";
 import { stopCronScheduler } from "../cron/scheduler.js";
 import { sanitizeTextForLlm } from "../llm/sanitize-messages.js";
 
@@ -19,7 +20,7 @@ export async function shutdownTools() {
 
 export function getAllToolDefinitions() {
     return [
-        ...memoryToolDefinitions,
+        ...fileToolDefinitions,
         ...configToolDefinitions,
         ...skillsToolDefinitions,
         ...cronToolDefinitions,
@@ -30,7 +31,8 @@ export function getAllToolDefinitions() {
 }
 
 export async function executeTool(name, args, ctx = {}) {
-    if (name.startsWith("memory_")) return executeMemoryTool(name, args);
+    if (name === "file_read") return executeFileRead(args, ctx);
+    if (name === "file_patch") return executeFilePatch(args, ctx);
     if (name === "config_set") return executeConfigTool(name, args);
     if (name.startsWith("skills_")) return executeSkillsTool(name, args);
     if (name.startsWith("cron_")) return executeCronTool(name, args);

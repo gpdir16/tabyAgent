@@ -1,4 +1,4 @@
-import { reloadMcpServers } from "./tools/mcp-bridge.js";
+import { reloadMcpServers } from "./mcp/servers.js";
 
 export function formatReloadReport(report, lang = "en") {
     const connected = report?.connected || [];

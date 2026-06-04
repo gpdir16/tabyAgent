@@ -9,11 +9,6 @@ const MESSAGES = {
         ko: "이 명령은 승인된 계정만 사용할 수 있습니다. 아무 메시지를 내면 승인 코드를 받을 수 있고, 소유자에게 승인을 요청할 수도 있습니다.",
         ja: "このコマンドは承認済みアカウントのみ使用できます。メッセージを送ると承認コードが届きます。オーナーに承認を依頼することもできます。",
     },
-    auth_owner_only: {
-        en: "Only the approved account can run /approve.",
-        ko: "승인된 계정만 /approve 명령을 실행할 수 있습니다.",
-        ja: "承認済みアカウントのみ /approve を実行できます。",
-    },
     auth_approve_fail: {
         en: "Invalid or expired approval code.",
         ko: "승인 코드가 잘못되었거나 만료되었습니다.",
@@ -44,11 +39,6 @@ const MESSAGES = {
         ko: "사용법: /approve <6자리 코드>",
         ja: "使い方: /approve <6桁コード>",
     },
-    auth_expired: {
-        en: "Your approval code expired. Send any message to receive a new code.",
-        ko: "인증 코드가 만료되었습니다. 메시지를내면 새 코드를 받습니다.",
-        ja: "認証コードの期限が切れました。メッセージを送ると新しいコードが届きます。",
-    },
     tool_rounds_exceeded: {
         en: "I hit the tool call limit for this message. Please try again or simplify the request.",
         ko: "이 메시지의 도구 호출 한도에 도달했습니다. 다시 시도하거나 요청을 단순화해 주세요.",
@@ -58,11 +48,6 @@ const MESSAGES = {
         en: "Something went wrong while processing your message.",
         ko: "메시지 처리 중 오류가 발생했습니다.",
         ja: "メッセージの処理中にエラーが発生しました。",
-    },
-    missing_bot_token: {
-        en: "telegram.botToken is not set in /app/user/config.json",
-        ko: "telegram.botToken이 /app/user/config.json에 설정되지 않았습니다.",
-        ja: "telegram.botToken が /app/user/config.json に設定されていません。",
     },
     status_generating: {
         en: "Generating response",

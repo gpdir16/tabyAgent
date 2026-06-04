@@ -3,7 +3,7 @@ import path from "node:path";
 import { getEncoding } from "js-tiktoken";
 import { sanitizeTextForLlm } from "../llm/sanitize-messages.js";
 import { CODES_DIR } from "../paths.js";
-import { readMemoryFile } from "../tools/memory.js";
+import { readMemoryFile } from "../memory-file.js";
 import { loadAgentConfig } from "../config-loader.js";
 import { loadUserConfig } from "../config-loader.js";
 import { buildUserMessageContent, estimateContentTokens } from "../llm/vision.js";
