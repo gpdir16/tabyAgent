@@ -22,33 +22,40 @@ Runs autonomously inside Docker and chats with you through Telegram.
 2. Send `/newbot` and follow the prompts.
 3. Copy the bot token you receive.
 
-### 2. Run with Docker
+### 2. Install (Linux / macOS)
+
+Paste this one line into your terminal and press Enter. The installer will ask you to **paste the full token from BotFather**.
+
+When the installer asks you to install Docker, press y to install it. tabyAgent requires Docker to run. Automatic installation is supported on macOS and Linux only.
 
 ```bash
-# Clone the repository
-git clone https://github.com/gpdir16/tabyAgent.git
-cd tabyAgent
-
-# Create .env file
-cp .env.example .env
-# Edit .env and paste your bot token:
-# TELEGRAM_BOT_TOKEN=your_bot_token_here
-
-# Start the container
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh | bash
 ```
+
+When it finishes, open your bot in Telegram and send `/start`. To upgrade later, run the **same command again** — your settings and memory are kept.
 
 ### 3. Configure in Telegram
 
 1. Open your bot in Telegram and send `/start`. The first person to send a message is automatically approved.
-2. The setup wizard will guide you through:
-    - Choosing a language (English, Korean, Japanese)
-    - Picking an LLM provider
-    - Entering your API key
-    - Selecting a model
+2. The setup wizard will guide you through language, LLM provider, API key, and model.
 3. Once done, you can start chatting.
 
 Send `/config` anytime to change your settings.
+
+## Run from source (Docker Compose)
+
+```bash
+git clone https://github.com/gpdir16/tabyAgent.git
+cd tabyAgent
+cp .env.example .env   # set TELEGRAM_BOT_TOKEN
+docker compose up -d
+```
+
+Rebuild the image after pulling code changes:
+
+```bash
+docker compose up -d --build
+```
 
 ## Bot commands
 

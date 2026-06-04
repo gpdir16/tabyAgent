@@ -22,33 +22,40 @@ Docker 안에서 자율적으로 작동하며, Telegram으로 대화할 수 있�
 2. `/newbot`을 보내고 안내에 따라 진행하세요.
 3. 받은 봇 토큰을 복사해두세요.
 
-### 2. Docker로 실행
+### 2. 설치 (Linux / macOS)
+
+터미널에 아래 한 줄을 붙여넣고 Enter를 누르세요. 설치가 진행된 후 1단계에서 복사한 **BotFather가 보내준 토큰**을 붙여넣으라고 안내가 나옵니다.
+
+설치 중에 Docker를 설치하라는 안내가 나오면 y를 눌러 설치하세요. tabyAgent가 작동하려면 Docker가 필요합니다. 자동 설치는 macOS와 Linux에서만 지원됩니다.
 
 ```bash
-# 저장소 클론
-git clone https://github.com/gpdir16/tabyAgent.git
-cd tabyAgent
-
-# .env 파일 생성
-cp .env.example .env
-# .env 파일을 열어 봇 토큰을 붙여넣으세요:
-# TELEGRAM_BOT_TOKEN=your_bot_token_here
-
-# 컨테이너 시작
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh | bash
 ```
+
+설치가 끝나면 Telegram에서 봇에게 `/start`를 보내면 됩니다. 나중에 tabyAgent를 업데이트하려면 **같은 명령을 다시** 실행하세요. 설정과 메모리는 지워지지 않습니다.
 
 ### 3. Telegram에서 설정
 
 1. Telegram에서 만든 봇을 열고 `/start`를 보내세요. 처음 메시지를 보낸 사람은 자동으로 승인됩니다.
-2. 설정 마법사가 다음을 안내합니다:
-    - 언어 선택 (한국어, 영어, 일본어)
-    - LLM 제공자 선택
-    - API 키 입력
-    - 모델 선택
+2. 설정 마법사가 언어, LLM 제공자, API 키, 모델을 안내합니다.
 3. 설정이 끝나면 바로 대화를 시작할 수 있습니다.
 
 언제든 `/config`를 보내 설정을 변경할 수 있습니다.
+
+## 소스에서 실행 (Docker Compose)
+
+```bash
+git clone https://github.com/gpdir16/tabyAgent.git
+cd tabyAgent
+cp .env.example .env   # TELEGRAM_BOT_TOKEN 설정
+docker compose up -d
+```
+
+코드를 받은 뒤 이미지를 다시 빌드할 때:
+
+```bash
+docker compose up -d --build
+```
 
 ## 봇 명령어
 

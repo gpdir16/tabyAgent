@@ -1,0 +1,15 @@
+# Used by scripts/install.sh (GHCR image). For local dev, use docker-compose.yml.
+services:
+    tabyagent:
+        image: ghcr.io/gpdir16/tabyagent:latest
+        container_name: tabyagent
+        env_file:
+            - .env
+        environment:
+            TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+        volumes:
+            - tabyagent-user:/app/user
+        restart: unless-stopped
+
+volumes:
+    tabyagent-user:
