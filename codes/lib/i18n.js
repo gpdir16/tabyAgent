@@ -79,6 +79,21 @@ const MESSAGES = {
         ko: "오류",
         ja: "エラー",
     },
+    new_chat_ok: {
+        en: "Started a new chat.",
+        ko: "새 대화를 시작했습니다.",
+        ja: "新しい会話を開始しました。",
+    },
+    new_chat_ok_flushed: {
+        en: "Started a new chat.",
+        ko: "새 대화를 시작했습니다.",
+        ja: "新しい会話を開始しました。",
+    },
+    new_chat_memory_error: {
+        en: "Failed to update long-term memory. But a new chat has started successfully.",
+        ko: "장기 기억 업데이트를 실패했습니다. 하지만 새 대화는 성공적으로 시작했습니다.",
+        ja: "長期記憶の更新に失敗しました。ただし、新しい会話は正常に開始しました。",
+    },
 };
 
 export function statusText(phase, lang = "en") {

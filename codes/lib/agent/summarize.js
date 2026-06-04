@@ -6,7 +6,7 @@ import {
     getContextLimit,
     getKeepRecentTokenBudget,
 } from "./context.js";
-import { loadChatHistory } from "./chat-history.js";
+import { loadChatHistory, turnToMessages } from "./chat-history.js";
 
 const COMPRESS_SYSTEM = `You compress chat transcripts for context storage. Rules:
 - Preserve facts, numbers, command outputs, decisions, errors, filenames, and what the user wanted.
@@ -22,11 +22,41 @@ function tokenCount(messages, model) {
     return countMessagesTokens(messages, model);
 }
 
+function contentToText(content) {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+        return content
+            .map((part) => {
+                if (part?.type === "text") return part.text || "";
+                if (part?.type === "image_url") return "[image]";
+                return `[${part?.type || "part"}]`;
+            })
+            .join(" ");
+    }
+    return content == null ? "" : String(content);
+}
+
+function messageToTranscriptLine(message) {
+    if (message.role === "user") return `User: ${contentToText(message.content)}`;
+    if (message.role === "assistant") {
+        const parts = [`Assistant: ${contentToText(message.content)}`];
+        if (message.tool_calls?.length) {
+            parts.push(`Tool calls: ${JSON.stringify(message.tool_calls)}`);
+        }
+        return parts.join("\n");
+    }
+    if (message.role === "tool") {
+        return `Tool (${message.tool_call_id}): ${contentToText(message.content)}`;
+    }
+    return "";
+}
+
+function turnToTranscript(turn) {
+    return turnToMessages(turn).map(messageToTranscriptLine).filter(Boolean).join("\n\n");
+}
+
 function turnTokens(turn, model) {
-    let n = 0;
-    if (turn.user) n += countTokens(turn.user, model);
-    if (turn.assistant) n += countTokens(turn.assistant, model);
-    return n;
+    return countMessagesTokens(turnToMessages(turn), model);
 }
 
 function itemTokens(item, model) {
@@ -66,8 +96,7 @@ function oldItemsToTranscript(oldItems) {
         if (item.kind === "user") {
             lines.push(`User: ${item.text}`);
         } else {
-            if (item.turn.user) lines.push(`User: ${item.turn.user}`);
-            if (item.turn.assistant) lines.push(`Assistant: ${item.turn.assistant}`);
+            lines.push(turnToTranscript(item.turn));
         }
     }
     return lines.join("\n\n");

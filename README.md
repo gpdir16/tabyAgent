@@ -52,12 +52,13 @@ Send `/config` anytime to change your settings.
 
 ## Bot commands
 
-| Command           | Description                                                 |
-| ----------------- | ----------------------------------------------------------- |
-| `/start`          | Start the bot or open the setup wizard on first run         |
-| `/config`         | Open the configuration wizard                               |
-| `/reload`         | Reload MCP tools (skills do not need reload)                |
-| `/approve <code>` | Approved user grants access (disconnects the previous user) |
+| Command           | Description                                                  |
+| ----------------- | ------------------------------------------------------------ |
+| `/start`          | Start the bot or open the setup wizard on first run          |
+| `/config`         | Open the configuration wizard                                |
+| `/new`            | Start a new chat (5+ turns: save summary to memory.md first) |
+| `/reload`         | Reload MCP tools (skills do not need reload)                 |
+| `/approve <code>` | Approved user grants access (disconnects the previous user)  |
 
 ## Requirements
 

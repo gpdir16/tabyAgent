@@ -3,6 +3,7 @@ import { loadUserConfig, loadAgentConfig } from "./config-loader.js";
 import { requireApprovedAccess, runOwnerApprove } from "./auth-access.js";
 import { runAgent } from "./agent/loop.js";
 import { appendChatTurn } from "./agent/chat-history.js";
+import { handleNewChat } from "./agent/new-chat.js";
 import { TelegramDraftStream } from "./telegram-draft.js";
 import { TelegramStatusMessage } from "./telegram-status.js";
 import { isConfigReady, isWizardActive, openConfigWizard, handleConfigWizardText, handleConfigWizardCallback } from "./onboarding.js";
@@ -33,7 +34,7 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, visionAtta
         const result = await runAgent(userText, { ...agentOpts, visionAttachment });
         await status.completeSuccess();
         await sendTelegramReply(bot, chatId, result.text, result.stats);
-        saveChatTurn(chatId, userText, result);
+        saveChatTurn(chatId, result);
         return result;
     }
 
@@ -61,13 +62,13 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, visionAtta
             await draft.update(finalText);
             const sent = await draft.finalize(result.stats);
             if (sent) {
-                saveChatTurn(chatId, userText, result);
+                saveChatTurn(chatId, result);
                 return result;
             }
         }
 
         await streamReplyEditFallback(bot, chatId, finalText, result.stats);
-        saveChatTurn(chatId, userText, result);
+        saveChatTurn(chatId, result);
         return result;
     }
 
@@ -80,9 +81,9 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, visionAtta
     return result;
 }
 
-function saveChatTurn(chatId, userText, result) {
-    if (result?.text?.trim()) {
-        appendChatTurn(chatId, userText, result.text);
+function saveChatTurn(chatId, result) {
+    if (result?.turnMessages?.length) {
+        appendChatTurn(chatId, result.turnMessages);
     }
 }
 
@@ -136,11 +137,35 @@ export async function startTelegramBot() {
         const lang = loadUserConfig().language || "en";
         const base =
             lang === "ko"
-                ? "준비됐어요. 메시지를 보내세요.\n설정: /config · MCP 다시 불러오기: /reload"
+                ? "준비됐어요. 메시지를 보내세요.\n설정: /config · 새 대화: /new · MCP 다시 불러오기: /reload"
                 : lang === "ja"
-                  ? "準備完了。メッセージを送ってください。\n設定: /config · MCP再読み込み: /reload"
-                  : "Ready. Send a message.\nSettings: /config · Reload MCP: /reload";
+                  ? "準備完了。メッセージを送ってください。\n設定: /config · 新しい会話: /new · MCP再読み込み: /reload"
+                  : "Ready. Send a message.\nSettings: /config · New chat: /new · Reload MCP: /reload";
         await ctx.reply(base);
+    });
+
+    bot.command("new", async (ctx) => {
+        const chatId = String(ctx.chat.id);
+        const lang = loadUserConfig().language || "en";
+
+        if (!isConfigReady()) {
+            await openConfigWizard(ctx, bot);
+            return;
+        }
+
+        if (!(await requireApprovedAccess(ctx))) {
+            return;
+        }
+
+        try {
+            await scheduleWork("user", async () => {
+                const message = await handleNewChat(bot, chatId);
+                await ctx.reply(message);
+            });
+        } catch (err) {
+            console.error("New chat error:", err?.stack || err);
+            await ctx.reply(formatAgentError(err, lang), { parse_mode: "HTML" });
+        }
     });
 
     bot.command("reload", async (ctx) => {
@@ -237,7 +262,8 @@ export async function startTelegramBot() {
             return;
         }
 
-        if (text.trim() === "/reload") {
+        const trimmed = text.trim();
+        if (trimmed === "/reload" || trimmed === "/new") {
             return;
         }
 

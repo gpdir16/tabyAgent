@@ -2,6 +2,7 @@ import { loadAgentConfig } from "../config-loader.js";
 import { createLlmClient } from "../llm/client.js";
 import { assistantMessageToPlain } from "../llm/messages.js";
 import { executeTool, getAllToolDefinitions, toolResultContent } from "./tool-registry.js";
+import { extractTurnMessages } from "./chat-history.js";
 import { ensureWithinContextLimit } from "./summarize.js";
 import { countMessagesTokens } from "./context.js";
 
@@ -23,6 +24,14 @@ function buildStats(llm, messages, contextBaseLength, toolCallCount, modelCallCo
         modelCallCount,
         tokensUsed: Math.max(loadedContext, peakContext),
         contextWindow,
+    };
+}
+
+function buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCount, extra = {}) {
+    return {
+        ...extra,
+        stats: buildStats(llm, messages, contextBaseLength, toolCallCount, modelCallCount),
+        turnMessages: extractTurnMessages(messages, contextBaseLength),
     };
 }
 
@@ -88,11 +97,10 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
 
         const toolCalls = choice.tool_calls;
         if (!toolCalls?.length) {
-            return {
+            return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCount, {
                 text: choice.content || "",
                 usage: response.usage,
-                stats: buildStats(llm, messages, contextBaseLength, toolCallCount, modelCallCount),
-            };
+            });
         }
 
         if (toolCallCount >= maxToolCalls) {
@@ -162,18 +170,16 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
 
     const finalMsg = assistantMessageToPlain(final.choices?.[0]?.message);
     if (finalMsg.content?.trim()) {
-        return {
+        return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCount, {
             text: finalMsg.content,
             usage: final.usage,
-            stats: buildStats(llm, messages, contextBaseLength, toolCallCount, modelCallCount),
-        };
+        });
     }
 
     const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && m.content?.trim());
 
-    return {
+    return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCount, {
         text: lastAssistant?.content || null,
         error: "tool_rounds_exceeded",
-        stats: buildStats(llm, messages, contextBaseLength, toolCallCount, modelCallCount),
-    };
+    });
 }
