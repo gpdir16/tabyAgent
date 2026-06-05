@@ -89,11 +89,12 @@ function saveChatTurn(chatId, result) {
 
 async function runCronJobForUser(bot, job) {
     const lang = loadUserConfig().language || "en";
-    const label = lang === "ko" ? `[예약 작업 · ${job.name}]` : lang === "ja" ? `[予約 · ${job.name}]` : `[Scheduled · ${job.name}]`;
-    const userText = `${label}\n\n${job.prompt}`;
+    const header = t("cron_auto_header", lang);
+    const userText = `${header}\n\n${job.prompt}`;
     const result = await runAgent(userText, { chatId: job.chatId, bot });
-    const fallback = lang === "ko" ? "(출력 없음)" : lang === "ja" ? "(出力なし)" : "(no output)";
-    await sendTelegramReply(bot, job.chatId, result.text?.trim() || fallback, result.stats);
+    const body = result.text?.trim() || t("cron_no_output", lang);
+    await sendTelegramReply(bot, job.chatId, `${header}\n\n${body}`, result.stats);
+    saveChatTurn(job.chatId, result);
 }
 
 async function handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment = null } = {}) {
