@@ -45,7 +45,7 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
     const llm = await createLlmClient();
     const agentConfig = loadAgentConfig();
     const setStatus = (phase, detail = null) => onStatusPhase?.(phase, detail);
-    const maxRounds = Math.min(agentConfig.maxToolRounds ?? 300, agentConfig.maxToolRoundsPerTurn ?? 16);
+    const maxRounds = agentConfig.maxToolRoundsPerTurn ?? agentConfig.maxToolRounds ?? 16;
     const maxToolCalls = agentConfig.maxToolCallsPerTurn ?? 20;
     const maxSameToolRepeat = agentConfig.maxSameToolRepeat ?? 2;
 
@@ -170,6 +170,7 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
 
     const finalMsg = assistantMessageToPlain(final.choices?.[0]?.message);
     if (finalMsg.content?.trim()) {
+        messages.push(finalMsg);
         return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCount, {
             text: finalMsg.content,
             usage: final.usage,

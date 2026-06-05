@@ -14,7 +14,12 @@ function readApprovedFile() {
     if (!fs.existsSync(APPROVED_PATH)) {
         return emptyApprovedFile();
     }
-    return JSON.parse(fs.readFileSync(APPROVED_PATH, "utf8"));
+    try {
+        return JSON.parse(fs.readFileSync(APPROVED_PATH, "utf8"));
+    } catch (err) {
+        console.error(`tabyAgent: invalid JSON in ${APPROVED_PATH}:`, err.message);
+        return emptyApprovedFile();
+    }
 }
 
 function writeApprovedFile(data) {
@@ -33,9 +38,13 @@ function pruneExpired(data) {
 }
 
 function loadApprovedState() {
-    const data = pruneExpired(readApprovedFile());
-    writeApprovedFile(data);
-    return data;
+    const data = readApprovedFile();
+    const pendingBefore = Object.keys(data.pending || {}).length;
+    const pruned = pruneExpired(data);
+    if (Object.keys(pruned.pending || {}).length !== pendingBefore) {
+        writeApprovedFile(pruned);
+    }
+    return pruned;
 }
 
 export function getOwnerChatId() {
@@ -117,12 +126,4 @@ export function approveCode(code) {
 
     const { previousOwner } = setOwner(chatId);
     return { ok: true, chatId, previousOwner };
-}
-
-/** @deprecated Use claimOwnerIfNone or setOwner */
-export function approveChatId(chatId) {
-    if (!hasOwner()) {
-        return claimOwnerIfNone(chatId);
-    }
-    return setOwner(chatId);
 }

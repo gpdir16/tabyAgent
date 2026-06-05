@@ -32,9 +32,11 @@ export function reloadCronSchedules() {
         const task = cron.schedule(
             job.schedule,
             () => {
-                void scheduleWork("cron", async () => {
+                scheduleWork("cron", async () => {
                     await runJobHandler(job);
                     markCronJobRun(job.id);
+                }).catch((err) => {
+                    console.error(`tabyAgent: cron job failed (${job.id}):`, err?.stack || err);
                 });
             },
             { scheduled: true },

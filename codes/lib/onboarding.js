@@ -3,7 +3,6 @@ export {
     bootstrapBotTokenFromEnv,
     hasBotToken,
     resetOnboarding,
-    getWelcomeMessage,
     isWizardActive,
     openConfigWizard,
     handleConfigWizardText,

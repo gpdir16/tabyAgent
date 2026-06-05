@@ -1,10 +1,8 @@
 {
     "maxToolRounds": 300,
-    "maxToolRoundsPerTurn": 16,
-    "maxToolCallsPerTurn": 20,
-    "maxSameToolRepeat": 2,
-    "chatHistoryMaxStoredTurns": 0,
-    "chatHistoryMaxChars": 8000,
+    "maxToolRoundsPerTurn": 300,
+    "maxToolCallsPerTurn": 300,
+    "maxSameToolRepeat": 4,
     "contextCompressTriggerPercent": 75,
     "contextKeepRecentPercent": 20,
     "contextThresholdPercent": 90,

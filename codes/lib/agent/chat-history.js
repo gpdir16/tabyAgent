@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { USER_DIR } from "../paths.js";
-import { loadAgentConfig } from "../config-loader.js";
 
 const INTERNAL_USER_HINTS = new Set([
     "You have enough tool output. Stop calling tools. Reply to the user in plain text now using results you already have.",
@@ -10,13 +9,6 @@ const INTERNAL_USER_HINTS = new Set([
 function historyPath(chatId) {
     const safe = String(chatId).replace(/[^0-9-]/g, "");
     return path.join(USER_DIR, "temp", `chat-${safe}.json`);
-}
-
-/** 0 = unlimited on disk; only context fitting trims at request time */
-function maxStoredTurns() {
-    const n = loadAgentConfig().chatHistoryMaxStoredTurns;
-    if (n == null || n === 0) return Infinity;
-    return n;
 }
 
 export function cloneStoredMessage(message) {
@@ -72,10 +64,7 @@ export function appendChatTurn(chatId, turnMessages) {
         messages: turnMessages.map(cloneStoredMessage),
     });
 
-    const limit = maxStoredTurns();
-    const stored = Number.isFinite(limit) && turns.length > limit ? turns.slice(-limit) : turns;
-
     const filePath = historyPath(chatId);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, `${JSON.stringify({ version: 2, turns: stored }, null, 2)}\n`, "utf8");
+    fs.writeFileSync(filePath, `${JSON.stringify({ version: 2, turns }, null, 2)}\n`, "utf8");
 }

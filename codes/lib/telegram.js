@@ -23,7 +23,11 @@ async function streamReplyEditFallback(bot, chatId, fullText, stats) {
 
 async function replyWithStreaming(bot, ctx, chatId, userText, status, visionAttachment = null) {
     const agentConfig = loadAgentConfig();
-    const mode = agentConfig.telegramStreaming ?? "draft";
+    const rawMode = agentConfig.telegramStreaming ?? "draft";
+    const mode = rawMode === "off" || rawMode === "draft" ? rawMode : "off";
+    if (rawMode !== mode) {
+        console.warn(`tabyAgent: unknown telegramStreaming "${rawMode}", using "off"`);
+    }
     const agentOpts = {
         chatId,
         bot,
@@ -77,7 +81,7 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, visionAtta
         await status.completeSuccess();
         await streamReplyEditFallback(bot, chatId, result.text || "…", result.stats);
     }
-    saveChatTurn(chatId, userText, result);
+    saveChatTurn(chatId, result);
     return result;
 }
 
@@ -136,13 +140,7 @@ export async function startTelegramBot() {
             return;
         }
         const lang = loadUserConfig().language || "en";
-        const base =
-            lang === "ko"
-                ? "준비됐어요. 메시지를 보내세요.\n설정: /config · 새 대화: /new · MCP 다시 불러오기: /reload"
-                : lang === "ja"
-                  ? "準備完了。メッセージを送ってください。\n設定: /config · 新しい会話: /new · MCP再読み込み: /reload"
-                  : "Ready. Send a message.\nSettings: /config · New chat: /new · Reload MCP: /reload";
-        await ctx.reply(base);
+        await ctx.reply(t("start_ready", lang));
     });
 
     bot.command("new", async (ctx) => {
@@ -182,8 +180,10 @@ export async function startTelegramBot() {
         }
 
         try {
-            const report = await runReload();
-            await sendTelegramReply(bot, String(ctx.chat.id), formatReloadReport(report, lang), null);
+            await scheduleWork("user", async () => {
+                const report = await runReload();
+                await sendTelegramReply(bot, String(ctx.chat.id), formatReloadReport(report, lang), null);
+            });
         } catch (err) {
             console.error("Reload error:", err?.stack || err);
             await ctx.reply(formatAgentError(err, lang), { parse_mode: "HTML" });

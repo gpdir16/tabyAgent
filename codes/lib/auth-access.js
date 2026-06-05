@@ -45,8 +45,8 @@ export async function requireApprovedAccess(ctx, { claimFirst = false } = {}) {
     }
 
     if (claimFirst && !hasOwner()) {
-        claimOwnerIfNone(chatId);
-        return true;
+        const claimed = claimOwnerIfNone(chatId);
+        if (claimed.ok) return true;
     }
 
     await replyAuthPending(ctx, chatId);

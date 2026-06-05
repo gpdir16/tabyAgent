@@ -127,8 +127,8 @@ export class TelegramStatusMessage {
         this.phase = "error";
         if (!this.messageId) return;
         const elapsed = formatElapsedSeconds((Date.now() - this.startedAt) / 1000, this.lang);
-        const prefix = this.lang === "ko" ? "응답이 중단되었습니다" : this.lang === "ja" ? "応答が中断されました" : "Response interrupted";
-        const body = `${prefix} · ${elapsed}\n\n${text}`;
+        const label = statusText("error", this.lang);
+        const body = `${label} · ${elapsed}\n\n${text}`;
         try {
             await this.bot.api.editMessageText(this.chatId, this.messageId, body, {
                 parse_mode: parseMode,

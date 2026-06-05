@@ -85,9 +85,14 @@ const MESSAGES = {
         ja: "新しい会話を開始しました。",
     },
     new_chat_ok_flushed: {
-        en: "Started a new chat.",
-        ko: "새 대화를 시작했습니다.",
-        ja: "新しい会話を開始しました。",
+        en: "Started a new chat. Long-term memory was updated.",
+        ko: "새 대화를 시작했습니다. 장기 기억을 갱신했습니다.",
+        ja: "新しい会話を開始しました。長期記憶を更新しました。",
+    },
+    start_ready: {
+        en: "Ready. Send a message.\nSettings: /config · New chat: /new · Reload MCP: /reload",
+        ko: "준비됐어요. 메시지를 보내세요.\n설정: /config · 새 대화: /new · MCP 다시 불러오기: /reload",
+        ja: "準備完了。メッセージを送ってください。\n設定: /config · 新しい会話: /new · MCP再読み込み: /reload",
     },
     new_chat_memory_error: {
         en: "Failed to update long-term memory. But a new chat has started successfully.",

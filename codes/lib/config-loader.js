@@ -22,7 +22,12 @@ function substituteDeep(obj) {
 
 function readJson(filePath, fallback = null) {
     if (!fs.existsSync(filePath)) return fallback;
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    try {
+        return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    } catch (err) {
+        console.error(`tabyAgent: invalid JSON in ${filePath}:`, err.message);
+        return fallback;
+    }
 }
 
 export function loadAgentConfig() {
@@ -31,8 +36,6 @@ export function loadAgentConfig() {
         maxToolRoundsPerTurn: 16,
         maxToolCallsPerTurn: 20,
         maxSameToolRepeat: 2,
-        chatHistoryMaxStoredTurns: 0,
-        chatHistoryMaxChars: 8000,
         contextCompressTriggerPercent: 75,
         contextKeepRecentPercent: 20,
         contextThresholdPercent: 90,

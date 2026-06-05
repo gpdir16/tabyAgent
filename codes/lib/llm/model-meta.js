@@ -10,7 +10,12 @@ export function loadModelMeta() {
     if (!fs.existsSync(META_PATH)) {
         return { contextWindow: DEFAULT_CONTEXT, model: null, supportsVision: false };
     }
-    return JSON.parse(fs.readFileSync(META_PATH, "utf8"));
+    try {
+        return JSON.parse(fs.readFileSync(META_PATH, "utf8"));
+    } catch (err) {
+        console.error(`tabyAgent: invalid model meta cache:`, err.message);
+        return { contextWindow: DEFAULT_CONTEXT, model: null, supportsVision: false };
+    }
 }
 
 export function saveModelMeta(meta) {

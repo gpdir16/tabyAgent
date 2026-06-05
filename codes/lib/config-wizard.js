@@ -27,9 +27,14 @@ function emptyState(chatId) {
 
 function loadState() {
     if (!fs.existsSync(STATE_PATH)) return null;
-    const state = JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
-    if (!("activeMessageId" in state)) state.activeMessageId = null;
-    return state;
+    try {
+        const state = JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+        if (!("activeMessageId" in state)) state.activeMessageId = null;
+        return state;
+    } catch (err) {
+        console.error(`tabyAgent: invalid onboarding state:`, err.message);
+        return null;
+    }
 }
 
 function saveState(state) {
@@ -335,10 +340,6 @@ export function resetOnboarding(chatId) {
     saveState(emptyState(chatId));
 }
 
-export function getWelcomeMessage() {
-    return texts("en").welcome;
-}
-
 export async function openConfigWizard(ctx, bot) {
     const chatId = String(ctx.chat.id);
     const prev = loadState();
@@ -377,7 +378,11 @@ async function finishWizard(bot, chatId, state, { userMessageId } = {}) {
     await deleteMessageSafe(bot, chatId, userMessageId);
     clearState();
     if (!isApproved(chatId)) {
-        claimOwnerIfNone(chatId);
+        const claimed = claimOwnerIfNone(chatId);
+        if (!claimed.ok) {
+            await bot.api.sendMessage(chatId, t("auth_denied_command", state.data.language || "en"));
+            return;
+        }
     }
     await bot.api.sendMessage(chatId, doneText);
 }
