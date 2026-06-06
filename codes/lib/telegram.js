@@ -17,6 +17,15 @@ import { ensureModelMeta } from "./llm/model-meta.js";
 import { getMergedProvider } from "./config-loader.js";
 import { setCronJobHandler, startCronScheduler } from "./cron/scheduler.js";
 
+function isReplyFailure(result) {
+    return (result?.error === "tool_rounds_exceeded" || result?.error === "empty_reply_exhausted") && !result.text?.trim();
+}
+
+function replyFailureMessage(result, lang) {
+    if (result?.error === "empty_reply_exhausted") return t("empty_reply_exhausted", lang);
+    return t("tool_rounds_exceeded", lang);
+}
+
 async function streamReplyEditFallback(bot, chatId, fullText, stats) {
     await sendTelegramReply(bot, chatId, (fullText || "").trim() || "…", stats);
 }
@@ -56,7 +65,7 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, visionAtta
 
         const finalText = result.text || draft.getLastText() || "…";
 
-        if (result.error === "tool_rounds_exceeded" && !result.text?.trim()) {
+        if (isReplyFailure(result)) {
             return result;
         }
 
@@ -77,7 +86,7 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, visionAtta
     }
 
     const result = await runAgent(userText, { ...agentOpts, visionAttachment });
-    if (result.error !== "tool_rounds_exceeded" || result.text) {
+    if (!isReplyFailure(result)) {
         await status.completeSuccess();
         await streamReplyEditFallback(bot, chatId, result.text || "…", result.stats);
     }
@@ -110,8 +119,8 @@ async function handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment = 
 
     const result = await replyWithStreaming(bot, ctx, chatId, userText, status, visionAttachment);
 
-    if (result.error === "tool_rounds_exceeded" && !result.text?.trim()) {
-        await status.completeError(t("tool_rounds_exceeded", lang));
+    if (isReplyFailure(result)) {
+        await status.completeError(replyFailureMessage(result, lang));
     }
 
     return result;

@@ -44,6 +44,11 @@ const MESSAGES = {
         ko: "이 메시지의 도구 호출 한도에 도달했습니다. 다시 시도하거나 요청을 단순화해 주세요.",
         ja: "このメッセージのツール呼び出し上限に達しました。再試行するか、リクエストを簡略化してください。",
     },
+    empty_reply_exhausted: {
+        en: "I finished the work but could not produce a text reply after several attempts. Please ask again or request a summary.",
+        ko: "작업은 마쳤지만 텍스트 응답을 여러 번 시도해도 생성하지 못했습니다. 다시 요청하거나 결과 요약을 요청해 주세요.",
+        ja: "作業は完了しましたが、テキスト応答を複数回試しても生成できませんでした。再度依頼するか、結果の要約を求めてください。",
+    },
     agent_error: {
         en: "Something went wrong while processing your message.",
         ko: "메시지 처리 중 오류가 발생했습니다.",

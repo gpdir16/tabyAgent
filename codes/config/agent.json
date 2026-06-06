@@ -3,6 +3,7 @@
     "maxToolRoundsPerTurn": 300,
     "maxToolCallsPerTurn": 300,
     "maxSameToolRepeat": 4,
+    "maxEmptyReplyRetries": 8,
     "contextCompressTriggerPercent": 75,
     "contextKeepRecentPercent": 20,
     "contextThresholdPercent": 90,

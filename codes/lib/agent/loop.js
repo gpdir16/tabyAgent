@@ -40,6 +40,43 @@ function toolSignature(name, args) {
 }
 
 const FORCE_REPLY_HINT = "You have enough tool output. Stop calling tools. Reply to the user in plain text now using results you already have.";
+const EMPTY_REPLY_HINT =
+    "Your previous assistant reply was empty. Reply to the user in plain text now. Summarize what you accomplished and answer their request.";
+
+async function completeTextReply(llm, messages, { onTextDelta, setStatus, maxRetries, modelCallCount }) {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        if (attempt > 0) {
+            messages.push({ role: "user", content: EMPTY_REPLY_HINT });
+        }
+
+        setStatus("thinking");
+        const streamDelta = onTextDelta
+            ? (_delta, full) => {
+                  setStatus("streaming");
+                  onTextDelta(_delta, full);
+              }
+            : undefined;
+
+        modelCallCount.value += 1;
+        const response = await llm.complete({
+            messages,
+            tool_choice: "none",
+            stream: Boolean(onTextDelta),
+            onTextDelta: streamDelta,
+        });
+
+        const raw = response.choices?.[0]?.message;
+        if (!raw) continue;
+
+        const msg = assistantMessageToPlain(raw);
+        if (msg.content?.trim()) {
+            messages.push(msg);
+            return { text: msg.content, usage: response.usage };
+        }
+    }
+
+    return null;
+}
 
 export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatusPhase, visionAttachment = null } = {}) {
     const llm = await createLlmClient();
@@ -48,6 +85,8 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
     const maxRounds = agentConfig.maxToolRoundsPerTurn ?? agentConfig.maxToolRounds ?? 16;
     const maxToolCalls = agentConfig.maxToolCallsPerTurn ?? 20;
     const maxSameToolRepeat = agentConfig.maxSameToolRepeat ?? 2;
+    const maxEmptyReplyRetries = agentConfig.maxEmptyReplyRetries ?? 8;
+    const modelCallCountRef = { value: 0 };
 
     setStatus("generating");
     let messages = await ensureWithinContextLimit(llm, userMessage, llm.modelMeta, {
@@ -59,7 +98,6 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
     const contextBaseLength = messages.length;
 
     let toolCallCount = 0;
-    let modelCallCount = 0;
     const toolSigCounts = new Map();
     const fileSnapshots = new Map();
     let forceReplyNext = false;
@@ -78,7 +116,7 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
                   }
                 : undefined;
 
-        modelCallCount += 1;
+        modelCallCountRef.value += 1;
         const response = await llm.complete({
             messages,
             tools: toolsEnabled ? tools : undefined,
@@ -93,15 +131,36 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
         if (!raw) throw new Error("Empty LLM response");
 
         const choice = assistantMessageToPlain(raw);
-        messages.push(choice);
-
         const toolCalls = choice.tool_calls;
         if (!toolCalls?.length) {
-            return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCount, {
-                text: choice.content || "",
-                usage: response.usage,
+            if (choice.content?.trim()) {
+                messages.push(choice);
+                return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
+                    text: choice.content,
+                    usage: response.usage,
+                });
+            }
+
+            const recovered = await completeTextReply(llm, messages, {
+                onTextDelta,
+                setStatus,
+                maxRetries: maxEmptyReplyRetries,
+                modelCallCount: modelCallCountRef,
+            });
+            if (recovered) {
+                return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
+                    text: recovered.text,
+                    usage: recovered.usage,
+                });
+            }
+
+            return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
+                text: null,
+                error: "empty_reply_exhausted",
             });
         }
+
+        messages.push(choice);
 
         if (toolCallCount >= maxToolCalls) {
             messages.push({ role: "user", content: FORCE_REPLY_HINT });
@@ -154,33 +213,22 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
     }
 
     messages.push({ role: "user", content: FORCE_REPLY_HINT });
-    setStatus("thinking");
-    modelCallCount += 1;
-    const final = await llm.complete({
-        messages,
-        tool_choice: "none",
-        stream: Boolean(onTextDelta),
-        onTextDelta: onTextDelta
-            ? (_d, full) => {
-                  setStatus("streaming");
-                  onTextDelta(_d, full);
-              }
-            : undefined,
-    });
 
-    const finalMsg = assistantMessageToPlain(final.choices?.[0]?.message);
-    if (finalMsg.content?.trim()) {
-        messages.push(finalMsg);
-        return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCount, {
-            text: finalMsg.content,
-            usage: final.usage,
+    const recovered = await completeTextReply(llm, messages, {
+        onTextDelta,
+        setStatus,
+        maxRetries: maxEmptyReplyRetries,
+        modelCallCount: modelCallCountRef,
+    });
+    if (recovered) {
+        return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
+            text: recovered.text,
+            usage: recovered.usage,
         });
     }
 
-    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && m.content?.trim());
-
-    return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCount, {
-        text: lastAssistant?.content || null,
+    return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
+        text: null,
         error: "tool_rounds_exceeded",
     });
 }
