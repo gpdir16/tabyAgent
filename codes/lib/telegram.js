@@ -16,6 +16,7 @@ import { isVisionImageAttachment } from "./llm/vision.js";
 import { ensureModelMeta } from "./llm/model-meta.js";
 import { getMergedProvider } from "./config-loader.js";
 import { setCronJobHandler, startCronScheduler } from "./cron/scheduler.js";
+import { startUpdateScheduler } from "./update/scheduler.js";
 
 function isReplyFailure(result) {
     return (result?.error === "tool_rounds_exceeded" || result?.error === "empty_reply_exhausted") && !result.text?.trim();
@@ -138,6 +139,7 @@ export async function startTelegramBot() {
 
     setCronJobHandler((job) => runCronJobForUser(bot, job));
     startCronScheduler();
+    startUpdateScheduler(bot);
 
     bot.command("start", async (ctx) => {
         const chatId = String(ctx.chat.id);

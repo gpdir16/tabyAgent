@@ -1,6 +1,9 @@
 services:
     tabyagent:
-        build: .
+        build:
+            context: .
+            args:
+                TABYAGENT_VERSION: dev
         container_name: tabyagent
         env_file:
             - .env

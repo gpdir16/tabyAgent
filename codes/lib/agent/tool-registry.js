@@ -7,6 +7,7 @@ import { sendFileToolDefinitions, executeSendFileTool } from "../tools/send-file
 import { getMcpToolDefinitions, executeMcpTool } from "../tools/mcp.js";
 import { connectMcpServers, disconnectMcpServers } from "../mcp/servers.js";
 import { stopCronScheduler } from "../cron/scheduler.js";
+import { stopUpdateScheduler } from "../update/scheduler.js";
 import { sanitizeTextForLlm } from "../llm/sanitize-messages.js";
 
 export async function initTools() {
@@ -15,6 +16,7 @@ export async function initTools() {
 
 export async function shutdownTools() {
     stopCronScheduler();
+    stopUpdateScheduler();
     await disconnectMcpServers();
 }
 

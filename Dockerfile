@@ -1,6 +1,11 @@
 FROM node:22-bookworm-slim
 
+ARG TABYAGENT_VERSION=dev
+
 WORKDIR /app
+ENV TABYAGENT_VERSION=${TABYAGENT_VERSION}
+RUN printf '%s\n' "${TABYAGENT_VERSION}" > /app/VERSION
+LABEL org.opencontainers.image.version="${TABYAGENT_VERSION}"
 ENV USER_DIR=/app/user
 ENV APP_ROOT=/app
 ENV CODES_DIR=/app/codes

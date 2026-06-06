@@ -114,6 +114,36 @@ const MESSAGES = {
         ko: "(출력 없음)",
         ja: "(出力なし)",
     },
+    update_notify_title: {
+        en: "🆕 A new version is available: {version}",
+        ko: "🆕 새 버전이 출시되었습니다: {version}",
+        ja: "🆕 新しいバージョンがリリースされました: {version}",
+    },
+    update_notify_script_label: {
+        en: "Run this command on the host to update:",
+        ko: "호스트에서 아래 명령으로 업데이트하세요:",
+        ja: "ホストで次のコマンドを実行して更新してください:",
+    },
+    update_notify_current: {
+        en: "Current version: {version}",
+        ko: "현재 버전: {version}",
+        ja: "現在のバージョン: {version}",
+    },
+    update_notify_button: {
+        en: "GitHub Release",
+        ko: "GitHub 릴리스",
+        ja: "GitHub リリース",
+    },
+    update_notify_session_user: {
+        en: "[System] New tabyAgent update available",
+        ko: "[시스템] tabyAgent 새 업데이트 알림",
+        ja: "[システム] tabyAgent の新しいアップデート通知",
+    },
+    update_notify_session_assistant: {
+        en: "New version {version} is available. Check the update message above for the install command and GitHub release link.",
+        ko: "새 버전 {version}이(가) 출시되었습니다. 위 업데이트 메시지에서 설치 명령과 GitHub 릴리스 링크를 확인하세요.",
+        ja: "新しいバージョン {version} がリリースされました。上の更新メッセージでインストールコマンドと GitHub リリースリンクを確認してください。",
+    },
 };
 
 export function statusText(phase, lang = "en") {
