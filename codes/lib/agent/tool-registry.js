@@ -38,7 +38,7 @@ export async function executeTool(name, args, ctx = {}) {
     if (name === "config_set") return executeConfigTool(name, args);
     if (name.startsWith("skills_")) return executeSkillsTool(name, args);
     if (name.startsWith("cron_")) return executeCronTool(name, args);
-    if (name === "terminal_run") return executeTerminalTool(name, args);
+    if (name === "terminal_run") return executeTerminalTool(name, args, ctx);
     if (name === "telegram_send_file") return executeSendFileTool(name, args, ctx);
     if (name === "mcp_reload" || name.startsWith("mcp__")) return executeMcpTool(name, args);
     return { error: `Unknown tool: ${name}` };

@@ -2,8 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { USER_DIR } from "../paths.js";
 
+import { STOP_BY_USER_HINT } from "./session.js";
+
 const INTERNAL_USER_HINTS = new Set([
     "You have enough tool output. Stop calling tools. Reply to the user in plain text now using results you already have.",
+    STOP_BY_USER_HINT,
 ]);
 
 function historyPath(chatId) {

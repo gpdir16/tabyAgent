@@ -1,10 +1,7 @@
 import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import path from "node:path";
 import { loadAgentConfig } from "../config-loader.js";
 import { USER_DIR } from "../paths.js";
-
-const execAsync = promisify(exec);
 
 function resolveCwd(cwd) {
     if (!cwd?.trim()) return USER_DIR;
@@ -38,7 +35,7 @@ export const terminalToolDefinitions = [
     },
 ];
 
-export async function executeTerminalTool(name, args) {
+export async function executeTerminalTool(name, args, { signal } = {}) {
     if (name !== "terminal_run") return { error: `Unknown terminal tool: ${name}` };
 
     const agent = loadAgentConfig();
@@ -53,28 +50,60 @@ export async function executeTerminalTool(name, args) {
     const maxChars = agent.terminalMaxOutputChars ?? 32_000;
     const cwd = resolveCwd(args?.cwd);
 
-    try {
-        const { stdout, stderr } = await execAsync(command, {
+    if (signal?.aborted) {
+        return { ok: false, cwd, aborted: true, exitCode: null, stdout: "", stderr: "Stopped by user." };
+    }
+
+    return new Promise((resolve) => {
+        let stoppedByUser = false;
+        const child = exec(command, {
             cwd,
             timeout: timeoutMs,
             maxBuffer: maxChars * 2,
             shell: "/bin/sh",
             env: { ...process.env, HOME: USER_DIR },
         });
-        return {
-            ok: true,
-            cwd,
-            exitCode: 0,
-            stdout: truncate(stdout, maxChars),
-            stderr: truncate(stderr, maxChars),
+
+        const onAbort = () => {
+            stoppedByUser = true;
+            child.kill("SIGTERM");
         };
-    } catch (err) {
-        return {
-            ok: false,
-            cwd,
-            exitCode: err.code ?? 1,
-            stdout: truncate(err.stdout?.toString() || "", maxChars),
-            stderr: truncate(err.stderr?.toString() || err.message || "", maxChars),
-        };
-    }
+
+        signal?.addEventListener("abort", onAbort, { once: true });
+
+        child.on("close", (code) => {
+            signal?.removeEventListener("abort", onAbort);
+            const stdout = truncate(child.stdout?.toString() || "", maxChars);
+            const stderr = truncate(child.stderr?.toString() || "", maxChars);
+            if (stoppedByUser) {
+                resolve({
+                    ok: false,
+                    cwd,
+                    aborted: true,
+                    exitCode: code,
+                    stdout,
+                    stderr: stderr || "Stopped by user.",
+                });
+                return;
+            }
+            resolve({
+                ok: code === 0,
+                cwd,
+                exitCode: code ?? 1,
+                stdout,
+                stderr,
+            });
+        });
+
+        child.on("error", (err) => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve({
+                ok: false,
+                cwd,
+                exitCode: err.code ?? 1,
+                stdout: truncate(err.stdout?.toString() || "", maxChars),
+                stderr: truncate(err.stderr?.toString() || err.message || "", maxChars),
+            });
+        });
+    });
 }

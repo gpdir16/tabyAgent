@@ -11,6 +11,13 @@ import { sendTelegramReply } from "./telegram-stats.js";
 import { t, formatAgentError } from "./i18n.js";
 import { formatReloadReport, runReload } from "./reload.js";
 import { scheduleWork } from "./agent-queue.js";
+import {
+    beginAgentSession,
+    endAgentSession,
+    enqueueAgentMessage,
+    isAgentSessionRunning,
+    requestAgentStop,
+} from "./agent/session.js";
 import { saveIncomingTelegramFile, formatFileUserMessage } from "./telegram-downloads.js";
 import { isVisionImageAttachment } from "./llm/vision.js";
 import { ensureModelMeta } from "./llm/model-meta.js";
@@ -22,6 +29,10 @@ function isReplyFailure(result) {
     return (result?.error === "tool_rounds_exceeded" || result?.error === "empty_reply_exhausted") && !result.text?.trim();
 }
 
+function isStoppedByUser(result) {
+    return result?.error === "stopped_by_user";
+}
+
 function replyFailureMessage(result, lang) {
     if (result?.error === "empty_reply_exhausted") return t("empty_reply_exhausted", lang);
     return t("tool_rounds_exceeded", lang);
@@ -31,7 +42,7 @@ async function streamReplyEditFallback(bot, chatId, fullText, stats) {
     await sendTelegramReply(bot, chatId, (fullText || "").trim() || "…", stats);
 }
 
-async function replyWithStreaming(bot, ctx, chatId, userText, status, visionAttachment = null) {
+async function replyWithStreaming(bot, ctx, chatId, userText, status, { visionAttachment = null, session = null } = {}) {
     const agentConfig = loadAgentConfig();
     const rawMode = agentConfig.telegramStreaming ?? "draft";
     const mode = rawMode === "off" || rawMode === "draft" ? rawMode : "off";
@@ -41,11 +52,13 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, visionAtta
     const agentOpts = {
         chatId,
         bot,
+        session,
         onStatusPhase: (phase, detail) => status.setPhase(phase, detail),
     };
 
     if (mode === "off") {
         const result = await runAgent(userText, { ...agentOpts, visionAttachment });
+        if (isStoppedByUser(result)) return result;
         await status.completeSuccess();
         await sendTelegramReply(bot, chatId, result.text, result.stats);
         saveChatTurn(chatId, result);
@@ -66,7 +79,7 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, visionAtta
 
         const finalText = result.text || draft.getLastText() || "…";
 
-        if (isReplyFailure(result)) {
+        if (isReplyFailure(result) || isStoppedByUser(result)) {
             return result;
         }
 
@@ -87,6 +100,7 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, visionAtta
     }
 
     const result = await runAgent(userText, { ...agentOpts, visionAttachment });
+    if (isStoppedByUser(result)) return result;
     if (!isReplyFailure(result)) {
         await status.completeSuccess();
         await streamReplyEditFallback(bot, chatId, result.text || "…", result.stats);
@@ -114,17 +128,37 @@ async function runCronJobForUser(bot, job) {
 async function handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment = null } = {}) {
     const lang = loadUserConfig().language || "en";
     const status = new TelegramStatusMessage(bot, chatId, lang);
+    const session = beginAgentSession(chatId);
 
     await status.start();
     await ctx.replyWithChatAction("typing").catch(() => {});
 
-    const result = await replyWithStreaming(bot, ctx, chatId, userText, status, visionAttachment);
+    try {
+        const result = await replyWithStreaming(bot, ctx, chatId, userText, status, { visionAttachment, session });
 
-    if (isReplyFailure(result)) {
-        await status.completeError(replyFailureMessage(result, lang));
+        if (isStoppedByUser(result)) {
+            await status.completeSuccess();
+            const body = result.text?.trim() || t("stopped_by_user", lang);
+            await sendTelegramReply(bot, chatId, body, result.stats);
+            saveChatTurn(chatId, result);
+            return result;
+        }
+
+        if (isReplyFailure(result)) {
+            await status.completeError(replyFailureMessage(result, lang));
+        }
+
+        return result;
+    } finally {
+        endAgentSession(chatId);
     }
+}
 
-    return result;
+async function tryEnqueueDuringRun(ctx, chatId, text) {
+    if (!enqueueAgentMessage(chatId, text)) return false;
+    const lang = loadUserConfig().language || "en";
+    await ctx.reply(t("message_added_during_run", lang));
+    return true;
 }
 
 export async function startTelegramBot() {
@@ -176,6 +210,27 @@ export async function startTelegramBot() {
             console.error("New chat error:", err?.stack || err);
             await ctx.reply(formatAgentError(err, lang), { parse_mode: "HTML" });
         }
+    });
+
+    bot.command("stop", async (ctx) => {
+        const chatId = String(ctx.chat.id);
+        const lang = loadUserConfig().language || "en";
+
+        if (!isConfigReady()) {
+            await openConfigWizard(ctx, bot);
+            return;
+        }
+
+        if (!(await requireApprovedAccess(ctx))) {
+            return;
+        }
+
+        if (requestAgentStop(chatId)) {
+            await ctx.reply(t("stop_requested", lang));
+            return;
+        }
+
+        await ctx.reply(t("stop_nothing_running", lang));
     });
 
     bot.command("reload", async (ctx) => {
@@ -249,6 +304,14 @@ export async function startTelegramBot() {
         }
 
         try {
+            if (isAgentSessionRunning(chatId)) {
+                const saved = await saveIncomingTelegramFile(ctx);
+                const userText = formatFileUserMessage(saved, { visionAttached: false });
+                if (await tryEnqueueDuringRun(ctx, chatId, userText)) {
+                    return;
+                }
+            }
+
             await scheduleWork("user", async () => {
                 const saved = await saveIncomingTelegramFile(ctx);
                 let visionAttachment = null;
@@ -275,7 +338,7 @@ export async function startTelegramBot() {
         }
 
         const trimmed = text.trim();
-        if (trimmed === "/reload" || trimmed === "/new") {
+        if (trimmed === "/reload" || trimmed === "/new" || trimmed === "/stop") {
             return;
         }
 
@@ -286,6 +349,10 @@ export async function startTelegramBot() {
         }
 
         try {
+            if (await tryEnqueueDuringRun(ctx, chatId, text)) {
+                return;
+            }
+
             await scheduleWork("user", async () => {
                 await handleAgentTurn(bot, ctx, chatId, text);
             });

@@ -5,6 +5,7 @@ import { executeTool, getAllToolDefinitions, toolResultContent } from "./tool-re
 import { extractTurnMessages } from "./chat-history.js";
 import { ensureWithinContextLimit } from "./summarize.js";
 import { countMessagesTokens } from "./context.js";
+import { STOP_BY_USER_HINT } from "./session.js";
 
 function parseToolArgs(raw) {
     try {
@@ -42,6 +43,51 @@ function toolSignature(name, args) {
 const FORCE_REPLY_HINT = "You have enough tool output. Stop calling tools. Reply to the user in plain text now using results you already have.";
 const EMPTY_REPLY_HINT =
     "Your previous assistant reply was empty. Reply to the user in plain text now. Summarize what you accomplished and answer their request.";
+function injectPendingUserMessages(messages, session) {
+    if (!session) return;
+    const pending = session.drainPendingMessages();
+    if (!pending.length) return;
+    messages.push({
+        role: "user",
+        content: `The user sent additional message(s) while you were working:\n\n${pending.join("\n\n")}`,
+    });
+}
+
+function pushToolResult(messages, toolCallId, result) {
+    messages.push({
+        role: "tool",
+        tool_call_id: toolCallId,
+        content: toolResultContent(result),
+    });
+}
+
+function pushSkippedToolResults(messages, toolCalls, startIndex = 0) {
+    for (let i = startIndex; i < toolCalls.length; i += 1) {
+        pushToolResult(messages, toolCalls[i].id, { ok: false, aborted: true, error: "Stopped by user." });
+    }
+}
+
+async function finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, opts) {
+    injectPendingUserMessages(messages, opts.session);
+    messages.push({ role: "user", content: STOP_BY_USER_HINT });
+
+    const recovered = await completeTextReply(llm, messages, {
+        onTextDelta: opts.onTextDelta,
+        setStatus: opts.setStatus,
+        maxRetries: opts.maxEmptyReplyRetries,
+        modelCallCount: modelCallCountRef,
+    });
+
+    return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
+        text: recovered?.text || null,
+        error: "stopped_by_user",
+        usage: recovered?.usage,
+    });
+}
+
+function shouldStop(session) {
+    return Boolean(session?.isAborted?.());
+}
 
 async function completeTextReply(llm, messages, { onTextDelta, setStatus, maxRetries, modelCallCount }) {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -78,7 +124,7 @@ async function completeTextReply(llm, messages, { onTextDelta, setStatus, maxRet
     return null;
 }
 
-export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatusPhase, visionAttachment = null } = {}) {
+export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatusPhase, visionAttachment = null, session = null } = {}) {
     const llm = await createLlmClient();
     const agentConfig = loadAgentConfig();
     const setStatus = (phase, detail = null) => onStatusPhase?.(phase, detail);
@@ -102,7 +148,14 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
     const fileSnapshots = new Map();
     let forceReplyNext = false;
 
+    const stopOpts = { session, onTextDelta, setStatus, maxEmptyReplyRetries };
+
     for (let round = 0; round < maxRounds; round++) {
+        injectPendingUserMessages(messages, session);
+        if (shouldStop(session)) {
+            return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, stopOpts);
+        }
+
         const toolsEnabled = !forceReplyNext;
         const useStream = Boolean(onTextDelta) && !toolsEnabled;
 
@@ -171,6 +224,12 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
         for (const tc of toolCalls) {
             if (toolCallCount >= maxToolCalls) break;
 
+            injectPendingUserMessages(messages, session);
+            if (shouldStop(session)) {
+                pushSkippedToolResults(messages, toolCalls, toolCalls.indexOf(tc));
+                return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, stopOpts);
+            }
+
             setStatus("tools", tc.function.name);
 
             const args = parseToolArgs(tc.function.arguments);
@@ -198,12 +257,15 @@ export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatus
                 model: llm.provider.model,
                 modelMeta: llm.modelMeta,
                 fileSnapshots,
+                signal: session?.signal,
             });
-            messages.push({
-                role: "tool",
-                tool_call_id: tc.id,
-                content: toolResultContent(result),
-            });
+
+            if (shouldStop(session)) {
+                pushToolResult(messages, tc.id, result);
+                pushSkippedToolResults(messages, toolCalls, toolCalls.indexOf(tc) + 1);
+                return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, stopOpts);
+            }
+            pushToolResult(messages, tc.id, result);
         }
 
         if (forceReplyNext || toolCallCount >= maxToolCalls) {
