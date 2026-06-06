@@ -59,14 +59,14 @@ docker compose up -d --build
 
 ## Bot commands
 
-| Command           | Description                                                  |
-| ----------------- | ------------------------------------------------------------ |
-| `/start`          | Start the bot or open the setup wizard on first run          |
-| `/config`         | Open the configuration wizard                                |
-| `/new`            | Start a new chat (5+ turns: save summary to memory.md first) |
+| Command           | Description                                                         |
+| ----------------- | ------------------------------------------------------------------- |
+| `/start`          | Start the bot or open the setup wizard on first run                 |
+| `/config`         | Open the configuration wizard                                       |
+| `/new`            | Start a new chat (5+ turns: save summary to memory.md first)        |
 | `/stop`           | Stop the current task (messages sent while running are added to it) |
-| `/reload`         | Reload MCP tools (skills do not need reload)                 |
-| `/approve <code>` | Approved user grants access (disconnects the previous user)  |
+| `/reload`         | Reload MCP tools (skills do not need reload)                        |
+| `/approve <code>` | Approved user grants access (disconnects the previous user)         |
 
 ## Requirements
 

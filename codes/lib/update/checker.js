@@ -1,11 +1,5 @@
 import { loadAgentConfig } from "../config-loader.js";
-import {
-    getLastNotifiedVersion,
-    getRunningVersion,
-    getWatchStartedAt,
-    saveUpdateState,
-    setLastNotifiedVersion,
-} from "./store.js";
+import { getLastNotifiedVersion, getRunningVersion, getWatchStartedAt, saveUpdateState, setLastNotifiedVersion } from "./store.js";
 
 const GHCR_ACCEPT =
     "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json";
@@ -33,8 +27,12 @@ export function isSemverTag(tag) {
 }
 
 export function compareSemver(a, b) {
-    const pa = normalizeVersion(a).split(".").map((n) => Number(n) || 0);
-    const pb = normalizeVersion(b).split(".").map((n) => Number(n) || 0);
+    const pa = normalizeVersion(a)
+        .split(".")
+        .map((n) => Number(n) || 0);
+    const pb = normalizeVersion(b)
+        .split(".")
+        .map((n) => Number(n) || 0);
     const len = Math.max(pa.length, pb.length);
     for (let i = 0; i < len; i++) {
         const va = pa[i] ?? 0;
@@ -165,9 +163,7 @@ export async function checkForUpdate() {
 
     const githubRepo = cfg.githubRepo || "gpdir16/tabyAgent";
     const imageName = normalizeImageName(cfg.imageName || "ghcr.io/gpdir16/tabyagent");
-    const installScriptUrl =
-        cfg.installScriptUrl ||
-        `https://raw.githubusercontent.com/${githubRepo}/main/scripts/install.sh`;
+    const installScriptUrl = cfg.installScriptUrl || `https://raw.githubusercontent.com/${githubRepo}/main/scripts/install.sh`;
 
     const releases = await fetchReleases(githubRepo);
     if (!releases.length) return null;
@@ -177,9 +173,7 @@ export async function checkForUpdate() {
     const baseline = syncBaseline(lastNotified, running);
 
     if (baseline) {
-        const newer = releases
-            .filter((r) => compareSemver(r.tag_name, baseline) > 0)
-            .sort((a, b) => compareSemver(a.tag_name, b.tag_name));
+        const newer = releases.filter((r) => compareSemver(r.tag_name, baseline) > 0).sort((a, b) => compareSemver(a.tag_name, b.tag_name));
 
         const ready = await pickReadyRelease(newer, imageName);
         if (!ready) return null;

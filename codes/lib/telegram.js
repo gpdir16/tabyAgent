@@ -11,13 +11,7 @@ import { sendTelegramReply } from "./telegram-stats.js";
 import { t, formatAgentError } from "./i18n.js";
 import { formatReloadReport, runReload } from "./reload.js";
 import { scheduleWork } from "./agent-queue.js";
-import {
-    beginAgentSession,
-    endAgentSession,
-    enqueueAgentMessage,
-    isAgentSessionRunning,
-    requestAgentStop,
-} from "./agent/session.js";
+import { beginAgentSession, endAgentSession, enqueueAgentMessage, isAgentSessionRunning, requestAgentStop } from "./agent/session.js";
 import { saveIncomingTelegramFile, formatFileUserMessage } from "./telegram-downloads.js";
 import { isVisionImageAttachment } from "./llm/vision.js";
 import { ensureModelMeta } from "./llm/model-meta.js";

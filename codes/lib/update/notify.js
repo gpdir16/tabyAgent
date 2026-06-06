@@ -4,10 +4,7 @@ import { t } from "../i18n.js";
 import { getRunningVersion } from "./store.js";
 
 function escapeHtml(text) {
-    return String(text)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
+    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export function formatUpdateMessage(update, lang) {
@@ -36,12 +33,9 @@ export async function sendUpdateNotification(bot, chatId, update) {
         },
     });
 
-    const sessionBody = [
-        t("update_notify_session_assistant", lang, { version: update.tagName }),
-        "",
-        update.installScript,
-        update.releaseUrl,
-    ].join("\n");
+    const sessionBody = [t("update_notify_session_assistant", lang, { version: update.tagName }), "", update.installScript, update.releaseUrl].join(
+        "\n",
+    );
 
     try {
         appendChatTurn(chatId, [

@@ -14,9 +14,7 @@ let initialTimer = null;
 function warnIfUnknownProductionVersion() {
     if (!isRunningVersionKnown()) {
         if (process.env.NODE_ENV === "production") {
-            console.warn(
-                "tabyAgent: TABYAGENT_VERSION is unknown — update checks use watch mode until a release-tagged image is deployed",
-            );
+            console.warn("tabyAgent: TABYAGENT_VERSION is unknown — update checks use watch mode until a release-tagged image is deployed");
         }
         return;
     }
