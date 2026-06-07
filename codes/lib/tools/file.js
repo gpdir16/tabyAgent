@@ -1,22 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
 import { countMessagesTokens, countTokens, getContextWindow } from "../agent/context.js";
-import { CODES_DIR, USER_DIR } from "../paths.js";
-
-const READ_ROOTS = [USER_DIR, CODES_DIR, "/tmp"];
-const WRITE_ROOTS = [USER_DIR, "/tmp"];
+import { USER_DIR, WORKSPACE_DIR, formatAllowedPaths, isAllowedFilePath, isWorkspaceEnabled } from "../paths.js";
 
 function resolveFilePath(rawPath, { write = false } = {}) {
     const trimmed = rawPath?.trim();
     if (!trimmed) return null;
-    const base = path.isAbsolute(trimmed) ? trimmed : path.join(USER_DIR, trimmed);
-    const resolved = path.normalize(path.resolve(base));
-    const roots = write ? WRITE_ROOTS : READ_ROOTS;
-    for (const root of roots) {
-        const r = path.resolve(root);
-        if (resolved === r || resolved.startsWith(`${r}${path.sep}`)) return resolved;
+    let base;
+    if (path.isAbsolute(trimmed)) {
+        base = trimmed;
+    } else if (isWorkspaceEnabled() && (trimmed === "workspace" || trimmed.startsWith(`workspace${path.sep}`))) {
+        const rel = trimmed === "workspace" ? "" : trimmed.slice("workspace".length + 1);
+        base = rel ? path.join(WORKSPACE_DIR, rel) : WORKSPACE_DIR;
+    } else {
+        base = path.join(USER_DIR, trimmed);
     }
-    return null;
+    const resolved = path.normalize(path.resolve(base));
+    return isAllowedFilePath(resolved, { write }) ? resolved : null;
 }
 
 function getMaxFileReadTokens(messages, modelMeta, model) {
@@ -80,11 +80,14 @@ export const fileToolDefinitions = [
         function: {
             name: "file_read",
             description:
-                "Read a text file. Optional 1-based line range (startLine/endLine or startLine+limit). Output is capped below 50% of remaining context window.",
+                "Read a text file. Default: paths relative to /app/user. Use /workspace or workspace/... only when reading the user's host-mounted PC folder. Optional line range; output capped below 50% of remaining context.",
             parameters: {
                 type: "object",
                 properties: {
-                    path: { type: "string", description: "Absolute path or path relative to /app/user" },
+                    path: {
+                        type: "string",
+                        description: "Absolute path, path relative to /app/user, or workspace/... when a host folder is mounted",
+                    },
                     startLine: { type: "integer", description: "First line to read (1-based, default 1)" },
                     endLine: { type: "integer", description: "Last line to read (1-based, inclusive)" },
                     limit: { type: "integer", description: "Number of lines from startLine (alternative to endLine)" },
@@ -98,11 +101,14 @@ export const fileToolDefinitions = [
         function: {
             name: "file_patch",
             description:
-                "Apply a unified diff patch to a text file. You must call file_read on the same path in this turn first; the file must still match that read (re-read if something else changed it). Paths under /app/user or /tmp are writable.",
+                "Patch a text file (unified diff). Default /app/user; use /workspace only for host-mounted PC files. Call file_read on the same path in this turn first; disk must still match that read.",
             parameters: {
                 type: "object",
                 properties: {
-                    path: { type: "string", description: "Absolute path or path relative to /app/user" },
+                    path: {
+                        type: "string",
+                        description: "Absolute path, path relative to /app/user, or workspace/... when a host folder is mounted",
+                    },
                     diff: {
                         type: "string",
                         description: "Unified diff (---/+++/@@ hunks). Use context lines, lines to remove (-), and lines to add (+).",
@@ -120,7 +126,7 @@ function recordFileSnapshot(ctx, resolvedPath, content) {
 
 export async function executeFileRead(args, ctx) {
     const resolved = resolveFilePath(args?.path, { write: false });
-    if (!resolved) return { error: "path not allowed or missing (readable: /app/user, /app/codes, /tmp)" };
+    if (!resolved) return { error: `path not allowed or missing (readable: ${formatAllowedPaths()})` };
     if (!fs.existsSync(resolved)) return { error: "file not found", path: resolved };
     const stat = fs.statSync(resolved);
     if (!stat.isFile()) return { error: "not a file", path: resolved };
@@ -229,7 +235,7 @@ function applyHunk(fileLines, hunk) {
 
 export async function executeFilePatch(args, ctx = {}) {
     const resolved = resolveFilePath(args?.path, { write: true });
-    if (!resolved) return { error: "path not allowed or missing (writable: /app/user, /tmp)" };
+    if (!resolved) return { error: `path not allowed or missing (writable: ${formatAllowedPaths({ write: true })})` };
 
     const diff = args?.diff;
     if (!diff?.trim()) return { error: "diff is required" };

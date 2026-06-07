@@ -24,7 +24,7 @@ Runs autonomously inside Docker and chats with you through Telegram.
 
 ### 2. Install (Linux / macOS)
 
-Paste this one line into your terminal and press Enter. The installer will ask you to **paste the full token from BotFather**.
+Paste this one line into your terminal and press Enter. The installer will ask you to **paste the full token from BotFather**, then **(optionally)** whether to connect a host folder — default **no**; if yes, it warns about risk and asks for an absolute path.
 
 When the installer asks you to install Docker, press y to install it. tabyAgent requires Docker to run. Automatic installation is supported on macOS and Linux only.
 
@@ -50,6 +50,15 @@ cd tabyAgent
 cp .env.example .env   # set TELEGRAM_BOT_TOKEN
 docker compose up -d
 ```
+
+Optional host folder (default: none):
+
+```bash
+echo 'HOST_WORKSPACE=/absolute/path/to/your/project' >> .env
+docker compose -f docker-compose.yml -f docker-compose.workspace.yml up -d
+```
+
+Mounts at `/workspace` in the container. Default work stays under `/app/user`; use `/workspace` only when a task needs files on the user's PC.
 
 Rebuild the image after pulling code changes:
 

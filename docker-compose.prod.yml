@@ -7,8 +7,11 @@ services:
             - .env
         environment:
             TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+            WORKSPACE_DIR: /workspace
+            WORKSPACE_ENABLED: ${WORKSPACE_ENABLED:-0}
         volumes:
             - tabyagent-user:/app/user
+        # Optional host folder: docker compose -f docker-compose.prod.yml -f docker-compose.workspace.yml up -d
         restart: unless-stopped
 
 volumes:

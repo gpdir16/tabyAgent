@@ -24,7 +24,7 @@ Docker 안에서 자율적으로 작동하며, Telegram으로 대화할 수 있�
 
 ### 2. 설치 (Linux / macOS)
 
-터미널에 아래 한 줄을 붙여넣고 Enter를 누르세요. 설치가 진행된 후 1단계에서 복사한 **BotFather가 보내준 토큰**을 붙여넣으라고 안내가 나옵니다.
+터미널에 아래 한 줄을 붙여넣고 Enter를 누르세요. 설치가 진행된 후 1단계에서 복사한 **BotFather가 보내준 토큰**을 붙여넣으라고 안내가 나옵니다. 이어서 PC 폴더를 연결할지 묻습니다. 기본값은 **아니오**입니다.
 
 설치 중에 Docker를 설치하라는 안내가 나오면 y를 눌러 설치하세요. tabyAgent가 작동하려면 Docker가 필요합니다. 자동 설치는 macOS와 Linux에서만 지원됩니다.
 
@@ -50,6 +50,15 @@ cd tabyAgent
 cp .env.example .env   # TELEGRAM_BOT_TOKEN 설정
 docker compose up -d
 ```
+
+PC 폴더를 연결하려면 (선택, 기본 없음):
+
+```bash
+echo 'HOST_WORKSPACE=/absolute/path/to/your/project' >> .env
+docker compose -f docker-compose.yml -f docker-compose.workspace.yml up -d
+```
+
+연결 시 컨테이너 `/workspace`에 마운트됩니다. 기본 작업은 `/app/user`이고, PC에서 보이는 파일을 다룰 때만 `/workspace`를 씁니다.
 
 코드를 받은 뒤 이미지를 다시 빌드할 때:
 

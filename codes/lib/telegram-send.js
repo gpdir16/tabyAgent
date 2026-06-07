@@ -1,15 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { InputFile } from "grammy";
-import { USER_DIR } from "./paths.js";
+import { formatAllowedPaths, isAllowedFilePath } from "./paths.js";
 
 const MAX_BYTES = 50 * 1024 * 1024;
-
-function isAllowedSendPath(resolved) {
-    const userRoot = path.resolve(USER_DIR);
-    const tmpRoot = path.resolve("/tmp");
-    return resolved === userRoot || resolved.startsWith(`${userRoot}${path.sep}`) || resolved.startsWith(`${tmpRoot}${path.sep}`);
-}
 
 function isImagePath(filePath, mimeType) {
     if (mimeType?.startsWith("image/")) return true;
@@ -25,8 +19,8 @@ export async function sendTelegramFile(bot, chatId, filePath, { caption = "" } =
 
     const resolved = path.resolve(String(filePath || "").trim());
     if (!resolved) return { error: "path is required" };
-    if (!isAllowedSendPath(resolved)) {
-        return { error: `path must be under ${USER_DIR} or /tmp` };
+    if (!isAllowedFilePath(resolved, { write: true })) {
+        return { error: `path must be under ${formatAllowedPaths({ write: true })}` };
     }
     if (!fs.existsSync(resolved)) return { error: `file not found: ${resolved}` };
 

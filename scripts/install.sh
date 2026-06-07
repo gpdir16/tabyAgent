@@ -74,7 +74,6 @@ Install or update tabyAgent.
 Optional:
   TELEGRAM_BOT_TOKEN='...' curl -fsSL ... | bash
   curl -fsSL ... | bash -s -- '1234567890:ABC...'
-
 Language: TABYAGENT_LANG=ko|en  (default: en, or ko if LANG is Korean)
 EOF
 }
@@ -289,6 +288,138 @@ trim_token() {
     printf '%s' "$1" | tr -d '[:space:]'
 }
 
+trim_path() {
+    local p="$1"
+    p="${p#"${p%%[![:space:]]*}"}"
+    p="${p%"${p##*[![:space:]]}"}"
+    printf '%s' "${p}"
+}
+
+expand_user_path() {
+    local p
+    p="$(trim_path "$1")"
+    case "${p}" in
+        "~") printf '%s' "${HOME}" ;;
+        "~/"*) printf '%s' "${HOME}/${p#~/}" ;;
+        *) printf '%s' "${p}" ;;
+    esac
+}
+
+validate_host_workspace_path() {
+    local path="$1"
+    [ -n "${path}" ] || return 1
+    case "${path}" in
+        /*) ;;
+        *)
+            if is_ko; then die "절대 경로를 입력하세요 (예: ${HOME}/my-project)."
+            else die "Enter an absolute path (e.g. ${HOME}/my-project)."; fi
+            ;;
+    esac
+    if [ ! -d "${path}" ]; then
+        if is_ko; then die "폴더가 없습니다: ${path}"
+        else die "Folder does not exist: ${path}"; fi
+    fi
+}
+
+# Interactive host bind mount (first install). Default: no connection.
+prompt_host_workspace() {
+    local path reply
+
+    if ! can_prompt_user; then
+        return 0
+    fi
+
+    say_user ""
+    if is_ko; then
+        say_user "호스트 폴더 연결 (선택)"
+        say_user "  기본 작업은 컨테이너 안 /app/user 에서 합니다."
+        say_user "  연결하면 PC 폴더가 /workspace 로 마운트됩니다 (필요할 때만 사용)."
+        prompt_yes_no "호스트 폴더를 연결할까요?" n || return 0
+        say_user ""
+        say_user "⚠ 경고: 에이전트가 연결된 폴더의 파일을 수정할 수 있는 권한을 갖습니다."
+        say_user "  이 설정이 활성화되면 더 이상 tabyAgent가 격리 상태가 아니게 됩니다."
+        say_user "  연결된 폴더의 파일을 파괴, 유출할 가능성이 존재합니다."
+        prompt_yes_no "그래도 연결하시겠습니까?" n || return 0
+        while true; do
+            read_user_line reply "절대 경로 (예: ${HOME}/my-project): " || return 0
+            path="$(expand_user_path "${reply}")"
+            [ -n "${path}" ] || continue
+            case "${path}" in
+                /*) ;;
+                *)
+                    say_user "절대 경로를 입력하세요."
+                    continue
+                    ;;
+            esac
+            if [ ! -d "${path}" ]; then
+                say_user "폴더가 없습니다: ${path}"
+                continue
+            fi
+            break
+        done
+    else
+        say_user ""
+        say_user "Host folder mount (optional)"
+        say_user "  Default work stays in /app/user inside the container."
+        say_user "  If enabled, a PC folder is mounted at /workspace (use only when needed)."
+        prompt_yes_no "Connect a host folder?" n || return 0
+        say_user ""
+        say_user "⚠ Warning: The agent will be able to modify files in the mounted folder."
+        say_user "  Enabling this ends tabyAgent's isolation from your host."
+        say_user "  Connected files may be destroyed or leaked."
+        prompt_yes_no "Continue anyway?" n || return 0
+        while true; do
+            read_user_line reply "Absolute path (e.g. ${HOME}/my-project): " || return 0
+            path="$(expand_user_path "${reply}")"
+            [ -n "${path}" ] || continue
+            case "${path}" in
+                /*) ;;
+                *)
+                    say_user "Enter an absolute path."
+                    continue
+                    ;;
+            esac
+            if [ ! -d "${path}" ]; then
+                say_user "Folder does not exist: ${path}"
+                continue
+            fi
+            break
+        done
+    fi
+
+    HOST_WORKSPACE="${path}"
+    export HOST_WORKSPACE
+}
+
+resolve_host_workspace() {
+    local updating="$1"
+
+    if [ "${updating}" = true ]; then
+        HOST_WORKSPACE="$(read_env_host_workspace)"
+        if [ -n "${HOST_WORKSPACE:-}" ]; then
+            validate_host_workspace_path "$(expand_user_path "${HOST_WORKSPACE}")"
+            HOST_WORKSPACE="$(expand_user_path "${HOST_WORKSPACE}")"
+        fi
+        export HOST_WORKSPACE
+        return 0
+    fi
+
+    # First install: interactive prompt (default no). Ignore stray HOST_WORKSPACE in the shell.
+    if can_prompt_user; then
+        HOST_WORKSPACE=""
+        export HOST_WORKSPACE
+        prompt_host_workspace
+        return 0
+    fi
+
+    # Non-interactive first install (piped curl | bash with token only).
+    if [ -n "${HOST_WORKSPACE:-}" ]; then
+        validate_host_workspace_path "$(expand_user_path "${HOST_WORKSPACE}")"
+        HOST_WORKSPACE="$(expand_user_path "${HOST_WORKSPACE}")"
+        export HOST_WORKSPACE
+    fi
+}
+
 validate_token() {
     local token="$1"
     [ -n "${token}" ] || die_need_token
@@ -322,6 +453,11 @@ prompt_token() {
 
 write_compose() {
     local image="$1"
+    local workspace_volumes="" workspace_env=""
+    if [ -n "${HOST_WORKSPACE:-}" ]; then
+        workspace_env=$'            WORKSPACE_ENABLED: "1"\n            WORKSPACE_DIR: /workspace\n            HOST_WORKSPACE: '"${HOST_WORKSPACE}"$'\n'
+        workspace_volumes=$'            - '"${HOST_WORKSPACE}"':/workspace\n'
+    fi
     mkdir -p "${INSTALL_DIR}"
     cat >"${COMPOSE_FILE}" <<EOF
 services:
@@ -332,9 +468,9 @@ services:
             - .env
         environment:
             TELEGRAM_BOT_TOKEN: \${TELEGRAM_BOT_TOKEN:-}
-        volumes:
+${workspace_env}        volumes:
             - tabyagent-user:/app/user
-        restart: unless-stopped
+${workspace_volumes}        restart: unless-stopped
 
 volumes:
     tabyagent-user:
@@ -342,8 +478,15 @@ EOF
 }
 
 write_env() {
+    local token="$1"
+    local workspace="${HOST_WORKSPACE:-}"
     umask 077
-    printf 'TELEGRAM_BOT_TOKEN=%s\n' "$1" >"${ENV_FILE}"
+    {
+        printf 'TELEGRAM_BOT_TOKEN=%s\n' "${token}"
+        if [ -n "${workspace}" ]; then
+            printf 'HOST_WORKSPACE=%s\n' "${workspace}"
+        fi
+    } >"${ENV_FILE}"
     chmod 600 "${ENV_FILE}"
 }
 
@@ -352,6 +495,13 @@ read_env_token() {
     # shellcheck disable=SC1090
     . "${ENV_FILE}"
     printf '%s' "${TELEGRAM_BOT_TOKEN:-}"
+}
+
+read_env_host_workspace() {
+    [ -f "${ENV_FILE}" ] || return 0
+    # shellcheck disable=SC1090
+    . "${ENV_FILE}"
+    printf '%s' "${HOST_WORKSPACE:-}"
 }
 
 pull_image() {
@@ -421,6 +571,8 @@ main() {
     ensure_docker
     local compose
     compose="$(compose_cmd)"
+
+    resolve_host_workspace "${updating}"
 
     write_compose "${image}"
     write_env "${token}"

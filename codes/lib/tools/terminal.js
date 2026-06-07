@@ -1,10 +1,10 @@
 import { exec } from "node:child_process";
 import path from "node:path";
 import { loadAgentConfig } from "../config-loader.js";
-import { USER_DIR } from "../paths.js";
+import { USER_DIR, getDefaultWorkDir } from "../paths.js";
 
 function resolveCwd(cwd) {
-    if (!cwd?.trim()) return USER_DIR;
+    if (!cwd?.trim()) return getDefaultWorkDir();
     return path.resolve(cwd.trim());
 }
 
@@ -19,14 +19,14 @@ export const terminalToolDefinitions = [
         function: {
             name: "terminal_run",
             description:
-                "Run a shell command in the Docker container. Default cwd is /app/user. You may use other paths and install tools (apk, npm, pip, etc.) when needed.",
+                "Run a shell command inside Docker. Default cwd is /app/user. Pass cwd: /workspace (or another path) only when the task must run in the user's host-mounted folder.",
             parameters: {
                 type: "object",
                 properties: {
                     command: { type: "string", description: "Shell command to run" },
                     cwd: {
                         type: "string",
-                        description: "Working directory (default /app/user; any path in the container is allowed)",
+                        description: "Working directory (default /app/user; use /workspace only for host-mounted project work)",
                     },
                 },
                 required: ["command"],
@@ -56,13 +56,40 @@ export async function executeTerminalTool(name, args, { signal } = {}) {
 
     return new Promise((resolve) => {
         let stoppedByUser = false;
-        const child = exec(command, {
-            cwd,
-            timeout: timeoutMs,
-            maxBuffer: maxChars * 2,
-            shell: "/bin/sh",
-            env: { ...process.env, HOME: USER_DIR },
-        });
+        const child = exec(
+            command,
+            {
+                cwd,
+                timeout: timeoutMs,
+                maxBuffer: maxChars * 2,
+                shell: "/bin/sh",
+                env: { ...process.env, HOME: USER_DIR },
+            },
+            (err, stdout, stderr) => {
+                signal?.removeEventListener("abort", onAbort);
+                const out = truncate(stdout || "", maxChars);
+                const errOut = truncate(stderr || "", maxChars);
+                const exitCode = err && typeof err.code === "number" ? err.code : 0;
+                if (stoppedByUser) {
+                    resolve({
+                        ok: false,
+                        cwd,
+                        aborted: true,
+                        exitCode: exitCode || child.exitCode || 1,
+                        stdout: out,
+                        stderr: errOut || "Stopped by user.",
+                    });
+                    return;
+                }
+                resolve({
+                    ok: exitCode === 0,
+                    cwd,
+                    exitCode,
+                    stdout: out,
+                    stderr: errOut,
+                });
+            },
+        );
 
         const onAbort = () => {
             stoppedByUser = true;
@@ -71,38 +98,14 @@ export async function executeTerminalTool(name, args, { signal } = {}) {
 
         signal?.addEventListener("abort", onAbort, { once: true });
 
-        child.on("close", (code) => {
-            signal?.removeEventListener("abort", onAbort);
-            const stdout = truncate(child.stdout?.toString() || "", maxChars);
-            const stderr = truncate(child.stderr?.toString() || "", maxChars);
-            if (stoppedByUser) {
-                resolve({
-                    ok: false,
-                    cwd,
-                    aborted: true,
-                    exitCode: code,
-                    stdout,
-                    stderr: stderr || "Stopped by user.",
-                });
-                return;
-            }
-            resolve({
-                ok: code === 0,
-                cwd,
-                exitCode: code ?? 1,
-                stdout,
-                stderr,
-            });
-        });
-
         child.on("error", (err) => {
             signal?.removeEventListener("abort", onAbort);
             resolve({
                 ok: false,
                 cwd,
                 exitCode: err.code ?? 1,
-                stdout: truncate(err.stdout?.toString() || "", maxChars),
-                stderr: truncate(err.stderr?.toString() || err.message || "", maxChars),
+                stdout: "",
+                stderr: truncate(err.message || "", maxChars),
             });
         });
     });

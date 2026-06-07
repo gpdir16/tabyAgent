@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { USER_DIR, DOWNLOAD_DIR, TEMPLATES_USER_DIR, AGENTS_SKILLS_LINK } from "./paths.js";
+import { USER_DIR, DOWNLOAD_DIR, TEMPLATES_USER_DIR, AGENTS_SKILLS_LINK, WORKSPACE_DIR, isWorkspaceEnabled } from "./paths.js";
 function copyDirRecursive(src, dest) {
     fs.mkdirSync(dest, { recursive: true });
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -71,4 +71,8 @@ export function ensureUserDir() {
     }
 
     linkAgentsSkillsDir(path.join(USER_DIR, "skills"));
+
+    if (isWorkspaceEnabled()) {
+        console.log(`tabyAgent: host workspace mounted at ${WORKSPACE_DIR}`);
+    }
 }
