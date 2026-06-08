@@ -5,8 +5,6 @@ import { executeTool, getAllToolDefinitions, toolResultContent } from "./tool-re
 import { extractTurnMessages } from "./chat-history.js";
 import { ensureWithinContextLimit } from "./summarize.js";
 import { countMessagesTokens } from "./context.js";
-import { STOP_BY_USER_HINT } from "./session.js";
-
 function parseToolArgs(raw) {
     try {
         return JSON.parse(raw || "{}");
@@ -67,30 +65,25 @@ function pushSkippedToolResults(messages, toolCalls, startIndex = 0) {
     }
 }
 
-async function finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, opts) {
-    injectPendingUserMessages(messages, opts.session);
-    messages.push({ role: "user", content: STOP_BY_USER_HINT });
-
-    const recovered = await completeTextReply(llm, messages, {
-        onTextDelta: opts.onTextDelta,
-        setStatus: opts.setStatus,
-        maxRetries: opts.maxEmptyReplyRetries,
-        modelCallCount: modelCallCountRef,
-    });
-
+function finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, { partialText = null } = {}) {
     return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
-        text: recovered?.text || null,
+        text: partialText?.trim() || null,
         error: "stopped_by_user",
-        usage: recovered?.usage,
     });
+}
+
+function isStoppedError(err, session) {
+    return Boolean(session?.isAborted?.() || err?.name === "AbortError");
 }
 
 function shouldStop(session) {
     return Boolean(session?.isAborted?.());
 }
 
-async function completeTextReply(llm, messages, { onTextDelta, setStatus, maxRetries, modelCallCount }) {
+async function completeTextReply(llm, messages, { onTextDelta, setStatus, maxRetries, modelCallCount, session, partialTextRef }) {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+        if (shouldStop(session)) return null;
+
         if (attempt > 0) {
             messages.push({ role: "user", content: EMPTY_REPLY_HINT });
         }
@@ -98,18 +91,31 @@ async function completeTextReply(llm, messages, { onTextDelta, setStatus, maxRet
         setStatus("thinking");
         const streamDelta = onTextDelta
             ? (_delta, full) => {
+                  if (partialTextRef) partialTextRef.value = full;
                   setStatus("streaming");
                   onTextDelta(_delta, full);
               }
             : undefined;
 
         modelCallCount.value += 1;
-        const response = await llm.complete({
-            messages,
-            tool_choice: "none",
-            stream: Boolean(onTextDelta),
-            onTextDelta: streamDelta,
-        });
+        let response;
+        try {
+            response = await llm.complete({
+                messages,
+                tool_choice: "none",
+                stream: Boolean(onTextDelta),
+                onTextDelta: streamDelta,
+                signal: session?.signal,
+            });
+        } catch (err) {
+            if (isStoppedError(err, session)) {
+                if (partialTextRef && err.partialText) partialTextRef.value = err.partialText;
+                return null;
+            }
+            throw err;
+        }
+
+        if (shouldStop(session)) return null;
 
         const raw = response.choices?.[0]?.message;
         if (!raw) continue;
@@ -128,6 +134,14 @@ export async function runAgent(userMessage, options = {}) {
     try {
         return await runAgentTurn(userMessage, options);
     } catch (err) {
+        if (isStoppedError(err, options.session)) {
+            return {
+                text: err.partialText?.trim() || null,
+                error: "stopped_by_user",
+                stats: { toolCallCount: 0, modelCallCount: 0, tokensUsed: 0, contextWindow: 128000 },
+                turnMessages: [],
+            };
+        }
         console.error("Agent loop error:", err?.stack || err);
         return {
             text: null,
@@ -154,7 +168,12 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
         chatId,
         onStatusPhase: setStatus,
         visionAttachment,
+        session,
     });
+
+    if (shouldStop(session)) {
+        return finishStoppedTurn(llm, messages, messages.length, 0, modelCallCountRef, { partialText: null });
+    }
     const tools = getAllToolDefinitions();
     const contextBaseLength = messages.length;
 
@@ -163,12 +182,14 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
     const fileSnapshots = new Map();
     let forceReplyNext = false;
 
-    const stopOpts = { session, onTextDelta, setStatus, maxEmptyReplyRetries };
+    const partialTextRef = { value: null };
 
     for (let round = 0; round < maxRounds; round++) {
         injectPendingUserMessages(messages, session);
         if (shouldStop(session)) {
-            return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, stopOpts);
+            return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
+                partialText: partialTextRef.value,
+            });
         }
 
         const toolsEnabled = !forceReplyNext;
@@ -179,19 +200,38 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
         const streamDelta =
             useStream && onTextDelta
                 ? (_delta, full) => {
+                      partialTextRef.value = full;
                       setStatus("streaming");
                       onTextDelta(_delta, full);
                   }
                 : undefined;
 
         modelCallCountRef.value += 1;
-        const response = await llm.complete({
-            messages,
-            tools: toolsEnabled ? tools : undefined,
-            tool_choice: toolsEnabled ? "auto" : "none",
-            stream: useStream,
-            onTextDelta: streamDelta,
-        });
+        let response;
+        try {
+            response = await llm.complete({
+                messages,
+                tools: toolsEnabled ? tools : undefined,
+                tool_choice: toolsEnabled ? "auto" : "none",
+                stream: useStream,
+                onTextDelta: streamDelta,
+                signal: session?.signal,
+            });
+        } catch (err) {
+            if (isStoppedError(err, session)) {
+                if (err.partialText) partialTextRef.value = err.partialText;
+                return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
+                    partialText: partialTextRef.value,
+                });
+            }
+            throw err;
+        }
+
+        if (shouldStop(session)) {
+            return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
+                partialText: partialTextRef.value,
+            });
+        }
 
         forceReplyNext = false;
 
@@ -209,12 +249,25 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
                 });
             }
 
+            if (shouldStop(session)) {
+                return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
+                    partialText: partialTextRef.value,
+                });
+            }
+
             const recovered = await completeTextReply(llm, messages, {
                 onTextDelta,
                 setStatus,
                 maxRetries: maxEmptyReplyRetries,
                 modelCallCount: modelCallCountRef,
+                session,
+                partialTextRef,
             });
+            if (shouldStop(session)) {
+                return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
+                    partialText: partialTextRef.value || recovered?.text,
+                });
+            }
             if (recovered) {
                 return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
                     text: recovered.text,
@@ -242,7 +295,9 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
             injectPendingUserMessages(messages, session);
             if (shouldStop(session)) {
                 pushSkippedToolResults(messages, toolCalls, toolCalls.indexOf(tc));
-                return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, stopOpts);
+                return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
+                    partialText: partialTextRef.value,
+                });
             }
 
             setStatus("tools", tc.function.name);
@@ -278,7 +333,9 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
             if (shouldStop(session)) {
                 pushToolResult(messages, tc.id, result);
                 pushSkippedToolResults(messages, toolCalls, toolCalls.indexOf(tc) + 1);
-                return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, stopOpts);
+                return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
+                    partialText: partialTextRef.value,
+                });
             }
             pushToolResult(messages, tc.id, result);
         }
@@ -291,12 +348,25 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
 
     messages.push({ role: "user", content: FORCE_REPLY_HINT });
 
+    if (shouldStop(session)) {
+        return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
+            partialText: partialTextRef.value,
+        });
+    }
+
     const recovered = await completeTextReply(llm, messages, {
         onTextDelta,
         setStatus,
         maxRetries: maxEmptyReplyRetries,
         modelCallCount: modelCallCountRef,
+        session,
+        partialTextRef,
     });
+    if (shouldStop(session)) {
+        return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
+            partialText: partialTextRef.value || recovered?.text,
+        });
+    }
     if (recovered) {
         return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
             text: recovered.text,

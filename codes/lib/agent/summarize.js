@@ -118,7 +118,7 @@ function recentUserMessage(recentItems, fallback) {
     return fallback;
 }
 
-async function compressTranscript(llm, transcript) {
+async function compressTranscript(llm, transcript, { signal } = {}) {
     const response = await llm.complete({
         messages: [
             { role: "system", content: COMPRESS_SYSTEM },
@@ -128,13 +128,14 @@ async function compressTranscript(llm, transcript) {
             },
         ],
         tool_choice: "none",
+        signal,
     });
     const text = response.choices?.[0]?.message?.content?.trim();
     if (!text) throw new Error("Compression model returned empty summary");
     return text;
 }
 
-async function applyIntelligentCompression(llm, userMessage, fullHistory, model, modelMeta, visionAttachment = null) {
+async function applyIntelligentCompression(llm, userMessage, fullHistory, model, modelMeta, visionAttachment = null, { signal } = {}) {
     const recentBudget = getKeepRecentTokenBudget(modelMeta);
     const { oldItems, recentItems } = splitHistoryForCompression(fullHistory, userMessage, model, recentBudget);
 
@@ -145,7 +146,7 @@ async function applyIntelligentCompression(llm, userMessage, fullHistory, model,
     const transcript = oldItemsToTranscript(oldItems);
     console.log(`tabyAgent: compressing context (${oldItems.length} older block(s), keeping ~${recentBudget} recent tokens verbatim)`);
 
-    const summary = await compressTranscript(llm, transcript);
+    const summary = await compressTranscript(llm, transcript, { signal });
     const recentHistory = recentItemsToHistory(recentItems);
     const latestUser = recentUserMessage(recentItems, userMessage);
 
@@ -156,7 +157,7 @@ async function applyIntelligentCompression(llm, userMessage, fullHistory, model,
     });
 }
 
-export async function ensureWithinContextLimit(llm, userMessage, modelMeta, { chatId, onStatusPhase, visionAttachment = null } = {}) {
+export async function ensureWithinContextLimit(llm, userMessage, modelMeta, { chatId, onStatusPhase, visionAttachment = null, session = null } = {}) {
     const fullHistory = chatId ? loadChatHistory(chatId) : [];
     const model = llm.provider.model;
     const trigger = getCompressTriggerTokens(modelMeta);
@@ -182,13 +183,21 @@ export async function ensureWithinContextLimit(llm, userMessage, modelMeta, { ch
     }
 
     try {
+        if (session?.isAborted?.()) {
+            return messages;
+        }
         onStatusPhase?.("compressing");
-        const compressed = await applyIntelligentCompression(llm, userMessage, fullHistory, model, modelMeta, visionAttachment);
+        const compressed = await applyIntelligentCompression(llm, userMessage, fullHistory, model, modelMeta, visionAttachment, {
+            signal: session?.signal,
+        });
         if (compressed) {
             messages = compressed;
             tokens = tokenCount(messages, model);
         }
     } catch (err) {
+        if (session?.isAborted?.() || err?.name === "AbortError") {
+            throw err;
+        }
         console.warn("tabyAgent: intelligent compression failed:", err.message || err);
     }
 

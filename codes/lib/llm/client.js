@@ -23,7 +23,7 @@ export async function createLlmClient() {
     return {
         provider,
         modelMeta,
-        async complete({ messages, tools, tool_choice, stream, onTextDelta }) {
+        async complete({ messages, tools, tool_choice, stream, onTextDelta, signal }) {
             return chatCompletions({
                 client,
                 model: provider.model,
@@ -32,6 +32,7 @@ export async function createLlmClient() {
                 tool_choice,
                 stream,
                 onTextDelta,
+                signal,
             });
         },
     };

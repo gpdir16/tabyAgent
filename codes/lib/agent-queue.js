@@ -6,12 +6,32 @@ let running = false;
 /**
  * @param {'user'|'cron'} priority
  * @param {() => Promise<unknown>} fn
+ * @param {{ chatId?: string, cancellable?: boolean }} [opts]
  */
-export function scheduleWork(priority, fn) {
+export function scheduleWork(priority, fn, opts = {}) {
+    const chatId = opts.chatId ? String(opts.chatId) : null;
+    const cancellable = Boolean(opts.cancellable && chatId);
+
     return new Promise((resolve, reject) => {
-        queue.push({ priority, fn, resolve, reject });
+        queue.push({ priority, fn, resolve, reject, chatId, cancellable });
         pump();
     });
+}
+
+/** Remove a queued agent turn for this chat. Returns true if something was cancelled. */
+export function cancelQueuedAgentWork(chatId) {
+    const key = String(chatId);
+    let cancelled = false;
+
+    for (let i = queue.length - 1; i >= 0; i -= 1) {
+        const item = queue[i];
+        if (!item.cancellable || item.chatId !== key) continue;
+        queue.splice(i, 1);
+        item.resolve({ error: "stopped_by_user", queued: true });
+        cancelled = true;
+    }
+
+    return cancelled;
 }
 
 function pickNextIndex() {
