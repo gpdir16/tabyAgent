@@ -6,6 +6,7 @@ import { loadUserConfig, saveUserConfig } from "./config-loader.js";
 import { claimOwnerIfNone, hasOwner, isApproved, issuePendingCode } from "./auth.js";
 import { t } from "./i18n.js";
 import { fetchProviderModels, providerFromWizardState, partitionModelsForPicker, buildVendorPickerItems, MODELS_PER_PAGE } from "./llm/models.js";
+import { deleteMessageSafe, replySafe, sendMessageSafe } from "./telegram-api.js";
 
 const STATE_PATH = path.join(USER_DIR, "temp", "onboarding.json");
 
@@ -50,15 +51,6 @@ function clearState() {
     }
 }
 
-async function deleteMessageSafe(bot, chatId, messageId) {
-    if (!messageId) return;
-    try {
-        await bot.api.deleteMessage(chatId, messageId);
-    } catch {
-        // ignore
-    }
-}
-
 async function clearActivePrompt(bot, chatId, state) {
     await deleteMessageSafe(bot, chatId, state.activeMessageId);
     state.activeMessageId = null;
@@ -69,10 +61,10 @@ async function clearActivePrompt(bot, chatId, state) {
 async function replaceStep(bot, chatId, state, text, keyboard) {
     await clearActivePrompt(bot, chatId, state);
     const opts = keyboard ? { reply_markup: keyboard } : {};
-    const msg = await bot.api.sendMessage(chatId, text, opts);
-    state.activeMessageId = msg.message_id;
+    const sent = await sendMessageSafe(bot, chatId, text, opts);
+    state.activeMessageId = sent.messageIds[0] ?? null;
     saveState(state);
-    return msg;
+    return sent;
 }
 
 export function isConfigReady() {
@@ -360,7 +352,7 @@ async function finishWizard(bot, chatId, state, { userMessageId } = {}) {
         await clearActivePrompt(bot, chatId, state);
         await deleteMessageSafe(bot, chatId, userMessageId);
         clearState();
-        await bot.api.sendMessage(chatId, t("auth_denied_command", lang));
+        await sendMessageSafe(bot, chatId, t("auth_denied_command", lang));
         return;
     }
 
@@ -380,11 +372,11 @@ async function finishWizard(bot, chatId, state, { userMessageId } = {}) {
     if (!isApproved(chatId)) {
         const claimed = claimOwnerIfNone(chatId);
         if (!claimed.ok) {
-            await bot.api.sendMessage(chatId, t("auth_denied_command", state.data.language || "en"));
+            await sendMessageSafe(bot, chatId, t("auth_denied_command", state.data.language || "en"));
             return;
         }
     }
-    await bot.api.sendMessage(chatId, doneText);
+    await sendMessageSafe(bot, chatId, doneText);
 }
 
 async function sendModelStep(bot, chatId, state) {
@@ -604,7 +596,7 @@ export async function handleConfigWizardText(ctx, bot) {
             if (hasOwner() && !isApproved(chatId)) {
                 const lang = loadUserConfig().language || "en";
                 const { code, minutes } = issuePendingCode(chatId);
-                await ctx.reply(t("auth_pending", lang, { code, minutes }));
+                await replySafe(ctx, t("auth_pending", lang, { code, minutes }));
                 return;
             }
             state = emptyState(chatId);
@@ -616,7 +608,7 @@ export async function handleConfigWizardText(ctx, bot) {
 
     const access = assertWizardChat(ctx, state);
     if (!access.ok) {
-        await ctx.reply(texts(access.lang).busy);
+        await replySafe(ctx, texts(access.lang).busy);
         return;
     }
 

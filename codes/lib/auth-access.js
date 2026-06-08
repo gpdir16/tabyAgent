@@ -1,20 +1,21 @@
 import { loadUserConfig } from "./config-loader.js";
 import { claimOwnerIfNone, hasOwner, isApproved, issuePendingCode, approveCode } from "./auth.js";
 import { t } from "./i18n.js";
+import { replySafe, sendMessageSafe } from "./telegram-api.js";
 
 export async function replyAuthPending(ctx, chatId) {
     const lang = loadUserConfig().language || "en";
     const { code, minutes } = issuePendingCode(chatId);
-    await ctx.reply(t("auth_pending", lang, { code, minutes }));
+    await replySafe(ctx, t("auth_pending", lang, { code, minutes }));
 }
 
 export async function notifyOwnerTransfer(bot, { previousOwner, newChatId, approvedByChatId }) {
     const lang = loadUserConfig().language || "en";
     if (previousOwner && previousOwner !== newChatId) {
-        await bot.api.sendMessage(previousOwner, t("auth_disconnected", lang)).catch(() => {});
+        await sendMessageSafe(bot, previousOwner, t("auth_disconnected", lang));
     }
     if (newChatId && newChatId !== approvedByChatId) {
-        await bot.api.sendMessage(newChatId, t("auth_granted", lang)).catch(() => {});
+        await sendMessageSafe(bot, newChatId, t("auth_granted", lang));
     }
 }
 

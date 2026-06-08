@@ -33,15 +33,19 @@ export function getAllToolDefinitions() {
 }
 
 export async function executeTool(name, args, ctx = {}) {
-    if (name === "file_read") return executeFileRead(args, ctx);
-    if (name === "file_patch") return executeFilePatch(args, ctx);
-    if (name === "config_set") return executeConfigTool(name, args);
-    if (name.startsWith("skills_")) return executeSkillsTool(name, args);
-    if (name.startsWith("cron_")) return executeCronTool(name, args);
-    if (name === "terminal_run") return executeTerminalTool(name, args, ctx);
-    if (name === "telegram_send_file") return executeSendFileTool(name, args, ctx);
-    if (name === "mcp_reload" || name.startsWith("mcp__")) return executeMcpTool(name, args);
-    return { error: `Unknown tool: ${name}` };
+    try {
+        if (name === "file_read") return await executeFileRead(args, ctx);
+        if (name === "file_patch") return await executeFilePatch(args, ctx);
+        if (name === "config_set") return await executeConfigTool(name, args);
+        if (name.startsWith("skills_")) return await executeSkillsTool(name, args);
+        if (name.startsWith("cron_")) return await executeCronTool(name, args);
+        if (name === "terminal_run") return await executeTerminalTool(name, args, ctx);
+        if (name === "telegram_send_file") return await executeSendFileTool(name, args, ctx);
+        if (name === "mcp_reload" || name.startsWith("mcp__")) return await executeMcpTool(name, args);
+        return { error: `Unknown tool: ${name}` };
+    } catch (err) {
+        return { error: err?.message || String(err) };
+    }
 }
 
 export function toolResultContent(result) {

@@ -1,4 +1,5 @@
-import { sendTelegramReply, formatStatsFooterPlain } from "./telegram-stats.js";
+import { sendTelegramReply } from "./telegram-stats.js";
+import { safeTelegramApiFast } from "./telegram-api.js";
 
 const MAX_DRAFT_LEN = 4096;
 const MIN_UPDATE_MS = 300;
@@ -25,38 +26,27 @@ export class TelegramDraftStream {
             return true;
         }
 
-        try {
-            await this.bot.api.sendMessageDraft(this.chatId, this.draftId, text);
+        const res = await safeTelegramApiFast(() => this.bot.api.sendMessageDraft(this.chatId, this.draftId, text));
+        if (res.ok) {
             this.lastSent = text;
             this.lastSentAt = now;
             return true;
-        } catch (err) {
-            this.available = false;
-            console.warn("sendMessageDraft failed, falling back:", err.message || err);
-            return false;
         }
+
+        this.available = false;
+        console.warn("sendMessageDraft failed, falling back:", res.error);
+        return false;
     }
 
     async finalize(stats) {
-        if (this.finalized) return;
+        if (this.finalized) return false;
         this.finalized = true;
 
         const text = this.lastSent.trim();
-        if (!text) return null;
+        if (!text) return false;
 
-        try {
-            await sendTelegramReply(this.bot, this.chatId, text, stats);
-            return true;
-        } catch (err) {
-            console.warn("finalize send failed:", err.message || err);
-            try {
-                const plain = stats ? `${text}${formatStatsFooterPlain(stats)}` : text;
-                return await this.bot.api.sendMessage(this.chatId, plain);
-            } catch (err2) {
-                console.warn("finalize plain send failed:", err2.message || err2);
-                return null;
-            }
-        }
+        await sendTelegramReply(this.bot, this.chatId, text, stats);
+        return true;
     }
 
     getLastText() {

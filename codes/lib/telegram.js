@@ -18,6 +18,7 @@ import { ensureModelMeta } from "./llm/model-meta.js";
 import { getMergedProvider } from "./config-loader.js";
 import { setCronJobHandler, startCronScheduler } from "./cron/scheduler.js";
 import { startUpdateScheduler } from "./update/scheduler.js";
+import { replySafe, sendChatActionSafe } from "./telegram-api.js";
 
 function isReplyFailure(result) {
     return (result?.error === "tool_rounds_exceeded" || result?.error === "empty_reply_exhausted") && !result.text?.trim();
@@ -27,9 +28,24 @@ function isStoppedByUser(result) {
     return result?.error === "stopped_by_user";
 }
 
+function isAgentError(result) {
+    return result?.error === "agent_error" || result?.error === "agent_turn_failed";
+}
+
 function replyFailureMessage(result, lang) {
     if (result?.error === "empty_reply_exhausted") return t("empty_reply_exhausted", lang);
     return t("tool_rounds_exceeded", lang);
+}
+
+async function notifyUserError(status, ctx, bot, chatId, text, { parseMode } = {}) {
+    const shown = await status.completeError(text, { parseMode });
+    if (!shown) {
+        if (ctx) {
+            await replySafe(ctx, text, { parse_mode: parseMode });
+        } else {
+            await sendTelegramReply(bot, chatId, text, null);
+        }
+    }
 }
 
 async function streamReplyEditFallback(bot, chatId, fullText, stats) {
@@ -53,6 +69,7 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, { visionAt
     if (mode === "off") {
         const result = await runAgent(userText, { ...agentOpts, visionAttachment });
         if (isStoppedByUser(result)) return result;
+        if (isAgentError(result)) return result;
         await status.completeSuccess();
         await sendTelegramReply(bot, chatId, result.text, result.stats);
         saveChatTurn(chatId, result);
@@ -73,7 +90,7 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, { visionAt
 
         const finalText = result.text || draft.getLastText() || "…";
 
-        if (isReplyFailure(result) || isStoppedByUser(result)) {
+        if (isReplyFailure(result) || isStoppedByUser(result) || isAgentError(result)) {
             return result;
         }
 
@@ -94,7 +111,7 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, { visionAt
     }
 
     const result = await runAgent(userText, { ...agentOpts, visionAttachment });
-    if (isStoppedByUser(result)) return result;
+    if (isStoppedByUser(result) || isAgentError(result)) return result;
     if (!isReplyFailure(result)) {
         await status.completeSuccess();
         await streamReplyEditFallback(bot, chatId, result.text || "…", result.stats);
@@ -105,18 +122,26 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, { visionAt
 
 function saveChatTurn(chatId, result) {
     if (result?.turnMessages?.length) {
-        appendChatTurn(chatId, result.turnMessages);
+        try {
+            appendChatTurn(chatId, result.turnMessages);
+        } catch (err) {
+            console.error("Chat history save failed:", err?.stack || err);
+        }
     }
 }
 
 async function runCronJobForUser(bot, job) {
-    const lang = loadUserConfig().language || "en";
-    const header = t("cron_auto_header", lang);
-    const userText = `${header}\n\n${job.prompt}`;
-    const result = await runAgent(userText, { chatId: job.chatId, bot });
-    const body = result.text?.trim() || t("cron_no_output", lang);
-    await sendTelegramReply(bot, job.chatId, `${header}\n\n${body}`, result.stats);
-    saveChatTurn(job.chatId, result);
+    try {
+        const lang = loadUserConfig().language || "en";
+        const header = t("cron_auto_header", lang);
+        const userText = `${header}\n\n${job.prompt}`;
+        const result = await runAgent(userText, { chatId: job.chatId, bot });
+        const body = result.text?.trim() || t("cron_no_output", lang);
+        await sendTelegramReply(bot, job.chatId, `${header}\n\n${body}`, result.stats);
+        saveChatTurn(job.chatId, result);
+    } catch (err) {
+        console.error("Cron job error:", err?.stack || err);
+    }
 }
 
 async function handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment = null } = {}) {
@@ -124,11 +149,17 @@ async function handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment = 
     const status = new TelegramStatusMessage(bot, chatId, lang);
     const session = beginAgentSession(chatId);
 
-    await status.start();
-    await ctx.replyWithChatAction("typing").catch(() => {});
-
     try {
+        await status.start();
+        await sendChatActionSafe(bot, chatId, "typing");
+
         const result = await replyWithStreaming(bot, ctx, chatId, userText, status, { visionAttachment, session });
+
+        if (isAgentError(result)) {
+            const msg = result.errorDetail ? formatAgentError(new Error(result.errorDetail), lang) : t("tool_rounds_exceeded", lang);
+            await notifyUserError(status, ctx, bot, chatId, msg, { parseMode: "HTML" });
+            return result;
+        }
 
         if (isStoppedByUser(result)) {
             await status.completeSuccess();
@@ -139,11 +170,16 @@ async function handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment = 
         }
 
         if (isReplyFailure(result)) {
-            await status.completeError(replyFailureMessage(result, lang));
+            await notifyUserError(status, ctx, bot, chatId, replyFailureMessage(result, lang));
         }
 
         return result;
+    } catch (err) {
+        console.error("Agent turn error:", err?.stack || err);
+        await notifyUserError(status, ctx, bot, chatId, formatAgentError(err, lang), { parseMode: "HTML" });
+        return { error: "agent_turn_failed", text: null };
     } finally {
+        status.dispose();
         endAgentSession(chatId);
     }
 }
@@ -151,7 +187,7 @@ async function handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment = 
 async function tryEnqueueDuringRun(ctx, chatId, text) {
     if (!enqueueAgentMessage(chatId, text)) return false;
     const lang = loadUserConfig().language || "en";
-    await ctx.reply(t("message_added_during_run", lang));
+    await replySafe(ctx, t("message_added_during_run", lang));
     return true;
 }
 
@@ -162,6 +198,9 @@ export async function startTelegramBot() {
     }
 
     const bot = new Bot(token);
+    bot.catch((err) => {
+        console.error("Telegram bot error:", err?.stack || err);
+    });
     const streamMode = loadAgentConfig().telegramStreaming ?? "draft";
     console.log(`tabyAgent: Telegram running (streaming: ${streamMode})`);
 
@@ -179,7 +218,7 @@ export async function startTelegramBot() {
             return;
         }
         const lang = loadUserConfig().language || "en";
-        await ctx.reply(t("start_ready", lang));
+        await replySafe(ctx, t("start_ready", lang));
     });
 
     bot.command("new", async (ctx) => {
@@ -198,11 +237,11 @@ export async function startTelegramBot() {
         try {
             await scheduleWork("user", async () => {
                 const message = await handleNewChat(bot, chatId);
-                await ctx.reply(message);
+                await replySafe(ctx, message);
             });
         } catch (err) {
             console.error("New chat error:", err?.stack || err);
-            await ctx.reply(formatAgentError(err, lang), { parse_mode: "HTML" });
+            await replySafe(ctx, formatAgentError(err, lang), { parse_mode: "HTML" });
         }
     });
 
@@ -220,11 +259,11 @@ export async function startTelegramBot() {
         }
 
         if (requestAgentStop(chatId)) {
-            await ctx.reply(t("stop_requested", lang));
+            await replySafe(ctx, t("stop_requested", lang));
             return;
         }
 
-        await ctx.reply(t("stop_nothing_running", lang));
+        await replySafe(ctx, t("stop_nothing_running", lang));
     });
 
     bot.command("reload", async (ctx) => {
@@ -246,7 +285,7 @@ export async function startTelegramBot() {
             });
         } catch (err) {
             console.error("Reload error:", err?.stack || err);
-            await ctx.reply(formatAgentError(err, lang), { parse_mode: "HTML" });
+            await replySafe(ctx, formatAgentError(err, lang), { parse_mode: "HTML" });
         }
     });
 
@@ -263,7 +302,7 @@ export async function startTelegramBot() {
         const code = (ctx.match || "").trim();
 
         if (!isConfigReady()) {
-            await ctx.reply(t("auth_denied_command", lang));
+            await replySafe(ctx, t("auth_denied_command", lang));
             return;
         }
 
@@ -272,12 +311,12 @@ export async function startTelegramBot() {
         }
 
         if (!code) {
-            await ctx.reply(t("auth_approve_usage", lang));
+            await replySafe(ctx, t("auth_approve_usage", lang));
             return;
         }
 
         const result = await runOwnerApprove(bot, chatId, code);
-        await ctx.reply(result.message);
+        await replySafe(ctx, result.message);
     });
 
     bot.callbackQuery(/^cfg:/, async (ctx) => {
@@ -318,7 +357,7 @@ export async function startTelegramBot() {
             });
         } catch (err) {
             console.error("File message error:", err?.stack || err);
-            await ctx.reply(formatAgentError(err, lang), { parse_mode: "HTML" });
+            await replySafe(ctx, formatAgentError(err, lang), { parse_mode: "HTML" });
         }
     });
 
@@ -352,8 +391,7 @@ export async function startTelegramBot() {
             });
         } catch (err) {
             console.error("Agent error:", err?.stack || err);
-            const status = new TelegramStatusMessage(bot, chatId, lang);
-            await status.completeError(formatAgentError(err, lang), { parseMode: "HTML" });
+            await replySafe(ctx, formatAgentError(err, lang), { parse_mode: "HTML" });
         }
     });
 

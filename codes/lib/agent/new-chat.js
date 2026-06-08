@@ -2,6 +2,7 @@ import { loadUserConfig } from "../config-loader.js";
 import { runAgent } from "./loop.js";
 import { clearChatHistory, loadChatHistory } from "./chat-history.js";
 import { TelegramStatusMessage } from "../telegram-status.js";
+import { sendChatActionSafe } from "../telegram-api.js";
 import { t } from "../i18n.js";
 
 export const MIN_TURNS_FOR_MEMORY_FLUSH = 5;
@@ -52,25 +53,37 @@ export async function handleNewChat(bot, chatId) {
 
     if (turnCount >= MIN_TURNS_FOR_MEMORY_FLUSH) {
         const status = new TelegramStatusMessage(bot, chatId, lang);
-        await status.start();
-        await bot.api.sendChatAction(chatId, "typing").catch(() => {});
-
         try {
-            await runAgent(memoryFlushPrompt(lang), {
+            await status.start();
+            await sendChatActionSafe(bot, chatId, "typing");
+
+            const result = await runAgent(memoryFlushPrompt(lang), {
                 chatId,
                 bot,
                 onStatusPhase: (phase, detail) => status.setPhase(phase, detail),
             });
-            await status.completeSuccess();
-            memoryFlushed = true;
+
+            if (result?.error === "agent_error") {
+                memoryFlushFailed = true;
+                await status.completeError(t("new_chat_memory_error", lang));
+            } else {
+                await status.completeSuccess();
+                memoryFlushed = true;
+            }
         } catch (err) {
             console.error("New chat memory flush error:", err?.stack || err);
             await status.completeError(t("new_chat_memory_error", lang));
             memoryFlushFailed = true;
+        } finally {
+            status.dispose();
         }
     }
 
-    clearChatHistory(chatId);
+    try {
+        clearChatHistory(chatId);
+    } catch (err) {
+        console.error("Clear chat history failed:", err?.stack || err);
+    }
 
     if (memoryFlushFailed) return t("new_chat_memory_error", lang);
     if (memoryFlushed) return t("new_chat_ok_flushed", lang);

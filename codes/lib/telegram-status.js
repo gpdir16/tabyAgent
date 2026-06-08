@@ -1,4 +1,7 @@
 import { statusText } from "./i18n.js";
+import { deleteMessageSafe, editMessageTextSafe, sendMessageSafe } from "./telegram-api.js";
+
+const REFRESH_MS = 3000;
 
 function formatToolDisplayName(toolName) {
     if (!toolName) return "";
@@ -65,6 +68,7 @@ export class TelegramStatusMessage {
         this.messageId = null;
         this.timer = null;
         this.finished = false;
+        this.available = false;
     }
 
     bodyText() {
@@ -81,64 +85,73 @@ export class TelegramStatusMessage {
         return parts.join(" · ");
     }
 
+    hasMessage() {
+        return Boolean(this.messageId);
+    }
+
+    /** @returns {Promise<boolean>} false when status UI could not be shown (agent may still run). */
     async start() {
-        const msg = await this.bot.api.sendMessage(this.chatId, this.bodyText());
-        this.messageId = msg.message_id;
+        const res = await sendMessageSafe(this.bot, this.chatId, this.bodyText());
+        if (!res.ok || !res.messageIds.length) {
+            this.available = false;
+            return false;
+        }
+
+        this.messageId = res.messageIds[0];
+        this.available = true;
         this.timer = setInterval(() => {
             void this.refresh();
-        }, 1000);
+        }, REFRESH_MS);
+        return true;
     }
 
     setPhase(phase, detail = null) {
         if (this.finished) return;
         this.phase = phase;
         this.detail = detail;
-        void this.refresh();
     }
 
     async refresh() {
         if (this.finished || !this.messageId) return;
-        try {
-            await this.bot.api.editMessageText(this.chatId, this.messageId, this.bodyText());
-        } catch {
-            // ignore rate limits / unchanged
-        }
+        await editMessageTextSafe(this.bot, this.chatId, this.messageId, this.bodyText());
+    }
+
+    dispose() {
+        if (this.timer) clearInterval(this.timer);
+        this.timer = null;
     }
 
     async completeSuccess() {
         if (this.finished) return;
         this.finished = true;
-        if (this.timer) clearInterval(this.timer);
-        this.timer = null;
+        this.dispose();
         if (!this.messageId) return;
-        try {
-            await this.bot.api.deleteMessage(this.chatId, this.messageId);
-        } catch {
-            // ignore
-        }
+        await deleteMessageSafe(this.bot, this.chatId, this.messageId);
         this.messageId = null;
     }
 
+    /** @returns {Promise<boolean>} */
     async completeError(text, { parseMode } = {}) {
-        if (this.finished) return;
+        if (this.finished) return false;
         this.finished = true;
-        if (this.timer) clearInterval(this.timer);
-        this.timer = null;
+        this.dispose();
         this.phase = "error";
-        if (!this.messageId) return;
+
+        if (!this.messageId) return false;
+
         const elapsed = formatElapsedSeconds((Date.now() - this.startedAt) / 1000, this.lang);
         const label = statusText("error", this.lang);
         const body = `${label} · ${elapsed}\n\n${text}`;
-        try {
-            await this.bot.api.editMessageText(this.chatId, this.messageId, body, {
-                parse_mode: parseMode,
-            });
-        } catch {
-            try {
-                await this.bot.api.editMessageText(this.chatId, this.messageId, body.replace(/<[^>]+>/g, ""));
-            } catch {
-                // ignore
-            }
-        }
+        const ok = await editMessageTextSafe(this.bot, this.chatId, this.messageId, body, { parseMode });
+        return ok;
+    }
+
+    /** Fallback when status message was never created. */
+    async sendStandaloneError(text, { parseMode } = {}) {
+        const elapsed = formatElapsedSeconds((Date.now() - this.startedAt) / 1000, this.lang);
+        const label = statusText("error", this.lang);
+        const body = `${label} · ${elapsed}\n\n${text}`;
+        const res = await sendMessageSafe(this.bot, this.chatId, body, { parseMode });
+        return res.ok;
     }
 }

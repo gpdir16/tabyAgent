@@ -2,6 +2,7 @@ import { loadUserConfig } from "../config-loader.js";
 import { appendChatTurn } from "../agent/chat-history.js";
 import { t } from "../i18n.js";
 import { getRunningVersion } from "./store.js";
+import { sendMessageSafe } from "../telegram-api.js";
 
 function escapeHtml(text) {
     return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -26,12 +27,17 @@ export async function sendUpdateNotification(bot, chatId, update) {
     const html = formatUpdateMessage(update, lang);
     const buttonLabel = t("update_notify_button", lang);
 
-    await bot.api.sendMessage(chatId, html, {
+    const sent = await sendMessageSafe(bot, chatId, html, {
         parse_mode: "HTML",
         reply_markup: {
             inline_keyboard: [[{ text: buttonLabel, url: update.releaseUrl }]],
         },
     });
+
+    if (!sent.ok) {
+        const plain = [t("update_notify_title", lang, { version: update.tagName }), update.installScript, update.releaseUrl].join("\n\n");
+        await sendMessageSafe(bot, chatId, plain);
+    }
 
     const sessionBody = [t("update_notify_session_assistant", lang, { version: update.tagName }), "", update.installScript, update.releaseUrl].join(
         "\n",

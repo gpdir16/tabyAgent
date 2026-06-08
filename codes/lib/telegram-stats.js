@@ -3,6 +3,7 @@ import { InputFile } from "grammy";
 import { loadUserConfig } from "./config-loader.js";
 import { buildTelegramParts } from "./telegram-markdown.js";
 import { renderTablePng } from "./telegram-table-image.js";
+import { sendMessageSafe, sendPhotoSafe } from "./telegram-api.js";
 
 function formatNumber(n) {
     return Number(n).toLocaleString("en-US");
@@ -29,32 +30,37 @@ export function formatStatsFooter({ toolCallCount = 0, modelCallCount = 0, token
     return plain.replace(/^\n\n/, "\n\n<i>").replace(/$/, "</i>");
 }
 
-function splitHtmlChunks(html, maxLen) {
-    const parts = [];
-    for (let i = 0; i < html.length; i += maxLen) {
-        parts.push(html.slice(i, i + maxLen));
-    }
-    return parts.length ? parts : [html];
+function tableToPlain(rows) {
+    if (!rows?.length) return "";
+    return rows.map((row) => row.map((c) => String(c ?? "")).join(" | ")).join("\n");
 }
 
-async function sendHtmlChunks(bot, chatId, html, parseMode = "HTML") {
-    const chunks = splitHtmlChunks(html, 4096);
-    for (const chunk of chunks) {
-        if (!chunk.trim()) continue;
-        await bot.api.sendMessage(chatId, chunk, { parse_mode: parseMode });
-    }
+async function sendHtmlChunks(bot, chatId, html) {
+    await sendMessageSafe(bot, chatId, html, { parse_mode: "HTML" });
 }
 
 async function sendTablePhoto(bot, chatId, rows) {
-    const pngPath = await renderTablePng(rows);
+    let pngPath;
     try {
-        await bot.api.sendPhoto(chatId, new InputFile(pngPath));
+        pngPath = await renderTablePng(rows);
+    } catch (err) {
+        console.warn("Table render failed:", err.message || err);
+        await sendMessageSafe(bot, chatId, tableToPlain(rows));
+        return;
+    }
+
+    try {
+        const input = new InputFile(pngPath);
+        const sent = await sendPhotoSafe(bot, chatId, input);
+        if (!sent.ok) {
+            await sendMessageSafe(bot, chatId, tableToPlain(rows));
+        }
     } finally {
         fs.unlink(pngPath, () => {});
     }
 }
 
-/** Text and table photos in document order (text before each table). */
+/** Text and table photos in document order (text before each table). Never throws. */
 export async function sendTelegramReply(bot, chatId, bodyText, stats) {
     const body = (bodyText || "").trim() || "…";
     const footerHtml = stats ? formatStatsFooter(stats) : "";
@@ -70,11 +76,7 @@ export async function sendTelegramReply(bot, chatId, bodyText, stats) {
                     await sendHtmlChunks(bot, chatId, pendingHtml.join("\n"));
                     pendingHtml.length = 0;
                 }
-                try {
-                    await sendTablePhoto(bot, chatId, part.rows);
-                } catch (err) {
-                    console.warn("Table image failed, skipping table:", err.message || err);
-                }
+                await sendTablePhoto(bot, chatId, part.rows);
             } else if (part.type === "html" && part.content?.trim()) {
                 pendingHtml.push(part.content);
             }
@@ -90,8 +92,6 @@ export async function sendTelegramReply(bot, chatId, bodyText, stats) {
     } catch (err) {
         console.warn("Telegram reply failed:", err.message || err);
         const plain = `${body}${footerPlain}`;
-        for (const part of splitHtmlChunks(plain, 4096)) {
-            await bot.api.sendMessage(chatId, part);
-        }
+        await sendMessageSafe(bot, chatId, plain);
     }
 }

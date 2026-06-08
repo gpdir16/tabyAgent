@@ -124,7 +124,22 @@ async function completeTextReply(llm, messages, { onTextDelta, setStatus, maxRet
     return null;
 }
 
-export async function runAgent(userMessage, { chatId, bot, onTextDelta, onStatusPhase, visionAttachment = null, session = null } = {}) {
+export async function runAgent(userMessage, options = {}) {
+    try {
+        return await runAgentTurn(userMessage, options);
+    } catch (err) {
+        console.error("Agent loop error:", err?.stack || err);
+        return {
+            text: null,
+            error: "agent_error",
+            errorDetail: err?.message || String(err),
+            stats: { toolCallCount: 0, modelCallCount: 0, tokensUsed: 0, contextWindow: 128000 },
+            turnMessages: [],
+        };
+    }
+}
+
+async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPhase, visionAttachment = null, session = null } = {}) {
     const llm = await createLlmClient();
     const agentConfig = loadAgentConfig();
     const setStatus = (phase, detail = null) => onStatusPhase?.(phase, detail);

@@ -30,6 +30,7 @@ async function pump() {
     try {
         item.resolve(await item.fn());
     } catch (err) {
+        console.error("Queue work failed:", err?.stack || err);
         item.reject(err);
     } finally {
         running = false;

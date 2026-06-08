@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { InputFile } from "grammy";
 import { formatAllowedPaths, isAllowedFilePath } from "./paths.js";
+import { sendMessageSafe, sendPhotoSafe, safeTelegramApi } from "./telegram-api.js";
 
 const MAX_BYTES = 50 * 1024 * 1024;
 
@@ -12,6 +13,7 @@ function isImagePath(filePath, mimeType) {
 
 /**
  * Send a local file to the user's Telegram chat (photo vs document by type).
+ * Never throws — returns { ok } or { error }.
  */
 export async function sendTelegramFile(bot, chatId, filePath, { caption = "" } = {}) {
     if (!bot?.api) return { error: "Telegram bot is not available in this context" };
@@ -34,12 +36,35 @@ export async function sendTelegramFile(bot, chatId, filePath, { caption = "" } =
         String(caption || "")
             .trim()
             .slice(0, 1024) || undefined;
+    const opts = cap ? { caption: cap } : {};
 
     if (isImagePath(resolved)) {
-        await bot.api.sendPhoto(chatId, input, { caption: cap });
-        return { ok: true, kind: "photo", path: resolved, fileName, sizeBytes: stat.size };
+        const sent = await sendPhotoSafe(bot, chatId, input, opts);
+        if (sent.ok) {
+            return {
+                ok: true,
+                kind: sent.kind,
+                fallback: sent.fallback || false,
+                path: resolved,
+                fileName,
+                sizeBytes: stat.size,
+            };
+        }
     }
 
-    await bot.api.sendDocument(chatId, input, { caption: cap });
-    return { ok: true, kind: "document", path: resolved, fileName, sizeBytes: stat.size };
+    const doc = await safeTelegramApi(() => bot.api.sendDocument(chatId, input, opts));
+    if (doc.ok) {
+        return { ok: true, kind: "document", path: resolved, fileName, sizeBytes: stat.size };
+    }
+
+    const note = cap ? `${fileName}\n${cap}` : fileName;
+    await sendMessageSafe(bot, chatId, `📎 ${note} (file send failed — saved at ${resolved})`);
+    return {
+        ok: false,
+        error: doc.error || "file send failed",
+        path: resolved,
+        fileName,
+        sizeBytes: stat.size,
+        notified: true,
+    };
 }
