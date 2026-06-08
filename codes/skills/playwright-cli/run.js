@@ -126,7 +126,7 @@ function wrapCodeIfNeeded(code) {
 const { chromium, firefox, webkit, devices } = require('playwright');
 const helpers = require('./lib/helpers');
 const pwDefaults = require('./pw-defaults');
-/** Prefer: await chromium.launch(pwDefaults.launchOptions()) */
+/** Prefer: launch + contextOptions + applyStealth (see pw-defaults.js) */
 
 // Extra headers from environment variables (if configured)
 const __extraHeaders = helpers.getExtraHeadersFromEnv();

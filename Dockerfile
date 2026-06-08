@@ -34,6 +34,9 @@ RUN npm install --omit=dev
 
 COPY codes ./codes
 
+RUN chmod +x /app/codes/skills/browser-use/install-stealth.sh \
+    && /app/codes/skills/browser-use/install-stealth.sh
+
 WORKDIR /app/codes/skills/playwright-cli
 RUN npm install --omit=dev \
     && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 npx playwright install chromium
