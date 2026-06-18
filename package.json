@@ -8,7 +8,7 @@
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.12.1",
-        "grammy": "^1.35.0",
+        "grammy": "^1.44.0",
         "js-tiktoken": "^1.0.19",
         "node-cron": "^3.0.3",
         "openai": "^4.104.0"
