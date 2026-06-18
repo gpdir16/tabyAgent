@@ -1,12 +1,12 @@
 import { loadUserConfig } from "./config-loader.js";
 import { claimOwnerIfNone, hasOwner, isApproved, issuePendingCode, approveCode } from "./auth.js";
 import { t } from "./i18n.js";
-import { replySafe, sendMessageSafe } from "./telegram-api.js";
+import { sendMessageSafe } from "./telegram-api.js";
 
 export async function replyAuthPending(ctx, chatId) {
     const lang = loadUserConfig().language || "en";
     const { code, minutes } = issuePendingCode(chatId);
-    await replySafe(ctx, t("auth_pending", lang, { code, minutes }));
+    await sendMessageSafe(ctx.api, String(ctx.chat.id), t("auth_pending", lang, { code, minutes }));
 }
 
 export async function notifyOwnerTransfer(bot, { previousOwner, newChatId, approvedByChatId }) {

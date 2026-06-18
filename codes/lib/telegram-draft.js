@@ -1,7 +1,8 @@
 import { sendTelegramReply } from "./telegram-stats.js";
 import { safeTelegramApiFast } from "./telegram-api.js";
 
-const MAX_DRAFT_LEN = 4096;
+/** Rich Message limit per Bot API 10.1: 32768 UTF-8 characters. */
+const MAX_DRAFT_LEN = 32_768;
 const MIN_UPDATE_MS = 300;
 
 export class TelegramDraftStream {
@@ -26,15 +27,25 @@ export class TelegramDraftStream {
             return true;
         }
 
-        const res = await safeTelegramApiFast(() => this.bot.api.sendMessageDraft(this.chatId, this.draftId, text));
+        // Prefer rich message draft (Bot API 10.1+) so markdown renders live.
+        const res = await safeTelegramApiFast(() => this.bot.api.sendRichMessageDraft(this.chatId, this.draftId, { markdown: text }));
+
         if (res.ok) {
             this.lastSent = text;
             this.lastSentAt = now;
             return true;
         }
 
+        // Fallback to plain text draft.
+        const plainRes = await safeTelegramApiFast(() => this.bot.api.sendMessageDraft(this.chatId, this.draftId, text));
+        if (plainRes.ok) {
+            this.lastSent = text;
+            this.lastSentAt = now;
+            return true;
+        }
+
         this.available = false;
-        console.warn("sendMessageDraft failed, falling back:", res.error);
+        console.warn("sendRichMessageDraft and sendMessageDraft both failed, falling back:", res.error);
         return false;
     }
 

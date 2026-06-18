@@ -6,6 +6,12 @@ const DEFAULT_MAX_ATTEMPTS = 6;
 const DEFAULT_MAX_WAIT_MS = 30_000;
 const DEFAULT_MAX_TOTAL_WAIT_MS = 120_000;
 
+/** Rich Message limit per Bot API 10.1: 32768 UTF-8 characters. */
+const RICH_MAX_CHARS = 32_768;
+
+/** Regular sendMessage limit (plain text): 4096 characters. */
+const TEXT_MAX_CHARS = 4096;
+
 function telegramErrorMessage(err) {
     return err?.description || err?.message || String(err);
 }
@@ -58,7 +64,7 @@ export function safeTelegramApiFast(fn) {
     return safeTelegramApi(fn, { maxAttempts: 2, maxWaitMs: 3_000, maxTotalWaitMs: 5_000 });
 }
 
-export function splitTextChunks(text, maxLen = 4096) {
+export function splitTextChunks(text, maxLen = TEXT_MAX_CHARS) {
     const body = String(text ?? "");
     if (!body) return ["…"];
     const parts = [];
@@ -68,43 +74,127 @@ export function splitTextChunks(text, maxLen = 4096) {
     return parts.length ? parts : ["…"];
 }
 
+/**
+ * Split text into chunks that fit within the Rich Message character limit.
+ * Tries to break at paragraph / line / word boundaries for readability.
+ */
+export function splitRichChunks(text, maxLen = RICH_MAX_CHARS) {
+    const body = String(text ?? "").trim();
+    if (!body) return ["…"];
+    if (body.length <= maxLen) return [body];
+
+    const parts = [];
+    let remaining = body;
+    while (remaining.length > maxLen) {
+        let cut = remaining.lastIndexOf("\n\n", maxLen);
+        if (cut < maxLen * 0.5) cut = remaining.lastIndexOf("\n", maxLen);
+        if (cut < maxLen * 0.5) cut = remaining.lastIndexOf(" ", maxLen);
+        if (cut < maxLen * 0.5) cut = maxLen;
+        parts.push(remaining.slice(0, cut));
+        remaining = remaining.slice(cut).replace(/^\s+/, "");
+    }
+    if (remaining) parts.push(remaining);
+    return parts.length ? parts : ["…"];
+}
+
 export async function deleteMessageSafe(bot, chatId, messageId) {
-    if (!bot?.api || !chatId || !messageId) return false;
-    const res = await safeTelegramApiFast(() => bot.api.deleteMessage(chatId, messageId));
+    const api = bot?.api || bot;
+    if (!api || !chatId || !messageId) return false;
+    const res = await safeTelegramApiFast(() => api.deleteMessage(chatId, messageId));
     return res.ok;
 }
 
 export async function sendChatActionSafe(bot, chatId, action = "typing") {
-    if (!bot?.api || !chatId) return false;
-    const res = await safeTelegramApiFast(() => bot.api.sendChatAction(chatId, action));
+    const api = bot?.api || bot;
+    if (!api || !chatId) return false;
+    const res = await safeTelegramApiFast(() => api.sendChatAction(chatId, action));
     return res.ok;
 }
 
-export async function editMessageTextSafe(bot, chatId, messageId, text, { parseMode } = {}) {
-    if (!bot?.api || !chatId || !messageId) return false;
+/**
+ * Edit a message's text (or rich message). Never throws.
+ * Tries rich_message first when richText is provided, falls back to plain text.
+ */
+export async function editMessageTextSafe(bot, chatId, messageId, text, { parseMode, richText } = {}) {
+    const api = bot?.api || bot;
+    if (!api || !chatId || !messageId) return false;
 
     const body = String(text ?? "").trim() || "…";
-    const opts = parseMode ? { parse_mode: parseMode } : {};
-    let res = await safeTelegramApi(() => bot.api.editMessageText(chatId, messageId, body, opts));
+
+    // Prefer rich message editing when rich markdown content is available.
+    // grammy's editMessageText(chat_id, message_id, text_or_rich_message, other):
+    // a string selects text mode, an object selects rich_message mode.
+    if (richText) {
+        const res = await safeTelegramApi(() => api.editMessageText(chatId, messageId, { markdown: String(richText) }));
+        if (res.ok) return true;
+    }
+
+    const opts = parseMode ? { parse_mode: parseMode, link_preview_options: { is_disabled: false } } : {};
+    let res = await safeTelegramApi(() => api.editMessageText(chatId, messageId, body, opts));
 
     if (!res.ok && parseMode) {
-        res = await safeTelegramApi(() => bot.api.editMessageText(chatId, messageId, body.replace(/<[^>]+>/g, "")));
+        res = await safeTelegramApi(() => api.editMessageText(chatId, messageId, body.replace(/<[^>]+>/g, "")));
     }
 
     return res.ok;
 }
 
 /**
- * Send text to a chat. HTML with plain fallback, chunked. Never throws.
+ * Send a Rich Message (Bot API 10.1+) with raw Markdown. Tables, headings,
+ * lists, blockquotes, code blocks, etc. are all rendered natively by Telegram.
+ * Falls back to plain sendMessage if sendRichMessage fails.
+ */
+export async function sendRichMessageSafe(bot, chatId, markdown, opts = {}) {
+    const api = bot?.api || bot;
+    if (!api || !chatId) return { ok: false, messageIds: [] };
+
+    // sendRichMessage does NOT accept link_preview_options — strip it.
+    const extra = { ...opts };
+    delete extra.parse_mode;
+    delete extra.parseMode;
+    delete extra.link_preview_options;
+
+    const messageIds = [];
+    let allOk = true;
+
+    for (const chunk of splitRichChunks(markdown)) {
+        if (!chunk.trim()) continue;
+
+        const res = await safeTelegramApi(() => api.sendRichMessage(chatId, { markdown: chunk }, extra));
+
+        if (res.ok) {
+            if (res.result?.message_id) messageIds.push(res.result.message_id);
+        } else {
+            console.warn("sendRichMessage failed, falling back to sendMessage:", res.error);
+            // Fallback to plain sendMessage (no parse mode) if rich messages fail.
+            const plainRes = await safeTelegramApi(() => api.sendMessage(chatId, chunk, extra));
+            if (plainRes.ok) {
+                if (plainRes.result?.message_id) messageIds.push(plainRes.result.message_id);
+            } else {
+                allOk = false;
+            }
+        }
+    }
+
+    return { ok: allOk, messageIds };
+}
+
+/**
+ * Send plain text to a chat. Used for short system messages (status, auth, etc.)
+ * that don't need rich markdown rendering. HTML with plain fallback, chunked.
  * @returns {Promise<{ ok: boolean, messageIds: number[] }>}
  */
 export async function sendMessageSafe(bot, chatId, text, opts = {}) {
-    if (!bot?.api || !chatId) return { ok: false, messageIds: [] };
+    const api = bot?.api || bot;
+    if (!api || !chatId) return { ok: false, messageIds: [] };
 
     const parseMode = opts.parse_mode || opts.parseMode;
     const extra = { ...opts };
     delete extra.parse_mode;
     delete extra.parseMode;
+    if (!extra.link_preview_options) {
+        extra.link_preview_options = { is_disabled: false, prefer_large_media: true };
+    }
 
     const messageIds = [];
     let allOk = true;
@@ -114,12 +204,12 @@ export async function sendMessageSafe(bot, chatId, text, opts = {}) {
 
         let res;
         if (parseMode) {
-            res = await safeTelegramApi(() => bot.api.sendMessage(chatId, chunk, { ...extra, parse_mode: parseMode }));
+            res = await safeTelegramApi(() => api.sendMessage(chatId, chunk, { ...extra, parse_mode: parseMode }));
             if (!res.ok) {
-                res = await safeTelegramApi(() => bot.api.sendMessage(chatId, chunk.replace(/<[^>]+>/g, ""), extra));
+                res = await safeTelegramApi(() => api.sendMessage(chatId, chunk.replace(/<[^>]+>/g, ""), extra));
             }
         } else {
-            res = await safeTelegramApi(() => bot.api.sendMessage(chatId, chunk, extra));
+            res = await safeTelegramApi(() => api.sendMessage(chatId, chunk, extra));
         }
 
         if (res.ok) {
@@ -134,34 +224,17 @@ export async function sendMessageSafe(bot, chatId, text, opts = {}) {
 
 /** Photo → document fallback. Never throws. */
 export async function sendPhotoSafe(bot, chatId, input, opts = {}) {
-    if (!bot?.api || !chatId) return { ok: false, kind: null };
+    const api = bot?.api || bot;
+    if (!api || !chatId) return { ok: false, kind: null };
 
-    let res = await safeTelegramApi(() => bot.api.sendPhoto(chatId, input, opts));
+    let res = await safeTelegramApi(() => api.sendPhoto(chatId, input, opts));
     if (res.ok) return { ok: true, kind: "photo", result: res.result };
 
     const desc = String(res.error || "");
     if (desc.includes("PHOTO_INVALID")) {
-        res = await safeTelegramApi(() => bot.api.sendDocument(chatId, input, opts));
+        res = await safeTelegramApi(() => api.sendDocument(chatId, input, opts));
         if (res.ok) return { ok: true, kind: "document", fallback: true, result: res.result };
     }
 
     return { ok: false, kind: null, error: res.error };
-}
-
-/** ctx.reply with retry + HTML plain fallback. Never throws. */
-export async function replySafe(ctx, text, opts = {}) {
-    if (!ctx?.reply) return { ok: false };
-
-    const parseMode = opts.parse_mode || opts.parseMode;
-    const extra = { ...opts };
-    delete extra.parse_mode;
-    delete extra.parseMode;
-
-    if (parseMode) {
-        let res = await safeTelegramApi(() => ctx.reply(text, { ...extra, parse_mode: parseMode }));
-        if (res.ok) return res;
-        return safeTelegramApi(() => ctx.reply(String(text).replace(/<[^>]+>/g, ""), extra));
-    }
-
-    return safeTelegramApi(() => ctx.reply(text, extra));
 }

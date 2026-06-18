@@ -4,10 +4,6 @@ import { t } from "../i18n.js";
 import { getRunningVersion } from "./store.js";
 import { sendMessageSafe } from "../telegram-api.js";
 
-function escapeHtml(text) {
-    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
 export function formatUpdateMessage(update, lang) {
     const running = getRunningVersion() || update.currentVersion || "—";
     const lines = [
@@ -15,7 +11,7 @@ export function formatUpdateMessage(update, lang) {
         "",
         t("update_notify_script_label", lang),
         "",
-        `<pre><code>${escapeHtml(update.installScript)}</code></pre>`,
+        update.installScript,
         "",
         t("update_notify_current", lang, { version: running }),
     ];
@@ -24,11 +20,10 @@ export function formatUpdateMessage(update, lang) {
 
 export async function sendUpdateNotification(bot, chatId, update) {
     const lang = loadUserConfig().language || "en";
-    const html = formatUpdateMessage(update, lang);
+    const body = formatUpdateMessage(update, lang);
     const buttonLabel = t("update_notify_button", lang);
 
-    const sent = await sendMessageSafe(bot, chatId, html, {
-        parse_mode: "HTML",
+    const sent = await sendMessageSafe(bot, chatId, body, {
         reply_markup: {
             inline_keyboard: [[{ text: buttonLabel, url: update.releaseUrl }]],
         },

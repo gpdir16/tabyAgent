@@ -18,7 +18,7 @@ import { ensureModelMeta } from "./llm/model-meta.js";
 import { getMergedProvider } from "./config-loader.js";
 import { setCronJobHandler, startCronScheduler } from "./cron/scheduler.js";
 import { startUpdateScheduler } from "./update/scheduler.js";
-import { replySafe, sendChatActionSafe } from "./telegram-api.js";
+import { sendChatActionSafe, safeTelegramApi, sendMessageSafe } from "./telegram-api.js";
 
 function isReplyFailure(result) {
     return (result?.error === "tool_rounds_exceeded" || result?.error === "empty_reply_exhausted") && !result.text?.trim();
@@ -37,11 +37,11 @@ function replyFailureMessage(result, lang) {
     return t("tool_rounds_exceeded", lang);
 }
 
-async function notifyUserError(status, ctx, bot, chatId, text, { parseMode } = {}) {
-    const shown = await status.completeError(text, { parseMode });
+async function notifyUserError(status, ctx, bot, chatId, text) {
+    const shown = await status.completeError(text);
     if (!shown) {
         if (ctx) {
-            await replySafe(ctx, text, { parse_mode: parseMode });
+            await sendMessageSafe(ctx.api, String(ctx.chat.id), text);
         } else {
             await sendTelegramReply(bot, chatId, text, null);
         }
@@ -164,7 +164,7 @@ async function handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment = 
 
         if (isAgentError(result)) {
             const msg = result.errorDetail ? formatAgentError(new Error(result.errorDetail), lang) : t("tool_rounds_exceeded", lang);
-            await notifyUserError(status, ctx, bot, chatId, msg, { parseMode: "HTML" });
+            await notifyUserError(status, ctx, bot, chatId, msg);
             return result;
         }
 
@@ -183,7 +183,7 @@ async function handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment = 
         return result;
     } catch (err) {
         console.error("Agent turn error:", err?.stack || err);
-        await notifyUserError(status, ctx, bot, chatId, formatAgentError(err, lang), { parseMode: "HTML" });
+        await notifyUserError(status, ctx, bot, chatId, formatAgentError(err, lang));
         return { error: "agent_turn_failed", text: null };
     } finally {
         status.dispose();
@@ -194,8 +194,114 @@ async function handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment = 
 async function tryEnqueueDuringRun(ctx, chatId, text) {
     if (!enqueueAgentMessage(chatId, text)) return false;
     const lang = loadUserConfig().language || "en";
-    await replySafe(ctx, t("message_added_during_run", lang));
+    await sendMessageSafe(ctx.api, String(ctx.chat.id), t("message_added_during_run", lang));
     return true;
+}
+
+/** Register bot commands with Telegram so users see them in the / menu and profile. */
+async function registerBotCommands(bot) {
+    const lang = loadUserConfig().language || "en";
+
+    const commandsByLang = {
+        en: [
+            { command: "start", description: "Begin / show help" },
+            { command: "new", description: "Start a new chat (saves memory first)" },
+            { command: "stop", description: "Stop the running task" },
+            { command: "reload", description: "Reload MCP servers" },
+            { command: "config", description: "Open settings wizard" },
+            { command: "approve", description: "Approve a new device with a 6-digit code" },
+            { command: "help", description: "Show help and available commands" },
+            { command: "settings", description: "Open settings (/config)" },
+        ],
+        ko: [
+            { command: "start", description: "시작 / 도움말" },
+            { command: "new", description: "새 대화 시작 (먼저 기억 저장)" },
+            { command: "stop", description: "진행 중인 작업 중지" },
+            { command: "reload", description: "MCP 서버 다시 불러오기" },
+            { command: "config", description: "설정 마법사 열기" },
+            { command: "approve", description: "6자리 코드로 새 기기 승인" },
+            { command: "help", description: "도움말 및 명령어 보기" },
+            { command: "settings", description: "설정 열기 (/config)" },
+        ],
+        ja: [
+            { command: "start", description: "開始 / ヘルプ" },
+            { command: "new", description: "新しい会話を開始 (先に記憶を保存)" },
+            { command: "stop", description: "実行中の作業を停止" },
+            { command: "reload", description: "MCP サーバを再読み込み" },
+            { command: "config", description: "設定ウィザードを開く" },
+            { command: "approve", description: "6 桁コードで新端末を承認" },
+            { command: "help", description: "ヘルプとコマンド一覧" },
+            { command: "settings", description: "設定を開く (/config)" },
+        ],
+    };
+
+    const list = commandsByLang[lang] || commandsByLang.en;
+    const res = await safeTelegramApi(() => bot.api.setMyCommands(list));
+    if (!res.ok) {
+        console.warn("setMyCommands failed:", res.error);
+    }
+    return res.ok;
+}
+
+function helpMessage(lang) {
+    if (lang === "ko") {
+        return [
+            "# tabyAgent 도움말",
+            "",
+            "## 명령어",
+            "- `/new` — 새 대화 시작 (이전 대화 요약을 memory.md에 저장)",
+            "- `/stop` — 진행 중인 작업 중지",
+            "- `/reload` — MCP 서버 다시 불러오기",
+            "- `/config` — 설정 마법사 (언어, 모델, 토큰 등)",
+            "- `/approve <6-digit code>` — 새 기기 승인",
+            "",
+            "## 기능",
+            "- 파일 첨부: 사진·문서·음성·영상 전송 가능",
+            "- 비전: 지원 모델에서 이미지 분석",
+            "- 마크다운: 굵게, 기울임, 코드, 표, 인용, 스포일러 지원",
+            "- 메모리: /app/user/memory.md 에 자동 저장",
+            "",
+            "궁금한 점이 있으면 그냥 메시지를 보내세요.",
+        ].join("\n");
+    }
+    if (lang === "ja") {
+        return [
+            "# tabyAgent ヘルプ",
+            "",
+            "## コマンド",
+            "- `/new` — 新しい会話を開始 (以前の会話の要約を memory.md に保存)",
+            "- `/stop` — 実行中の作業を停止",
+            "- `/reload` — MCP サーバを再読み込み",
+            "- `/config` — 設定ウィザード (言語, モデル, トークン等)",
+            "- `/approve <6-digit code>` — 新端末を承認",
+            "",
+            "## 機能",
+            "- ファイル添付: 画像・書類・音声・動画に対応",
+            "- ビジョン: 対応モデルで画像分析",
+            "- Markdown: 太字, 斜体, コード, 表, 引用, スポイラー対応",
+            "- メモリ: /app/user/memory.md に自動保存",
+            "",
+            "質問があれば、そのままメッセージを送ってください。",
+        ].join("\n");
+    }
+    return [
+        "# tabyAgent help",
+        "",
+        "## Commands",
+        "- `/new` — Start a new chat (saves a summary of the previous one to memory.md)",
+        "- `/stop` — Stop the running task",
+        "- `/reload` — Reload MCP servers",
+        "- `/config` — Settings wizard (language, model, token, etc.)",
+        "- `/approve <6-digit code>` — Approve a new device",
+        "",
+        "## Features",
+        "- Attachments: photos, documents, voice, video supported",
+        "- Vision: image analysis on supported models",
+        "- Markdown: bold, italic, code, tables, blockquotes, spoilers",
+        "- Memory: durable facts saved to /app/user/memory.md",
+        "",
+        "If you have a question, just send a message.",
+    ].join("\n");
 }
 
 export async function startTelegramBot() {
@@ -211,6 +317,8 @@ export async function startTelegramBot() {
     const streamMode = loadAgentConfig().telegramStreaming ?? "draft";
     console.log(`tabyAgent: Telegram running (streaming: ${streamMode})`);
 
+    await registerBotCommands(bot);
+
     setCronJobHandler((job) => runCronJobForUser(bot, job));
     startCronScheduler();
     startUpdateScheduler(bot);
@@ -225,7 +333,26 @@ export async function startTelegramBot() {
             return;
         }
         const lang = loadUserConfig().language || "en";
-        await replySafe(ctx, t("start_ready", lang));
+        await sendMessageSafe(bot.api, String(ctx.chat.id), `${t("start_ready", lang)}\n\n${helpMessage(lang)}`);
+    });
+
+    bot.command("help", async (ctx) => {
+        const lang = loadUserConfig().language || "en";
+        if (!isConfigReady()) {
+            await openConfigWizard(ctx, bot);
+            return;
+        }
+        if (!(await requireApprovedAccess(ctx))) {
+            return;
+        }
+        await sendMessageSafe(bot.api, String(ctx.chat.id), helpMessage(lang));
+    });
+
+    bot.command("settings", async (ctx) => {
+        if (isConfigReady() && !(await requireApprovedAccess(ctx))) {
+            return;
+        }
+        await openConfigWizard(ctx, bot);
     });
 
     bot.command("new", async (ctx) => {
@@ -244,11 +371,11 @@ export async function startTelegramBot() {
         try {
             await scheduleWork("user", async () => {
                 const message = await handleNewChat(bot, chatId);
-                await replySafe(ctx, message);
+                await sendMessageSafe(ctx.api, String(ctx.chat.id), message);
             });
         } catch (err) {
             console.error("New chat error:", err?.stack || err);
-            await replySafe(ctx, formatAgentError(err, lang), { parse_mode: "HTML" });
+            await sendMessageSafe(ctx.api, String(ctx.chat.id), formatAgentError(err, lang));
         }
     });
 
@@ -268,11 +395,11 @@ export async function startTelegramBot() {
         const stoppedQueued = cancelQueuedAgentWork(chatId);
         const stoppedActive = stoppedQueued ? false : requestAgentStop(chatId);
         if (stoppedActive || stoppedQueued) {
-            await replySafe(ctx, t("stop_requested", lang));
+            await sendMessageSafe(ctx.api, String(ctx.chat.id), t("stop_requested", lang));
             return;
         }
 
-        await replySafe(ctx, t("stop_nothing_running", lang));
+        await sendMessageSafe(ctx.api, String(ctx.chat.id), t("stop_nothing_running", lang));
     });
 
     bot.command("reload", async (ctx) => {
@@ -294,7 +421,7 @@ export async function startTelegramBot() {
             });
         } catch (err) {
             console.error("Reload error:", err?.stack || err);
-            await replySafe(ctx, formatAgentError(err, lang), { parse_mode: "HTML" });
+            await sendMessageSafe(ctx.api, String(ctx.chat.id), formatAgentError(err, lang));
         }
     });
 
@@ -311,7 +438,7 @@ export async function startTelegramBot() {
         const code = (ctx.match || "").trim();
 
         if (!isConfigReady()) {
-            await replySafe(ctx, t("auth_denied_command", lang));
+            await sendMessageSafe(ctx.api, String(ctx.chat.id), t("auth_denied_command", lang));
             return;
         }
 
@@ -320,12 +447,12 @@ export async function startTelegramBot() {
         }
 
         if (!code) {
-            await replySafe(ctx, t("auth_approve_usage", lang));
+            await sendMessageSafe(ctx.api, String(ctx.chat.id), t("auth_approve_usage", lang));
             return;
         }
 
         const result = await runOwnerApprove(bot, chatId, code);
-        await replySafe(ctx, result.message);
+        await sendMessageSafe(ctx.api, String(ctx.chat.id), result.message);
     });
 
     bot.callbackQuery(/^cfg:/, async (ctx) => {
@@ -371,7 +498,7 @@ export async function startTelegramBot() {
             if (result?.queued && isStoppedByUser(result)) return;
         } catch (err) {
             console.error("File message error:", err?.stack || err);
-            await replySafe(ctx, formatAgentError(err, lang), { parse_mode: "HTML" });
+            await sendMessageSafe(ctx.api, String(ctx.chat.id), formatAgentError(err, lang));
         }
     });
 
@@ -404,7 +531,7 @@ export async function startTelegramBot() {
             if (result?.queued && isStoppedByUser(result)) return;
         } catch (err) {
             console.error("Agent error:", err?.stack || err);
-            await replySafe(ctx, formatAgentError(err, lang), { parse_mode: "HTML" });
+            await sendMessageSafe(ctx.api, String(ctx.chat.id), formatAgentError(err, lang));
         }
     });
 

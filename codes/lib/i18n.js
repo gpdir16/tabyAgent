@@ -185,6 +185,5 @@ export function formatAgentError(err, lang = "en") {
         .trim()
         .slice(0, 300);
     if (!detail) return base;
-    const safe = detail.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-    return `${base}\n\n<code>${safe}</code>`;
+    return `${base}\n\n${detail}`;
 }

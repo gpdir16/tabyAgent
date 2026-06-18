@@ -1,7 +1,7 @@
 import { statusText } from "./i18n.js";
 import { deleteMessageSafe, editMessageTextSafe, sendMessageSafe } from "./telegram-api.js";
 
-const REFRESH_MS = 3000;
+const REFRESH_MS = 1000;
 
 function formatToolDisplayName(toolName) {
     if (!toolName) return "";
@@ -131,7 +131,7 @@ export class TelegramStatusMessage {
     }
 
     /** @returns {Promise<boolean>} */
-    async completeError(text, { parseMode } = {}) {
+    async completeError(text) {
         if (this.finished) return false;
         this.finished = true;
         this.dispose();
@@ -142,16 +142,16 @@ export class TelegramStatusMessage {
         const elapsed = formatElapsedSeconds((Date.now() - this.startedAt) / 1000, this.lang);
         const label = statusText("error", this.lang);
         const body = `${label} · ${elapsed}\n\n${text}`;
-        const ok = await editMessageTextSafe(this.bot, this.chatId, this.messageId, body, { parseMode });
+        const ok = await editMessageTextSafe(this.bot, this.chatId, this.messageId, body);
         return ok;
     }
 
     /** Fallback when status message was never created. */
-    async sendStandaloneError(text, { parseMode } = {}) {
+    async sendStandaloneError(text) {
         const elapsed = formatElapsedSeconds((Date.now() - this.startedAt) / 1000, this.lang);
         const label = statusText("error", this.lang);
         const body = `${label} · ${elapsed}\n\n${text}`;
-        const res = await sendMessageSafe(this.bot, this.chatId, body, { parseMode });
+        const res = await sendMessageSafe(this.bot, this.chatId, body);
         return res.ok;
     }
 }
