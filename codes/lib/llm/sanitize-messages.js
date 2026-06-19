@@ -1,13 +1,5 @@
-/**
- * Providers (OpenRouter, Moonshot/Kimi, OpenAI tiktoken) reject literal special-token
- * strings inside chat message text — e.g. files containing "<|endoftext|>".
- * Escape them so they encode as normal text while staying readable.
- */
-
-/** Tiktoken / GPT / Kimi style: <|name|> */
 const ANGLE_SPECIAL_TOKEN = /<\|[^|\n]{1,128}\|>/g;
 
-/** Llama chat template markers */
 const LLAMA_CHAT_MARKERS = /\[INST\]|\[\/INST\]|<<SYS>>|<\/SYS>>/g;
 
 export function sanitizeTextForLlm(text) {

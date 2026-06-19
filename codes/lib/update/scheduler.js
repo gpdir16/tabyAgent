@@ -6,9 +6,8 @@ import { checkForUpdate } from "./checker.js";
 import { sendUpdateNotification } from "./notify.js";
 import { isRunningVersionKnown, saveUpdateState, setLastNotifiedVersion } from "./store.js";
 
-/** @type {import('node-cron').ScheduledTask | null} */
 let task = null;
-/** @type {ReturnType<typeof setTimeout> | null} */
+
 let initialTimer = null;
 
 function warnIfUnknownProductionVersion() {

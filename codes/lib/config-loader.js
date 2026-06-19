@@ -43,7 +43,6 @@ export function loadAgentConfig() {
     });
 }
 
-/** MCP lives only under /app/user/mcp.json (never in codes/config). */
 export function loadMcpConfig() {
     const userPath = path.join(USER_DIR, "mcp.json");
     return readJson(userPath, { servers: [] });

@@ -57,7 +57,6 @@ async function clearActivePrompt(bot, chatId, state) {
     saveState(state);
 }
 
-/** Remove the current step message and show exactly one new prompt. */
 async function replaceStep(bot, chatId, state, text, keyboard) {
     await clearActivePrompt(bot, chatId, state);
     const opts = keyboard ? { reply_markup: keyboard } : {};

@@ -30,7 +30,6 @@ export function readSkillSummary(skillPath) {
     return { name: path.basename(skillPath), summary: firstLine.replace(/^#\s*/, "").trim() };
 }
 
-/** Built-in skills first; user skills only when name not already seen. */
 export function collectAvailableSkills() {
     const skills = [];
     const seen = new Set();

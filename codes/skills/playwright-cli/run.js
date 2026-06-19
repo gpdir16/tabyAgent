@@ -1,14 +1,4 @@
 #!/usr/bin/env node
-/**
- * Universal Playwright Executor for Claude Code
- *
- * Executes Playwright automation code from:
- * - File path: node run.js script.js
- * - Inline code: node run.js 'await page.goto("...")'
- * - Stdin: cat script.js | node run.js
- *
- * Ensures proper module resolution by running from skill directory.
- */
 
 const fs = require("fs");
 const path = require("path");
@@ -17,9 +7,6 @@ const { execSync } = require("child_process");
 // Change to skill directory for proper module resolution
 process.chdir(__dirname);
 
-/**
- * Check if Playwright is installed
- */
 function checkPlaywrightInstalled() {
     try {
         require.resolve("playwright");
@@ -29,9 +16,6 @@ function checkPlaywrightInstalled() {
     }
 }
 
-/**
- * Install Playwright if missing
- */
 function installPlaywright() {
     console.log("📦 Playwright not found. Installing npm package...");
     try {
@@ -50,9 +34,6 @@ function installPlaywright() {
     }
 }
 
-/**
- * Get code to execute from various sources
- */
 function getCodeToExecute() {
     const args = process.argv.slice(2);
 
@@ -84,9 +65,6 @@ function getCodeToExecute() {
     process.exit(1);
 }
 
-/**
- * Clean up old temporary execution files from previous runs
- */
 function cleanupOldTempFiles() {
     try {
         const files = fs.readdirSync(__dirname);
@@ -107,9 +85,6 @@ function cleanupOldTempFiles() {
     }
 }
 
-/**
- * Wrap code in async IIFE if not already wrapped
- */
 function wrapCodeIfNeeded(code) {
     // Check if code already has require() and async structure
     const hasRequire = code.includes("require(");
@@ -126,17 +101,10 @@ function wrapCodeIfNeeded(code) {
 const { chromium, firefox, webkit, devices } = require('playwright');
 const helpers = require('./lib/helpers');
 const pwDefaults = require('./pw-defaults');
-/** Prefer: launch + contextOptions + applyStealth (see pw-defaults.js) */
 
 // Extra headers from environment variables (if configured)
 const __extraHeaders = helpers.getExtraHeadersFromEnv();
 
-/**
- * Utility to merge environment headers into context options.
- * Use when creating contexts with raw Playwright API instead of helpers.createContext().
- * @param {Object} options - Context options
- * @returns {Object} Options with extraHTTPHeaders merged in
- */
 function getContextOptionsWithHeaders(options = {}) {
   if (!__extraHeaders) return options;
   return {
@@ -182,9 +150,6 @@ function getContextOptionsWithHeaders(options = {}) {
     return code;
 }
 
-/**
- * Main execution
- */
 async function main() {
     console.log("🎭 Playwright Skill - Universal Executor\n");
 

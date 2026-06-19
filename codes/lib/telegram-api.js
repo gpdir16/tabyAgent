@@ -6,10 +6,8 @@ const DEFAULT_MAX_ATTEMPTS = 6;
 const DEFAULT_MAX_WAIT_MS = 30_000;
 const DEFAULT_MAX_TOTAL_WAIT_MS = 120_000;
 
-/** Rich Message limit per Bot API 10.1: 32768 UTF-8 characters. */
 const RICH_MAX_CHARS = 32_768;
 
-/** Regular sendMessage limit (plain text): 4096 characters. */
 const TEXT_MAX_CHARS = 4096;
 
 function telegramErrorMessage(err) {
@@ -28,7 +26,6 @@ function getRetryAfterMs(err, capMs = DEFAULT_MAX_WAIT_MS) {
     return Math.min(1000, capMs);
 }
 
-/** Retry Telegram Bot API calls on 429 (rate limit). */
 export async function callTelegramApi(
     fn,
     { maxAttempts = DEFAULT_MAX_ATTEMPTS, maxWaitMs = DEFAULT_MAX_WAIT_MS, maxTotalWaitMs = DEFAULT_MAX_TOTAL_WAIT_MS } = {},
@@ -48,7 +45,6 @@ export async function callTelegramApi(
     }
 }
 
-/** Never throws — returns { ok, result? } or { ok: false, error }. */
 export async function safeTelegramApi(fn, opts = {}) {
     try {
         return { ok: true, result: await callTelegramApi(fn, opts) };
@@ -59,7 +55,6 @@ export async function safeTelegramApi(fn, opts = {}) {
     }
 }
 
-/** Fast-fail for non-critical UI updates (status edits). */
 export function safeTelegramApiFast(fn) {
     return safeTelegramApi(fn, { maxAttempts: 2, maxWaitMs: 3_000, maxTotalWaitMs: 5_000 });
 }
@@ -74,10 +69,6 @@ export function splitTextChunks(text, maxLen = TEXT_MAX_CHARS) {
     return parts.length ? parts : ["…"];
 }
 
-/**
- * Split text into chunks that fit within the Rich Message character limit.
- * Tries to break at paragraph / line / word boundaries for readability.
- */
 export function splitRichChunks(text, maxLen = RICH_MAX_CHARS) {
     const body = String(text ?? "").trim();
     if (!body) return ["…"];
@@ -111,10 +102,6 @@ export async function sendChatActionSafe(bot, chatId, action = "typing") {
     return res.ok;
 }
 
-/**
- * Edit a message's text (or rich message). Never throws.
- * Tries rich_message first when richText is provided, falls back to plain text.
- */
 export async function editMessageTextSafe(bot, chatId, messageId, text, { parseMode, richText } = {}) {
     const api = bot?.api || bot;
     if (!api || !chatId || !messageId) return false;
@@ -139,11 +126,6 @@ export async function editMessageTextSafe(bot, chatId, messageId, text, { parseM
     return res.ok;
 }
 
-/**
- * Send a Rich Message (Bot API 10.1+) with raw Markdown. Tables, headings,
- * lists, blockquotes, code blocks, etc. are all rendered natively by Telegram.
- * Falls back to plain sendMessage if sendRichMessage fails.
- */
 export async function sendRichMessageSafe(bot, chatId, markdown, opts = {}) {
     const api = bot?.api || bot;
     if (!api || !chatId) return { ok: false, messageIds: [] };
@@ -179,11 +161,6 @@ export async function sendRichMessageSafe(bot, chatId, markdown, opts = {}) {
     return { ok: allOk, messageIds };
 }
 
-/**
- * Send plain text to a chat. Used for short system messages (status, auth, etc.)
- * that don't need rich markdown rendering. HTML with plain fallback, chunked.
- * @returns {Promise<{ ok: boolean, messageIds: number[] }>}
- */
 export async function sendMessageSafe(bot, chatId, text, opts = {}) {
     const api = bot?.api || bot;
     if (!api || !chatId) return { ok: false, messageIds: [] };
@@ -222,7 +199,6 @@ export async function sendMessageSafe(bot, chatId, text, opts = {}) {
     return { ok: allOk, messageIds };
 }
 
-/** Photo → document fallback. Never throws. */
 export async function sendPhotoSafe(bot, chatId, input, opts = {}) {
     const api = bot?.api || bot;
     if (!api || !chatId) return { ok: false, kind: null };

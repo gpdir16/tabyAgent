@@ -9,7 +9,6 @@ export function createOpenAIClient({ baseURL, apiKey, extraHeaders = {} }) {
     });
 }
 
-/** Chat Completions response shape used by the agent loop. */
 function completionPayload(completion) {
     const choice = completion.choices?.[0];
     if (!choice) throw new Error("Empty LLM response");
@@ -24,10 +23,6 @@ function completionPayload(completion) {
     };
 }
 
-/**
- * OpenAI Chat Completions API via the official SDK (native tools / tool_calls).
- * Tool rounds are always non-streaming; streaming is text-only final replies.
- */
 function isAbortError(err) {
     return err?.name === "AbortError" || err?.code === "ABORT_ERR";
 }

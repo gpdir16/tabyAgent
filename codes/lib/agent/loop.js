@@ -44,12 +44,10 @@ const EMPTY_REPLY_HINT =
 
 const SILENT_REPLY_TOKEN = "__SILENT__";
 
-/** Check if content is a silent reply token (whitespace-trimmed exact match). */
 function isSilentReply(content) {
     return typeof content === "string" && content.trim() === SILENT_REPLY_TOKEN;
 }
 
-/** Strip silent reply token from content, returning null if it was the entire message. */
 function stripSilentReply(content) {
     if (!content) return null;
     if (isSilentReply(content)) return null;

@@ -154,9 +154,6 @@ function buildUpdatePayload(release, installScriptUrl, currentVersion) {
     };
 }
 
-/**
- * @returns {Promise<null | { tagName: string, releaseUrl: string, installScript: string, currentVersion: string | null }>}
- */
 export async function checkForUpdate() {
     const cfg = updateConfig();
     if (cfg.enabled === false) return null;

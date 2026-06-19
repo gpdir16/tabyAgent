@@ -44,7 +44,6 @@ function memoryFlushPrompt(lang) {
     return MEMORY_FLUSH_PROMPT[lang] || MEMORY_FLUSH_PROMPT.en;
 }
 
-/** Flush durable facts to memory.md (if needed), then clear on-disk chat history. */
 export async function handleNewChat(bot, chatId) {
     const lang = loadUserConfig().language || "en";
     const turnCount = loadChatHistory(chatId).length;

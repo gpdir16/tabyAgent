@@ -220,7 +220,6 @@ function dispatchAgentTurn(bot, ctx, chatId, userText, { visionAttachment = null
     dispatchAgentWork(ctx, chatId, () => handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment }));
 }
 
-/** Register bot commands with Telegram so users see them in the / menu and profile. */
 async function registerBotCommands(bot) {
     const lang = loadUserConfig().language || "en";
 

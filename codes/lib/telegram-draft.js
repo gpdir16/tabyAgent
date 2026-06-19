@@ -1,7 +1,6 @@
 import { sendTelegramReply } from "./telegram-stats.js";
 import { safeTelegramApiFast } from "./telegram-api.js";
 
-/** Rich Message limit per Bot API 10.1: 32768 UTF-8 characters. */
 const MAX_DRAFT_LEN = 32_768;
 const MIN_UPDATE_MS = 300;
 

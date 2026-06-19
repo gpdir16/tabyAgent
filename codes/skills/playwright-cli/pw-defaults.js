@@ -1,5 +1,3 @@
-/** Default launch/context options for tabyAgent Docker (system Chromium + headless). */
-
 const DEFAULT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " + "Chrome/131.0.0.0 Safari/537.36";
 
 const STEALTH_ARGS = [
@@ -34,7 +32,6 @@ function contextOptions(overrides = {}) {
     };
 }
 
-/** Run once per page to mask common automation signals. */
 async function applyStealth(page) {
     await page.addInitScript(() => {
         if (!window.chrome) {

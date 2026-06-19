@@ -14,7 +14,6 @@ function copyDirRecursive(src, dest) {
     }
 }
 
-/** Copy missing files/dirs from codes/templates/user — sole default source in the repo. */
 function seedUserFromTemplates() {
     if (!fs.existsSync(TEMPLATES_USER_DIR)) return;
 

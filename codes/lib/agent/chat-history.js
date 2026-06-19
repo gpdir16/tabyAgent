@@ -22,7 +22,6 @@ export function isInternalStoredMessage(message) {
     return message?.role === "user" && INTERNAL_USER_HINTS.has(message.content);
 }
 
-/** Messages for one turn — supports legacy { user, assistant } and full { messages }. */
 export function turnToMessages(turn) {
     if (Array.isArray(turn?.messages) && turn.messages.length) {
         return turn.messages;
@@ -33,7 +32,6 @@ export function turnToMessages(turn) {
     return out;
 }
 
-/** Slice agent messages for this turn; drop internal force-reply hints. */
 export function extractTurnMessages(messages, fromIndex) {
     return messages
         .slice(fromIndex)

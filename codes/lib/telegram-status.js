@@ -89,7 +89,7 @@ export class TelegramStatusMessage {
         return Boolean(this.messageId);
     }
 
-    /** @returns {Promise<boolean>} false when status UI could not be shown (agent may still run). */
+    
     async start() {
         const res = await sendMessageSafe(this.bot, this.chatId, this.bodyText());
         if (!res.ok || !res.messageIds.length) {
@@ -130,7 +130,7 @@ export class TelegramStatusMessage {
         this.messageId = null;
     }
 
-    /** @returns {Promise<boolean>} */
+    
     async completeError(text) {
         if (this.finished) return false;
         this.finished = true;
@@ -146,7 +146,7 @@ export class TelegramStatusMessage {
         return ok;
     }
 
-    /** Fallback when status message was never created. */
+    
     async sendStandaloneError(text) {
         const elapsed = formatElapsedSeconds((Date.now() - this.startedAt) / 1000, this.lang);
         const label = statusText("error", this.lang);

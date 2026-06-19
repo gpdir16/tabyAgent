@@ -61,7 +61,6 @@ export function isApproved(chatId) {
     return owner !== null && owner === String(chatId);
 }
 
-/** First contact only: becomes the sole owner when none exists yet. */
 export function claimOwnerIfNone(chatId) {
     const data = loadApprovedState();
     const id = String(chatId);
@@ -79,7 +78,6 @@ export function claimOwnerIfNone(chatId) {
     return { ok: true, chatId: id, alreadyOwner: false };
 }
 
-/** Replace the sole owner (CLI or /approve). Returns the previous owner chat id if replaced. */
 export function setOwner(chatId) {
     const data = loadApprovedState();
     const id = String(chatId);

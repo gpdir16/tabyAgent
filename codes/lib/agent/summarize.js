@@ -64,7 +64,6 @@ function itemTokens(item, model) {
     return turnTokens(item.turn, model);
 }
 
-/** Split into older (to compress) vs recent (verbatim). Recent ≈ last N% of context window in tokens. */
 function splitHistoryForCompression(turns, userMessage, model, recentBudget) {
     const items = turns.map((turn) => ({ kind: "turn", turn }));
     items.push({ kind: "user", text: userMessage });

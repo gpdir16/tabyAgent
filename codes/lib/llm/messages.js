@@ -1,7 +1,3 @@
-/**
- * Serialize SDK / API assistant messages into plain objects for the next request.
- * No XML parsing, no synthetic tool_call ids — provider must return valid tool_calls.
- */
 export function assistantMessageToPlain(message) {
     if (!message) {
         return { role: "assistant", content: "" };

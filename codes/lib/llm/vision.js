@@ -16,10 +16,6 @@ function maxImageBytes() {
     return loadAgentConfig().visionMaxImageBytes ?? 5_000_000;
 }
 
-/**
- * OpenAI Chat Completions multimodal user content (text + image_url).
- * Returns a string when vision is off or file is not a supported image.
- */
 export function buildUserMessageContent(text, { visionEnabled = false, attachment = null } = {}) {
     const safeText = sanitizeTextForLlm(String(text || ""));
 
@@ -45,7 +41,6 @@ export function buildUserMessageContent(text, { visionEnabled = false, attachmen
     ];
 }
 
-/** Rough token estimate for multimodal user content (footer stats). */
 export function estimateContentTokens(content) {
     if (typeof content === "string") {
         return Math.ceil(content.length / 4);

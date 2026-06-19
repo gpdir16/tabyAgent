@@ -2,7 +2,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { loadMcpConfig } from "../config-loader.js";
 
-/** @type {Map<string, { client: Client, tools: object[] }>} */
 const servers = new Map();
 
 function mcpToolName(serverName, toolName) {

@@ -21,10 +21,6 @@ export function formatStatsFooterPlain(stats) {
     return `${models} model calls · ${tools} tool calls · ${used}/${window}`;
 }
 
-/**
- * Build the final markdown body with a stats footer.
- * Uses a blockquote for the footer (simple, always valid in Rich Markdown).
- */
 export function buildReplyMarkdown(bodyText, stats) {
     const body = String(bodyText || "").trim() || "…";
     if (!stats) return body;

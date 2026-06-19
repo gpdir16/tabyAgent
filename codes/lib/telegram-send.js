@@ -11,10 +11,6 @@ function isImagePath(filePath, mimeType) {
     return /\.(png|jpe?g|gif|webp)$/i.test(filePath);
 }
 
-/**
- * Send a local file to the user's Telegram chat (photo vs document by type).
- * Never throws — returns { ok } or { error }.
- */
 export async function sendTelegramFile(bot, chatId, filePath, { caption = "" } = {}) {
     if (!bot?.api) return { error: "Telegram bot is not available in this context" };
     if (!chatId) return { error: "chatId is required" };

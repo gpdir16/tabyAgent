@@ -2,7 +2,6 @@ import cron from "node-cron";
 import { listCronJobs, markCronJobRun } from "./store.js";
 import { scheduleWork } from "../agent-queue.js";
 
-/** @type {Map<string, import('node-cron').ScheduledTask>} */
 const tasks = new Map();
 
 let runJobHandler = null;

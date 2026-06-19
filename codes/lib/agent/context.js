@@ -61,7 +61,6 @@ function loadMemoryForPrompt({ truncateMemory = false, maxMemoryChars = 120000 }
     return memory;
 }
 
-/** Assemble final system message from system.txt placeholders + runtime values. */
 export function buildSystemMessageContent(lang, { truncateMemory = false, maxMemoryChars = 120000, runtimeInfo = {} } = {}) {
     const template = loadSystemPromptTemplate();
     const vars = {
@@ -127,7 +126,6 @@ export function getKeepRecentTokenBudget(modelMeta) {
     return Math.floor((getContextWindow(modelMeta) * pct) / 100);
 }
 
-/** Hard ceiling after compression (safety margin below full window). */
 export function getContextLimit(modelMeta) {
     const agent = loadAgentConfig();
     const pct = agent.contextThresholdPercent ?? 90;

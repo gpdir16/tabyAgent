@@ -30,10 +30,6 @@ async function downloadTelegramFile(api, fileId, destPath) {
     return { sizeBytes: buf.length, telegramPath: file.file_path };
 }
 
-/**
- * Save an incoming Telegram attachment under /app/user/download.
- * @returns {{ path, fileName, mimeType, sizeBytes, kind }}
- */
 export async function saveIncomingTelegramFile(ctx) {
     const msg = ctx.message;
     const chatId = String(ctx.chat.id);

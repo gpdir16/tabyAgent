@@ -34,10 +34,6 @@ export async function runOwnerApprove(bot, ownerChatId, code) {
     return { ok: true, message };
 }
 
-/**
- * Returns true when the chat may use bot features.
- * When claimFirst is true and no owner exists yet, this chat becomes the sole owner.
- */
 export async function requireApprovedAccess(ctx, { claimFirst = false } = {}) {
     const chatId = String(ctx.chat.id);
 

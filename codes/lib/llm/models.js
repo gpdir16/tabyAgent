@@ -125,7 +125,6 @@ export function findModelVisionSupport(models, modelId) {
     return guessVisionFromModelId(modelId);
 }
 
-/** Split API models into flat ids (no /) and grouped by first path segment. */
 export function partitionModelsForPicker(models) {
     const flat = [];
     const byPrefix = new Map();

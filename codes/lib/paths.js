@@ -15,7 +15,6 @@ const HOME_DIR = process.env.HOME || "/root";
 export const AGENTS_SKILLS_LINK = path.join(HOME_DIR, ".agents", "skills");
 export const WORKSPACE_DIR = process.env.WORKSPACE_DIR || "/workspace";
 
-/** True when docker-compose bind-mounted a host folder at WORKSPACE_DIR. */
 export function isWorkspaceEnabled() {
     if (process.env.WORKSPACE_ENABLED !== "1") return false;
     try {
@@ -52,7 +51,6 @@ export function formatAllowedPaths({ write = false } = {}) {
     return parts.join(", ");
 }
 
-/** Default cwd for terminal_run and relative file paths — always agent home. */
 export function getDefaultWorkDir() {
     return USER_DIR;
 }

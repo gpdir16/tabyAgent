@@ -1,16 +1,9 @@
-/** Serializes user turns and cron jobs — cron runs only when no user/cron work is active. */
-
 import { beginAgentSession, endAgentSession } from "./agent/session.js";
 
 const queue = [];
 let running = false;
 let executingChatId = null;
 
-/**
- * @param {'user'|'cron'} priority
- * @param {() => Promise<unknown>} fn
- * @param {{ chatId?: string, cancellable?: boolean }} [opts]
- */
 export function scheduleWork(priority, fn, opts = {}) {
     const chatId = opts.chatId ? String(opts.chatId) : null;
     const cancellable = Boolean(opts.cancellable && chatId);
@@ -25,7 +18,6 @@ export function scheduleWork(priority, fn, opts = {}) {
     });
 }
 
-/** Remove a queued agent turn for this chat. Returns true if something was cancelled. */
 export function cancelQueuedAgentWork(chatId) {
     const key = String(chatId);
     let cancelled = false;
