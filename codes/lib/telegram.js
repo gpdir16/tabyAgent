@@ -204,11 +204,20 @@ async function handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment = 
     }
 }
 
-async function tryEnqueueDuringRun(ctx, chatId, text) {
-    if (!enqueueAgentMessage(chatId, text)) return false;
+function tryEnqueueDuringRun(chatId, text) {
+    return enqueueAgentMessage(chatId, text);
+}
+
+function dispatchAgentWork(ctx, chatId, workFn) {
     const lang = loadUserConfig().language || "en";
-    await sendMessageSafe(ctx.api, String(ctx.chat.id), t("message_added_during_run", lang));
-    return true;
+    void scheduleWork("user", workFn, { chatId, cancellable: true }).catch((err) => {
+        console.error("Agent error:", err?.stack || err);
+        void sendMessageSafe(ctx.api, String(ctx.chat.id), formatAgentError(err, lang));
+    });
+}
+
+function dispatchAgentTurn(bot, ctx, chatId, userText, { visionAttachment = null } = {}) {
+    dispatchAgentWork(ctx, chatId, () => handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment }));
 }
 
 /** Register bot commands with Telegram so users see them in the / menu and profile. */
@@ -489,26 +498,21 @@ export async function startTelegramBot() {
             if (isAgentSessionRunning(chatId)) {
                 const saved = await saveIncomingTelegramFile(ctx);
                 const userText = formatFileUserMessage(saved, { visionAttached: false });
-                if (await tryEnqueueDuringRun(ctx, chatId, userText)) {
+                if (tryEnqueueDuringRun(chatId, userText)) {
                     return;
                 }
             }
 
-            const result = await scheduleWork(
-                "user",
-                async () => {
-                    const saved = await saveIncomingTelegramFile(ctx);
-                    let visionAttachment = null;
-                    if (isVisionImageAttachment(saved)) {
-                        const meta = await ensureModelMeta(getMergedProvider(loadUserConfig()));
-                        if (meta.supportsVision) visionAttachment = saved;
-                    }
-                    const userText = formatFileUserMessage(saved, { visionAttached: Boolean(visionAttachment) });
-                    return handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment });
-                },
-                { chatId, cancellable: true },
-            );
-            if (result?.queued && isStoppedByUser(result)) return;
+            dispatchAgentWork(ctx, chatId, async () => {
+                const saved = await saveIncomingTelegramFile(ctx);
+                let visionAttachment = null;
+                if (isVisionImageAttachment(saved)) {
+                    const meta = await ensureModelMeta(getMergedProvider(loadUserConfig()));
+                    if (meta.supportsVision) visionAttachment = saved;
+                }
+                const userText = formatFileUserMessage(saved, { visionAttached: Boolean(visionAttachment) });
+                return handleAgentTurn(bot, ctx, chatId, userText, { visionAttachment });
+            });
         } catch (err) {
             console.error("File message error:", err?.stack || err);
             await sendMessageSafe(ctx.api, String(ctx.chat.id), formatAgentError(err, lang));
@@ -536,12 +540,11 @@ export async function startTelegramBot() {
         }
 
         try {
-            if (await tryEnqueueDuringRun(ctx, chatId, text)) {
+            if (tryEnqueueDuringRun(chatId, text)) {
                 return;
             }
 
-            const result = await scheduleWork("user", async () => handleAgentTurn(bot, ctx, chatId, text), { chatId, cancellable: true });
-            if (result?.queued && isStoppedByUser(result)) return;
+            dispatchAgentTurn(bot, ctx, chatId, text);
         } catch (err) {
             console.error("Agent error:", err?.stack || err);
             await sendMessageSafe(ctx.api, String(ctx.chat.id), formatAgentError(err, lang));

@@ -56,13 +56,14 @@ function stripSilentReply(content) {
     return content;
 }
 function injectPendingUserMessages(messages, session) {
-    if (!session) return;
+    if (!session) return false;
     const pending = session.drainPendingMessages();
-    if (!pending.length) return;
+    if (!pending.length) return false;
     messages.push({
         role: "user",
         content: `The user sent additional message(s) while you were working:\n\n${pending.join("\n\n")}`,
     });
+    return true;
 }
 
 function pushToolResult(messages, toolCallId, result) {
@@ -267,6 +268,10 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
         if (!toolCalls?.length) {
             if (choice.content?.trim()) {
                 messages.push(choice);
+                if (injectPendingUserMessages(messages, session)) {
+                    forceReplyNext = false;
+                    continue;
+                }
                 if (isSilentReply(choice.content)) {
                     return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
                         text: null,
@@ -300,6 +305,10 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
                 });
             }
             if (recovered) {
+                if (injectPendingUserMessages(messages, session)) {
+                    forceReplyNext = false;
+                    continue;
+                }
                 return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
                     text: recovered.silent ? null : recovered.text,
                     usage: recovered.usage,
@@ -400,10 +409,36 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
         });
     }
     if (recovered) {
+        let latest = recovered;
+        for (let extraRound = 0; extraRound < maxRounds; extraRound += 1) {
+            if (!injectPendingUserMessages(messages, session)) break;
+
+            if (shouldStop(session)) {
+                return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
+                    partialText: partialTextRef.value || latest.text,
+                });
+            }
+
+            const extra = await completeTextReply(llm, messages, {
+                onTextDelta,
+                setStatus,
+                maxRetries: maxEmptyReplyRetries,
+                modelCallCount: modelCallCountRef,
+                session,
+                partialTextRef,
+            });
+            if (shouldStop(session)) {
+                return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
+                    partialText: partialTextRef.value || extra?.text,
+                });
+            }
+            if (!extra) break;
+            latest = extra;
+        }
         return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
-            text: recovered.silent ? null : recovered.text,
-            usage: recovered.usage,
-            silent: recovered.silent || false,
+            text: latest.silent ? null : latest.text,
+            usage: latest.usage,
+            silent: latest.silent || false,
         });
     }
 

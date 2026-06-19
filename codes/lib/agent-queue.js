@@ -1,7 +1,10 @@
 /** Serializes user turns and cron jobs — cron runs only when no user/cron work is active. */
 
+import { beginAgentSession, endAgentSession } from "./agent/session.js";
+
 const queue = [];
 let running = false;
+let executingChatId = null;
 
 /**
  * @param {'user'|'cron'} priority
@@ -11,6 +14,10 @@ let running = false;
 export function scheduleWork(priority, fn, opts = {}) {
     const chatId = opts.chatId ? String(opts.chatId) : null;
     const cancellable = Boolean(opts.cancellable && chatId);
+
+    if (priority === "user" && cancellable && chatId) {
+        beginAgentSession(chatId);
+    }
 
     return new Promise((resolve, reject) => {
         queue.push({ priority, fn, resolve, reject, chatId, cancellable });
@@ -31,6 +38,10 @@ export function cancelQueuedAgentWork(chatId) {
         cancelled = true;
     }
 
+    if (cancelled && executingChatId !== key) {
+        endAgentSession(key);
+    }
+
     return cancelled;
 }
 
@@ -47,6 +58,7 @@ async function pump() {
 
     const item = queue.splice(idx, 1)[0];
     running = true;
+    executingChatId = item.chatId;
     try {
         item.resolve(await item.fn());
     } catch (err) {
@@ -54,6 +66,7 @@ async function pump() {
         item.reject(err);
     } finally {
         running = false;
+        executingChatId = null;
         pump();
     }
 }

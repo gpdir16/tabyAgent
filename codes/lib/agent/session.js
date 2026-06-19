@@ -37,6 +37,8 @@ export class AgentSession {
 
 export function beginAgentSession(chatId) {
     const key = String(chatId);
+    const existing = sessions.get(key);
+    if (existing?.running) return existing;
     const session = new AgentSession(key);
     sessions.set(key, session);
     return session;

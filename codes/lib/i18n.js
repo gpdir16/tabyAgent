@@ -109,11 +109,6 @@ const MESSAGES = {
         ko: "지금 실행 중인 작업이 없습니다.",
         ja: "現在実行中の作業はありません。",
     },
-    message_added_during_run: {
-        en: "Added to the current task.",
-        ko: "현재 작업에 메시지를 반영했습니다.",
-        ja: "現在の作業にメッセージを反映しました。",
-    },
     stopped_by_user: {
         en: "Stopped.",
         ko: "중지했습니다.",
