@@ -41,6 +41,20 @@ function toolSignature(name, args) {
 const FORCE_REPLY_HINT = "You have enough tool output. Stop calling tools. Reply to the user in plain text now using results you already have.";
 const EMPTY_REPLY_HINT =
     "Your previous assistant reply was empty. Reply to the user in plain text now. Summarize what you accomplished and answer their request.";
+
+const SILENT_REPLY_TOKEN = "__SILENT__";
+
+/** Check if content is a silent reply token (whitespace-trimmed exact match). */
+function isSilentReply(content) {
+    return typeof content === "string" && content.trim() === SILENT_REPLY_TOKEN;
+}
+
+/** Strip silent reply token from content, returning null if it was the entire message. */
+function stripSilentReply(content) {
+    if (!content) return null;
+    if (isSilentReply(content)) return null;
+    return content;
+}
 function injectPendingUserMessages(messages, session) {
     if (!session) return;
     const pending = session.drainPendingMessages();
@@ -123,6 +137,9 @@ async function completeTextReply(llm, messages, { onTextDelta, setStatus, maxRet
         const msg = assistantMessageToPlain(raw);
         if (msg.content?.trim()) {
             messages.push(msg);
+            if (isSilentReply(msg.content)) {
+                return { text: null, usage: response.usage, silent: true };
+            }
             return { text: msg.content, usage: response.usage };
         }
     }
@@ -163,12 +180,19 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
     const maxEmptyReplyRetries = agentConfig.maxEmptyReplyRetries ?? 8;
     const modelCallCountRef = { value: 0 };
 
+    const runtimeInfo = {
+        model: llm.provider.model,
+        sessionKey: chatId,
+        channel: "telegram",
+    };
+
     setStatus("generating");
     let messages = await ensureWithinContextLimit(llm, userMessage, llm.modelMeta, {
         chatId,
         onStatusPhase: setStatus,
         visionAttachment,
         session,
+        runtimeInfo,
     });
 
     if (shouldStop(session)) {
@@ -243,6 +267,13 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
         if (!toolCalls?.length) {
             if (choice.content?.trim()) {
                 messages.push(choice);
+                if (isSilentReply(choice.content)) {
+                    return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
+                        text: null,
+                        usage: response.usage,
+                        silent: true,
+                    });
+                }
                 return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
                     text: choice.content,
                     usage: response.usage,
@@ -270,8 +301,9 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
             }
             if (recovered) {
                 return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
-                    text: recovered.text,
+                    text: recovered.silent ? null : recovered.text,
                     usage: recovered.usage,
+                    silent: recovered.silent || false,
                 });
             }
 
@@ -369,8 +401,9 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
     }
     if (recovered) {
         return buildResult(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef.value, {
-            text: recovered.text,
+            text: recovered.silent ? null : recovered.text,
             usage: recovered.usage,
+            silent: recovered.silent || false,
         });
     }
 

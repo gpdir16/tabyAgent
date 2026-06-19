@@ -32,6 +32,10 @@ function isAgentError(result) {
     return result?.error === "agent_error" || result?.error === "agent_turn_failed";
 }
 
+function isSilentReply(result) {
+    return Boolean(result?.silent) && !result?.text?.trim();
+}
+
 function replyFailureMessage(result, lang) {
     if (result?.error === "empty_reply_exhausted") return t("empty_reply_exhausted", lang);
     return t("tool_rounds_exceeded", lang);
@@ -71,7 +75,9 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, { visionAt
         if (isStoppedByUser(result)) return result;
         if (isAgentError(result)) return result;
         await status.completeSuccess();
-        await sendTelegramReply(bot, chatId, result.text, result.stats);
+        if (!isSilentReply(result)) {
+            await sendTelegramReply(bot, chatId, result.text, result.stats);
+        }
         saveChatTurn(chatId, result);
         return result;
     }
@@ -103,6 +109,11 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, { visionAt
 
         await status.completeSuccess();
 
+        if (isSilentReply(result)) {
+            saveChatTurn(chatId, result);
+            return result;
+        }
+
         if (draft.isAvailable() && draft.getLastText()) {
             await draft.update(finalText);
             const sent = await draft.finalize(result.stats);
@@ -121,7 +132,9 @@ async function replyWithStreaming(bot, ctx, chatId, userText, status, { visionAt
     if (isStoppedByUser(result) || isAgentError(result)) return result;
     if (!isReplyFailure(result)) {
         await status.completeSuccess();
-        await streamReplyEditFallback(bot, chatId, result.text || "…", result.stats);
+        if (!isSilentReply(result)) {
+            await streamReplyEditFallback(bot, chatId, result.text || "…", result.stats);
+        }
     }
     saveChatTurn(chatId, result);
     return result;

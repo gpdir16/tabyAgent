@@ -135,7 +135,15 @@ async function compressTranscript(llm, transcript, { signal } = {}) {
     return text;
 }
 
-async function applyIntelligentCompression(llm, userMessage, fullHistory, model, modelMeta, visionAttachment = null, { signal } = {}) {
+async function applyIntelligentCompression(
+    llm,
+    userMessage,
+    fullHistory,
+    model,
+    modelMeta,
+    visionAttachment = null,
+    { signal, runtimeInfo = {} } = {},
+) {
     const recentBudget = getKeepRecentTokenBudget(modelMeta);
     const { oldItems, recentItems } = splitHistoryForCompression(fullHistory, userMessage, model, recentBudget);
 
@@ -154,16 +162,22 @@ async function applyIntelligentCompression(llm, userMessage, fullHistory, model,
         compressedSummary: summary,
         modelMeta,
         visionAttachment,
+        runtimeInfo,
     });
 }
 
-export async function ensureWithinContextLimit(llm, userMessage, modelMeta, { chatId, onStatusPhase, visionAttachment = null, session = null } = {}) {
+export async function ensureWithinContextLimit(
+    llm,
+    userMessage,
+    modelMeta,
+    { chatId, onStatusPhase, visionAttachment = null, session = null, runtimeInfo = {} } = {},
+) {
     const fullHistory = chatId ? loadChatHistory(chatId) : [];
     const model = llm.provider.model;
     const trigger = getCompressTriggerTokens(modelMeta);
     const hardLimit = getContextLimit(modelMeta);
 
-    const buildOpts = { visionAttachment, modelMeta };
+    const buildOpts = { visionAttachment, modelMeta, runtimeInfo };
     let messages = buildWithHistory(userMessage, fullHistory, buildOpts);
     let tokens = tokenCount(messages, model);
 
@@ -189,6 +203,7 @@ export async function ensureWithinContextLimit(llm, userMessage, modelMeta, { ch
         onStatusPhase?.("compressing");
         const compressed = await applyIntelligentCompression(llm, userMessage, fullHistory, model, modelMeta, visionAttachment, {
             signal: session?.signal,
+            runtimeInfo,
         });
         if (compressed) {
             messages = compressed;

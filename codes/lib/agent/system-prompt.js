@@ -1,19 +1,29 @@
 /**
  * Renders codes/lib/prompts/system.txt by replacing {{PLACEHOLDER}} tokens.
  *
+ * The template is split by a `--- CACHE_BOUNDARY ---` marker into:
+ *   - **stable prefix**: identity, environment, skills, behavior guidance (rarely changes)
+ *   - **volatile suffix**: memory, datetime, runtime info (changes every turn)
+ *
+ * This separation lets provider-side prompt caching reuse the stable prefix
+ * even when memory or timestamps change between turns.
+ *
  * Placeholders:
- *   {{LOCAL_DATETIME}} — current local time (container TZ)
- *   {{UTC_DATETIME}}   — current UTC time
- *   {{ISO_UTC}}        — ISO 8601 UTC timestamp
- *   {{TIMEZONE}}       — active time zone name
- *   {{SKILLS_LIST}}    — built-in + user skill names and summaries
- *   {{MEMORY}}         — memory.md contents (may be truncated)
+ *   {{LOCAL_DATETIME}}  — current local time (container TZ)
+ *   {{UTC_DATETIME}}    — current UTC time
+ *   {{ISO_UTC}}         — ISO 8601 UTC timestamp
+ *   {{TIMEZONE}}        — active time zone name
+ *   {{SKILLS_LIST}}     — built-in + user skill names and summaries
+ *   {{MEMORY}}          — memory.md contents (may be truncated)
  *   {{FILESYSTEM_BLOCK}} — /app/user vs /workspace map (always present)
+ *   {{PROJECT_CONTEXT}} — discovered project context files (AGENTS.md, .taby.md, etc.)
+ *   {{RUNTIME_INFO}}    — model name, session id, channel info
  */
 
 import { USER_DIR, WORKSPACE_DIR, isWorkspaceEnabled } from "../paths.js";
 
 const PLACEHOLDER_RE = /\{\{([A-Z][A-Z0-9_]*)\}\}/g;
+const CACHE_BOUNDARY_RE = /^---\s*CACHE_BOUNDARY.*$/m;
 
 export function renderSystemPrompt(template, vars) {
     return template.replace(PLACEHOLDER_RE, (match, key) => {
@@ -24,6 +34,39 @@ export function renderSystemPrompt(template, vars) {
         const value = vars[key];
         return value == null ? "" : String(value);
     });
+}
+
+/**
+ * Split the template at the CACHE_BOUNDARY marker.
+ * Returns { stable, volatile } template strings (before/after the marker).
+ */
+export function splitCacheBoundary(template) {
+    const match = template.match(CACHE_BOUNDARY_RE);
+    if (!match || match.index === undefined) {
+        return { stable: template, volatile: "" };
+    }
+    const boundaryIdx = match.index;
+    const afterBoundary = boundaryIdx + match[0].length;
+    return {
+        stable: template.slice(0, boundaryIdx).trimEnd(),
+        volatile: template.slice(afterBoundary).trimStart(),
+    };
+}
+
+/**
+ * Build the complete system prompt from template + vars, split at cache boundary.
+ * The stable prefix is rendered first and can be cached by the provider.
+ * The volatile suffix (memory, datetime, runtime) changes every turn.
+ */
+export function buildSystemPromptParts(template, vars) {
+    const { stable, volatile } = splitCacheBoundary(template);
+    const stableRendered = renderSystemPrompt(stable, vars);
+    const volatileRendered = renderSystemPrompt(volatile, vars);
+    return {
+        stable: stableRendered,
+        volatile: volatileRendered,
+        full: `${stableRendered}\n\n${volatileRendered}`.trim(),
+    };
 }
 
 function localeForLanguage(lang) {
@@ -96,4 +139,18 @@ export function buildDateTimePromptVars(lang = "en") {
         ISO_UTC: now.toISOString(),
         TIMEZONE: timeZone,
     };
+}
+
+/**
+ * Build the runtime info line for the volatile section.
+ * @param {{ model?: string, sessionKey?: string, channel?: string }} info
+ * @returns {string} e.g. "- Model: gpt-4o · Session: abc123 · Channel: telegram"
+ */
+export function buildRuntimeInfoLine(info = {}) {
+    const parts = [];
+    if (info.model) parts.push(`Model: ${info.model}`);
+    if (info.sessionKey) parts.push(`Session: ${info.sessionKey}`);
+    if (info.channel) parts.push(`Channel: ${info.channel}`);
+    if (!parts.length) return "";
+    return `- ${parts.join(" · ")}`;
 }

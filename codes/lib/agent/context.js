@@ -8,7 +8,7 @@ import { loadAgentConfig } from "../config-loader.js";
 import { loadUserConfig } from "../config-loader.js";
 import { buildUserMessageContent, estimateContentTokens } from "../llm/vision.js";
 import { formatSkillsListForPrompt } from "../skills-catalog.js";
-import { buildDateTimePromptVars, buildFilesystemPromptBlock, renderSystemPrompt } from "./system-prompt.js";
+import { buildDateTimePromptVars, buildFilesystemPromptBlock, buildRuntimeInfoLine, buildSystemPromptParts } from "./system-prompt.js";
 import { cloneStoredMessage, turnToMessages } from "./chat-history.js";
 
 const SYSTEM_PATH = path.join(CODES_DIR, "lib", "prompts", "system.txt");
@@ -62,22 +62,32 @@ function loadMemoryForPrompt({ truncateMemory = false, maxMemoryChars = 120000 }
 }
 
 /** Assemble final system message from system.txt placeholders + runtime values. */
-export function buildSystemMessageContent(lang, { truncateMemory = false, maxMemoryChars = 120000 } = {}) {
+export function buildSystemMessageContent(lang, { truncateMemory = false, maxMemoryChars = 120000, runtimeInfo = {} } = {}) {
     const template = loadSystemPromptTemplate();
-    return renderSystemPrompt(template, {
+    const vars = {
         ...buildDateTimePromptVars(lang),
         FILESYSTEM_BLOCK: buildFilesystemPromptBlock(),
         SKILLS_LIST: formatSkillsListForPrompt(),
+        RUNTIME_INFO: buildRuntimeInfoLine(runtimeInfo),
         MEMORY: loadMemoryForPrompt({ truncateMemory, maxMemoryChars }),
-    });
+    };
+    return buildSystemPromptParts(template, vars).full;
 }
 
 export function buildInitialMessages(
     userMessage,
-    { truncateMemory = false, maxMemoryChars = 120000, history = [], compressedSummary = null, visionAttachment = null, modelMeta = null } = {},
+    {
+        truncateMemory = false,
+        maxMemoryChars = 120000,
+        history = [],
+        compressedSummary = null,
+        visionAttachment = null,
+        modelMeta = null,
+        runtimeInfo = {},
+    } = {},
 ) {
     const lang = loadUserConfig().language || "en";
-    const systemContent = buildSystemMessageContent(lang, { truncateMemory, maxMemoryChars });
+    const systemContent = buildSystemMessageContent(lang, { truncateMemory, maxMemoryChars, runtimeInfo });
 
     const messages = [{ role: "system", content: systemContent }];
 
