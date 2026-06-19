@@ -89,7 +89,6 @@ export class TelegramStatusMessage {
         return Boolean(this.messageId);
     }
 
-    
     async start() {
         const res = await sendMessageSafe(this.bot, this.chatId, this.bodyText());
         if (!res.ok || !res.messageIds.length) {
@@ -130,7 +129,6 @@ export class TelegramStatusMessage {
         this.messageId = null;
     }
 
-    
     async completeError(text) {
         if (this.finished) return false;
         this.finished = true;
@@ -146,7 +144,6 @@ export class TelegramStatusMessage {
         return ok;
     }
 
-    
     async sendStandaloneError(text) {
         const elapsed = formatElapsedSeconds((Date.now() - this.startedAt) / 1000, this.lang);
         const label = statusText("error", this.lang);
