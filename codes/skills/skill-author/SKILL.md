@@ -4,7 +4,7 @@ Use when the user asks to create, update, or remove a **user skill**, or when a 
 
 ## When to create a skill
 
-Create a skill under `/app/user/skills/<slug>/SKILL.md` when:
+Create a skill under `{{SKILLS_DIR}}/<slug>/SKILL.md` when:
 
 - The user will need the same workflow again (weekly report, deploy checklist, project-specific commands).
 - You solved a multi-step problem and the steps are reusable.
@@ -15,7 +15,7 @@ Do **not** create a skill for one-off questions, greetings, or trivial single-co
 ## Layout
 
 ```
-/app/user/skills/my-skill/
+{{SKILLS_DIR}}/my-skill/
   SKILL.md    # required
 ```
 
@@ -41,7 +41,7 @@ One line: when to use this skill.
 
 ## Rules
 
-- Store skills under `/app/user/skills` (not under `/app/codes/skills` — that tree is shipped with the image).
+- Store skills under `{{SKILLS_DIR}}` (not under `{{SYSTEM_SKILLS_DIR}}` — that tree is shipped with the agent).
 - After create/update, the skill appears in the system prompt skill list on the next turn; use `skills_read` to verify content.
 - Keep skills short and actionable; system prompt stays minimal — **details live in the skill**.
 - Prefer updating an existing skill over duplicating a new one.

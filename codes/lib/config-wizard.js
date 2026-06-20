@@ -5,6 +5,7 @@ import { USER_DIR } from "./paths.js";
 import { loadUserConfig, saveUserConfig } from "./config-loader.js";
 import { claimOwnerIfNone, hasOwner, isApproved, issuePendingCode } from "./auth.js";
 import { t } from "./i18n.js";
+import { getApproveCliHint } from "./runtime.js";
 import { fetchProviderModels, providerFromWizardState, partitionModelsForPicker, buildVendorPickerItems, MODELS_PER_PAGE } from "./llm/models.js";
 import { deleteMessageSafe, sendMessageSafe } from "./telegram-api.js";
 
@@ -595,7 +596,7 @@ export async function handleConfigWizardText(ctx, bot) {
             if (hasOwner() && !isApproved(chatId)) {
                 const lang = loadUserConfig().language || "en";
                 const { code, minutes } = issuePendingCode(chatId);
-                await sendMessageSafe(ctx.api, String(ctx.chat.id), t("auth_pending", lang, { code, minutes }));
+                await sendMessageSafe(ctx.api, String(ctx.chat.id), t("auth_pending", lang, { code, minutes, approveCmd: getApproveCliHint(code) }));
                 return;
             }
             state = emptyState(chatId);

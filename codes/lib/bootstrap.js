@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { USER_DIR, DOWNLOAD_DIR, TEMPLATES_USER_DIR, AGENTS_SKILLS_LINK, WORKSPACE_DIR, isWorkspaceEnabled } from "./paths.js";
+import { isDockerRuntime, shouldLinkAgentsSkillsDir } from "./runtime.js";
 function copyDirRecursive(src, dest) {
     fs.mkdirSync(dest, { recursive: true });
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -31,7 +32,7 @@ function seedUserFromTemplates() {
 }
 
 function linkAgentsSkillsDir(userSkills) {
-    if (path.resolve(USER_DIR) !== "/app/user") return;
+    if (!shouldLinkAgentsSkillsDir()) return;
 
     const agentsDir = path.dirname(AGENTS_SKILLS_LINK);
     fs.mkdirSync(agentsDir, { recursive: true });
@@ -46,7 +47,7 @@ function linkAgentsSkillsDir(userSkills) {
             }
             return;
         }
-        console.warn("tabyAgent: ~/.agents/skills exists and is not a symlink; leaving it unchanged. Use /app/user/skills.");
+        console.warn(`tabyAgent: ~/.agents/skills exists and is not a symlink; leaving it unchanged. Use ${userSkills}.`);
     } catch (err) {
         if (err.code === "ENOENT") {
             fs.symlinkSync(userSkills, AGENTS_SKILLS_LINK);
@@ -72,6 +73,10 @@ export function ensureUserDir() {
     linkAgentsSkillsDir(path.join(USER_DIR, "skills"));
 
     if (isWorkspaceEnabled()) {
-        console.log(`tabyAgent: host workspace mounted at ${WORKSPACE_DIR}`);
+        if (isDockerRuntime()) {
+            console.log(`tabyAgent: host workspace mounted at ${WORKSPACE_DIR}`);
+        } else {
+            console.log(`tabyAgent: project workspace enabled at ${WORKSPACE_DIR}`);
+        }
     }
 }

@@ -1,4 +1,5 @@
 import { loadAgentConfig } from "../config-loader.js";
+import { isDockerRuntime } from "../runtime.js";
 import { getLastNotifiedVersion, getRunningVersion, getWatchStartedAt, saveUpdateState, setLastNotifiedVersion } from "./store.js";
 
 const GHCR_ACCEPT =
@@ -136,13 +137,22 @@ function releasesAfterWatch(releases, watchStartedAt) {
 }
 
 async function pickReadyRelease(releases, imageName) {
-    const sorted = [...releases].sort((a, b) => compareSemver(a.tag_name, b.tag_name));
+    const sorted = [...releases].sort((a, b) => compareSemver(b.tag_name, a.tag_name));
     for (const release of sorted) {
         if (await imageReadyForRelease(imageName, release.tag_name)) {
             return release;
         }
     }
     return null;
+}
+
+async function pickUpdateRelease(releases, imageName) {
+    if (!releases.length) return null;
+    if (isDockerRuntime()) {
+        return pickReadyRelease(releases, imageName);
+    }
+    const sorted = [...releases].sort((a, b) => compareSemver(a.tag_name, b.tag_name));
+    return sorted[sorted.length - 1];
 }
 
 function buildUpdatePayload(release, installScriptUrl, currentVersion) {
@@ -172,8 +182,8 @@ export async function checkForUpdate() {
     if (baseline) {
         const newer = releases.filter((r) => compareSemver(r.tag_name, baseline) > 0).sort((a, b) => compareSemver(a.tag_name, b.tag_name));
 
-        const ready = await pickReadyRelease(newer, imageName);
-        if (!ready) return null;
+        const ready = await pickUpdateRelease(newer, imageName);
+        if (!ready || compareSemver(ready.tag_name, baseline) <= 0) return null;
         return buildUpdatePayload(ready, installScriptUrl, baseline);
     }
 
@@ -181,7 +191,9 @@ export async function checkForUpdate() {
     const watched = releasesAfterWatch(releases, watchStartedAt);
     if (!watched.length) return null;
 
-    const ready = await pickReadyRelease(watched, imageName);
+    const ready = await pickUpdateRelease(watched, imageName);
     if (!ready) return null;
+    const current = running || lastNotified;
+    if (current && compareSemver(ready.tag_name, current) <= 0) return null;
     return buildUpdatePayload(ready, installScriptUrl, running || lastNotified || "—");
 }

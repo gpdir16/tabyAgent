@@ -1,21 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { countMessagesTokens, countTokens, getContextWindow } from "../agent/context.js";
-import { USER_DIR, WORKSPACE_DIR, formatAllowedPaths, isAllowedFilePath, isWorkspaceEnabled } from "../paths.js";
+import { formatAllowedPaths, isAllowedFilePath, resolveAgentPath } from "../paths.js";
+import { filePathParamDescription, filePatchDescription, fileReadDescription } from "../path-labels.js";
 
 function resolveFilePath(rawPath, { write = false } = {}) {
-    const trimmed = rawPath?.trim();
-    if (!trimmed) return null;
-    let base;
-    if (path.isAbsolute(trimmed)) {
-        base = trimmed;
-    } else if (isWorkspaceEnabled() && (trimmed === "workspace" || trimmed.startsWith(`workspace${path.sep}`))) {
-        const rel = trimmed === "workspace" ? "" : trimmed.slice("workspace".length + 1);
-        base = rel ? path.join(WORKSPACE_DIR, rel) : WORKSPACE_DIR;
-    } else {
-        base = path.join(USER_DIR, trimmed);
-    }
-    const resolved = path.normalize(path.resolve(base));
+    const resolved = resolveAgentPath(rawPath);
+    if (!resolved) return null;
     return isAllowedFilePath(resolved, { write }) ? resolved : null;
 }
 
@@ -79,14 +70,13 @@ export const fileToolDefinitions = [
         type: "function",
         function: {
             name: "file_read",
-            description:
-                "Read a text file. Default: paths relative to /app/user. Use /workspace or workspace/... only when reading the user's host-mounted PC folder. Optional line range; output capped below 50% of remaining context.",
+            description: fileReadDescription(),
             parameters: {
                 type: "object",
                 properties: {
                     path: {
                         type: "string",
-                        description: "Absolute path, path relative to /app/user, or workspace/... when a host folder is mounted",
+                        description: filePathParamDescription(),
                     },
                     startLine: { type: "integer", description: "First line to read (1-based, default 1)" },
                     endLine: { type: "integer", description: "Last line to read (1-based, inclusive)" },
@@ -100,14 +90,13 @@ export const fileToolDefinitions = [
         type: "function",
         function: {
             name: "file_patch",
-            description:
-                "Patch a text file (unified diff). Default /app/user; use /workspace only for host-mounted PC files. Call file_read on the same path in this turn first; disk must still match that read.",
+            description: filePatchDescription(),
             parameters: {
                 type: "object",
                 properties: {
                     path: {
                         type: "string",
-                        description: "Absolute path, path relative to /app/user, or workspace/... when a host folder is mounted",
+                        description: filePathParamDescription(),
                     },
                     diff: {
                         type: "string",

@@ -1,12 +1,12 @@
 import { getDynamicMcpToolDefinitions, invokeMcpTool, reloadMcpServers } from "../mcp/servers.js";
+import { mcpReloadDescription } from "../path-labels.js";
 
 const mcpReloadToolDefinition = [
     {
         type: "function",
         function: {
             name: "mcp_reload",
-            description:
-                "Reload all MCP servers from /app/user/mcp.json (disconnect and reconnect). Same effect as the user sending /reload in Telegram. Call after you edit mcp.json.",
+            description: mcpReloadDescription(),
             parameters: { type: "object", properties: {} },
         },
     },

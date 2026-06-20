@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { resolveSkillPath } from "../skills-catalog.js";
+import { renderSkillContent } from "../path-labels.js";
 
 export const skillsToolDefinitions = [
     {
@@ -26,7 +27,7 @@ export async function executeSkillsTool(name, args) {
         const system = resolveSkillPath(skillName, "system");
         const resolved = system || resolveSkillPath(skillName, "user");
         if (!resolved) return { error: `Skill not found: ${skillName}` };
-        const content = fs.readFileSync(resolved.skillFile, "utf8");
+        const content = renderSkillContent(fs.readFileSync(resolved.skillFile, "utf8"));
         return { name: skillName, source: resolved.source, content };
     }
 

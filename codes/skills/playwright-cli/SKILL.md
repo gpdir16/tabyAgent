@@ -1,6 +1,6 @@
 ---
 name: playwright-cli
-description: Playwright automation via bundled run.js. Write scripts in /tmp, execute with terminal_run from /app/codes/skills/playwright-cli.
+description: Playwright automation via bundled run.js. Write scripts in /tmp, execute with terminal_run from {{PLAYWRIGHT_CLI_DIR}}.
 ---
 
 # Playwright CLI (fallback)
@@ -9,9 +9,9 @@ Use only when **`browser-use` cannot do the job** (rare). Prefer `browser-use` f
 
 ## tabyAgent
 
-- Run via **`terminal_run`**. Skill path: **`/app/codes/skills/playwright-cli`**.
+- Run via **`terminal_run`**. Skill path: **`{{PLAYWRIGHT_CLI_DIR}}`**.
 - Chromium is **preinstalled**. Do not run `npx playwright install` unless the user asks.
-- Docker has **no display** — always **headless** (`pwDefaults.launchOptions()`).
+- Always run **headless** (`pwDefaults.launchOptions()`).
 - Write scripts to **`/tmp/playwright-test-*.js`** only — never the skill dir or user project.
 
 ## Workflow
@@ -20,14 +20,14 @@ Use only when **`browser-use` cannot do the job** (rare). Prefer `browser-use` f
 2. For **localhost**, detect dev servers first:
 
 ```bash
-cd /app/codes/skills/playwright-cli && node -e "require('./lib/helpers').detectDevServers().then(s => console.log(JSON.stringify(s)))"
+cd {{PLAYWRIGHT_CLI_DIR}} && node -e "require('./lib/helpers').detectDevServers().then(s => console.log(JSON.stringify(s)))"
 ```
 
 3. Write the script to `/tmp/playwright-test-*.js`.
 4. Run:
 
 ```bash
-cd /app/codes/skills/playwright-cli && node run.js /tmp/playwright-test-*.js
+cd {{PLAYWRIGHT_CLI_DIR}} && node run.js /tmp/playwright-test-*.js
 ```
 
 ## Script template
@@ -73,6 +73,6 @@ const servers = await helpers.detectDevServers();
 
 ## Troubleshooting
 
-- Module not found → run from skill dir: `cd /app/codes/skills/playwright-cli && node run.js …`
+- Module not found → run from skill dir: `cd {{PLAYWRIGHT_CLI_DIR}} && node run.js …`
 - Element not found → `await page.waitForSelector('.el', { timeout: 10000 })`
-- Install issues (rare) → `cd /app/codes/skills/playwright-cli && npm run setup`
+- Install issues (rare) → `cd {{PLAYWRIGHT_CLI_DIR}} && npm run setup`

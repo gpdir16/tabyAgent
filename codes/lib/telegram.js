@@ -19,6 +19,7 @@ import { getMergedProvider } from "./config-loader.js";
 import { setCronJobHandler, startCronScheduler } from "./cron/scheduler.js";
 import { startUpdateScheduler } from "./update/scheduler.js";
 import { sendChatActionSafe, safeTelegramApi, sendMessageSafe } from "./telegram-api.js";
+import { memoryFilePath } from "./path-labels.js";
 
 function isReplyFailure(result) {
     return (result?.error === "tool_rounds_exceeded" || result?.error === "empty_reply_exhausted") && !result.text?.trim();
@@ -265,6 +266,7 @@ async function registerBotCommands(bot) {
 }
 
 function helpMessage(lang) {
+    const memoryPath = memoryFilePath();
     if (lang === "ko") {
         return [
             "# tabyAgent 도움말",
@@ -280,7 +282,7 @@ function helpMessage(lang) {
             "- 파일 첨부: 사진·문서·음성·영상 전송 가능",
             "- 비전: 지원 모델에서 이미지 분석",
             "- 마크다운: 굵게, 기울임, 코드, 표, 인용, 스포일러 지원",
-            "- 메모리: /app/user/memory.md 에 자동 저장",
+            `- 메모리: ${memoryPath} 에 자동 저장`,
             "",
             "궁금한 점이 있으면 그냥 메시지를 보내세요.",
         ].join("\n");
@@ -300,7 +302,7 @@ function helpMessage(lang) {
             "- ファイル添付: 画像・書類・音声・動画に対応",
             "- ビジョン: 対応モデルで画像分析",
             "- Markdown: 太字, 斜体, コード, 表, 引用, スポイラー対応",
-            "- メモリ: /app/user/memory.md に自動保存",
+            `- メモリ: ${memoryPath} に自動保存`,
             "",
             "質問があれば、そのままメッセージを送ってください。",
         ].join("\n");
@@ -319,7 +321,7 @@ function helpMessage(lang) {
         "- Attachments: photos, documents, voice, video supported",
         "- Vision: image analysis on supported models",
         "- Markdown: bold, italic, code, tables, blockquotes, spoilers",
-        "- Memory: durable facts saved to /app/user/memory.md",
+        `- Memory: durable facts saved to ${memoryPath}`,
         "",
         "If you have a question, just send a message.",
     ].join("\n");

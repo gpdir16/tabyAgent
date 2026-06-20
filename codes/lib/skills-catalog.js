@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { SKILLS_SYSTEM_DIR, USER_DIR, AGENTS_SKILLS_LINK } from "./paths.js";
+import { renderSkillContent } from "./path-labels.js";
 
 function listSkillDirs(root) {
     if (!fs.existsSync(root)) return [];
@@ -18,7 +19,7 @@ export function readSkillSummary(skillPath) {
     if (fm) {
         const desc = fm[1].match(/^description:\s*(.+)$/m);
         if (desc) {
-            const summary = desc[1].trim().replace(/^["']|["']$/g, "");
+            const summary = renderSkillContent(desc[1].trim().replace(/^["']|["']$/g, ""));
             return { name: path.basename(skillPath), summary };
         }
     }
@@ -27,7 +28,7 @@ export function readSkillSummary(skillPath) {
             const t = l.trim();
             return t && !t.startsWith("---");
         }) || skillPath;
-    return { name: path.basename(skillPath), summary: firstLine.replace(/^#\s*/, "").trim() };
+    return { name: path.basename(skillPath), summary: renderSkillContent(firstLine.replace(/^#\s*/, "").trim()) };
 }
 
 export function collectAvailableSkills() {

@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import { USER_DIR } from "../paths.js";
+import { APP_ROOT, USER_DIR } from "../paths.js";
 
 const STATE_PATH = path.join(USER_DIR, "temp", "update-state.json");
-const BAKED_VERSION_PATH = path.join(process.env.APP_ROOT || "/app", "VERSION");
+const BAKED_VERSION_PATH = path.join(APP_ROOT, "VERSION");
 
 function defaultState() {
     return { lastNotifiedVersion: null, lastCheckedAt: null, watchStartedAt: null };

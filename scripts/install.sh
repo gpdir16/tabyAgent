@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tabyAgent — install or update via Docker (Linux / macOS)
+# tabyAgent — install or update (Docker or local; Linux / macOS)
 set -euo pipefail
 
 INSTALLER_URL_DEFAULT="https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh"
@@ -36,9 +36,15 @@ bootstrap_tty_installer
 
 REPO_OWNER="gpdir16"
 IMAGE_DEFAULT="ghcr.io/${REPO_OWNER}/tabyagent:latest"
+REPO_URL="https://github.com/${REPO_OWNER}/tabyAgent.git"
+REPO_BRANCH="${TABYAGENT_REPO_BRANCH:-main}"
 INSTALL_DIR="${TABYAGENT_HOME:-${HOME}/.tabyagent}"
+APP_DIR="${INSTALL_DIR}/app"
+USER_DATA_DIR="${INSTALL_DIR}/user"
+RUN_SCRIPT="${INSTALL_DIR}/run.sh"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 ENV_FILE="${INSTALL_DIR}/.env"
+LAUNCHD_LABEL="io.tabyagent"
 
 DOCKER_SHELL="docker"
 TABYAGENT_LANG_RESOLVED=""
@@ -74,6 +80,7 @@ Install or update tabyAgent.
 Optional:
   TELEGRAM_BOT_TOKEN='...' curl -fsSL ... | bash
   curl -fsSL ... | bash -s -- '1234567890:ABC...'
+  TABYAGENT_MODE=docker|local  (default: docker, or prompt on first install; set explicitly to switch on update)
 Language: TABYAGENT_LANG=ko|en  (default: en, or ko if LANG is Korean)
 EOF
 }
@@ -243,7 +250,7 @@ install_docker_macos() {
     open -a Docker >/dev/null 2>&1 || true
 }
 
-install_docker() {
+install_docker_engine() {
     case "$(uname -s)" in
         Linux) install_docker_linux ;;
         Darwin) install_docker_macos ;;
@@ -266,7 +273,7 @@ ensure_docker() {
         prompt_text="Install Docker now?"
     fi
     prompt_yes_no "${prompt_text}" y || die "$(if is_ko; then echo "Docker가 필요합니다."; else echo "Docker is required."; fi)"
-    install_docker
+    install_docker_engine
     wait_for_docker
 }
 
@@ -281,7 +288,184 @@ compose_cmd() {
 }
 
 is_installed() {
-    [ -f "${COMPOSE_FILE}" ]
+    [ -f "${ENV_FILE}" ] && return 0
+    [ -f "${COMPOSE_FILE}" ] && return 0
+    return 1
+}
+
+read_install_mode() {
+    if [ -f "${ENV_FILE}" ]; then
+        local mode
+        mode="$(grep '^TABYAGENT_MODE=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2-)"
+        mode="$(strip_env_scalar "${mode}" | tr '[:upper:]' '[:lower:]')"
+        case "${mode}" in
+            docker|local) printf '%s' "${mode}"; return 0 ;;
+        esac
+    fi
+    if [ -f "${COMPOSE_FILE}" ]; then
+        printf 'docker'
+        return 0
+    fi
+    if [ -f "${RUN_SCRIPT}" ] || [ -d "${APP_DIR}/codes" ]; then
+        printf 'local'
+        return 0
+    fi
+    return 1
+}
+
+prompt_install_mode() {
+    local reply
+
+    if ! can_prompt_user; then
+        printf 'docker'
+        return 0
+    fi
+
+    say_user ""
+    if is_ko; then
+        say_user "실행 방식 선택"
+        say_user "  1) Docker (권장) — 컨테이너에서 격리 실행"
+        say_user "  2) 로컬 — Node.js로 PC에서 직접 실행 (Docker 불필요)"
+        read_user_line reply "선택 [1/2] (기본 1): " || { printf 'docker'; return 0; }
+    else
+        say_user ""
+        say_user "Choose runtime"
+        say_user "  1) Docker (recommended) — isolated container"
+        say_user "  2) Local — run Node.js directly on your machine (no Docker)"
+        read_user_line reply "Choice [1/2] (default 1): " || { printf 'docker'; return 0; }
+    fi
+
+    reply="$(printf '%s' "${reply}" | tr '[:upper:]' '[:lower:]')"
+    case "${reply}" in
+        2|local|l) printf 'local' ;;
+        *) printf 'docker' ;;
+    esac
+}
+
+resolve_install_mode() {
+    local updating="$1" mode="${TABYAGENT_MODE:-}"
+
+    mode="$(printf '%s' "${mode}" | tr '[:upper:]' '[:lower:]')"
+    case "${mode}" in
+        docker|local) printf '%s' "${mode}"; return 0 ;;
+    esac
+
+    if [ "${updating}" = true ]; then
+        mode="$(read_install_mode)" || die "$(if is_ko; then echo "설치 정보를 찾을 수 없습니다."; else echo "Install metadata not found."; fi)"
+        printf '%s' "${mode}"
+        return 0
+    fi
+
+    prompt_install_mode
+}
+
+stop_docker_runtime() {
+    local compose
+    [ -f "${COMPOSE_FILE}" ] || return 0
+    docker_daemon_ok || return 0
+    compose="$(compose_cmd)"
+    (cd "${INSTALL_DIR}" && ${compose} -f "${COMPOSE_FILE}" down 2>/dev/null) || true
+}
+
+regex_escape() {
+    printf '%s' "$1" | sed 's/[][\\.*^$()+?{|}]/\\&/g'
+}
+
+stop_local_runtime() {
+    local index_pattern
+    index_pattern="$(regex_escape "${APP_DIR}/codes/index.js")"
+    case "$(uname -s)" in
+        Darwin)
+            launchctl bootout "gui/$(id -u)/${LAUNCHD_LABEL}" 2>/dev/null || true
+            ;;
+        Linux)
+            systemctl --user stop tabyagent.service 2>/dev/null || true
+            ;;
+    esac
+    pkill -f "${index_pattern}" 2>/dev/null || true
+}
+
+uninstall_local_service() {
+    stop_local_runtime
+    case "$(uname -s)" in
+        Darwin)
+            rm -f "${HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
+            ;;
+        Linux)
+            if command -v systemctl >/dev/null 2>&1; then
+                systemctl --user disable --now tabyagent.service 2>/dev/null || true
+                rm -f "${HOME}/.config/systemd/user/tabyagent.service"
+                systemctl --user daemon-reload 2>/dev/null || true
+            fi
+            ;;
+    esac
+}
+
+prepare_mode_switch() {
+    local from="$1" to="$2"
+    [ "${from}" = "${to}" ] && return 0
+    if is_ko; then echo "==> 실행 방식 변경: ${from} → ${to}"; else echo "==> Switching runtime: ${from} → ${to}"; fi
+    if is_ko; then
+        echo "  참고: Docker와 로컬은 사용자 데이터 위치가 다릅니다 (Docker volume vs ${USER_DATA_DIR})."
+    else
+        echo "  Note: Docker and local use different data locations (Docker volume vs ${USER_DATA_DIR})."
+    fi
+    stop_docker_runtime
+    if [ "${from}" = "local" ] && [ "${to}" = "docker" ]; then
+        uninstall_local_service
+        rm -f "${RUN_SCRIPT}"
+    else
+        stop_local_runtime
+        rm -f "${COMPOSE_FILE}"
+    fi
+}
+
+ensure_systemd_linger() {
+    [ "$(uname -s)" = Linux ] || return 0
+    command -v loginctl >/dev/null 2>&1 || return 0
+    if loginctl show-user "${USER}" -p Linger 2>/dev/null | grep -q 'Linger=yes'; then
+        return 0
+    fi
+    if is_ko; then echo "==> 재부팅·로그아웃 후에도 실행되도록 linger 설정 중..."; else echo "==> Enabling systemd linger for reboot/logout survival..."; fi
+    loginctl enable-linger "${USER}" 2>/dev/null || {
+        if is_ko; then
+            echo "⚠ linger 설정 실패 — 로그아웃 후 서비스가 중지될 수 있습니다: sudo loginctl enable-linger ${USER}"
+        else
+            echo "⚠ Could not enable linger — service may stop after logout: sudo loginctl enable-linger ${USER}"
+        fi
+    }
+}
+
+verify_install() {
+    local mode="$1"
+    local index_pattern
+    sleep 2
+    index_pattern="$(regex_escape "${APP_DIR}/codes/index.js")"
+    if [ "${mode}" = local ]; then
+        case "$(uname -s)" in
+            Darwin)
+                launchctl print "gui/$(id -u)/${LAUNCHD_LABEL}" >/dev/null 2>&1 && return 0
+                ;;
+            Linux)
+                systemctl --user is-active --quiet tabyagent.service 2>/dev/null && return 0
+                ;;
+        esac
+        if pgrep -f "${index_pattern}" >/dev/null 2>&1; then
+            return 0
+        fi
+    else
+        if docker_daemon_ok && ${DOCKER_SHELL} ps --filter name=tabyagent --format '{{.Names}}' 2>/dev/null | grep -qx tabyagent; then
+            return 0
+        fi
+    fi
+    if is_ko; then
+        echo "⚠ tabyAgent가 아직 실행 중이 아닐 수 있습니다. 로그: ${INSTALL_DIR}/logs/"
+        [ -f "${INSTALL_DIR}/logs/stderr.log" ] && tail -n 5 "${INSTALL_DIR}/logs/stderr.log" 2>/dev/null || true
+    else
+        echo "⚠ tabyAgent may not be running yet. Logs: ${INSTALL_DIR}/logs/"
+        [ -f "${INSTALL_DIR}/logs/stderr.log" ] && tail -n 5 "${INSTALL_DIR}/logs/stderr.log" 2>/dev/null || true
+    fi
+    return 1
 }
 
 trim_token() {
@@ -293,6 +477,20 @@ trim_path() {
     p="${p#"${p%%[![:space:]]*}"}"
     p="${p%"${p##*[![:space:]]}"}"
     printf '%s' "${p}"
+}
+
+strip_env_scalar() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [ "${value#\"}" != "${value}" ] && [ "${value%\"}" != "${value}" ]; then
+        value="${value#\"}"
+        value="${value%\"}"
+    elif [ "${value#\'}" != "${value}" ] && [ "${value%\'}" != "${value}" ]; then
+        value="${value#\'}"
+        value="${value%\'}"
+    fi
+    printf '%s' "${value}"
 }
 
 expand_user_path() {
@@ -321,16 +519,34 @@ validate_host_workspace_path() {
     fi
 }
 
-# Interactive host bind mount (first install). Default: no connection.
+# Interactive host workspace (first install). Default: no connection.
 prompt_host_workspace() {
-    local path reply
+    local mode="${1:-docker}" path reply
 
     if ! can_prompt_user; then
         return 0
     fi
 
     say_user ""
-    if is_ko; then
+    if [ "${mode}" = local ]; then
+        if is_ko; then
+            say_user "추가 작업 폴더 (선택)"
+            say_user "  기본 작업은 ${USER_DATA_DIR} 에서 합니다."
+            say_user "  연결하면 PC 프로젝트 폴더를 에이전트가 사용할 수 있습니다."
+            prompt_yes_no "추가 작업 폴더를 연결할까요?" n || return 0
+            say_user ""
+            say_user "⚠ 경고: 에이전트가 연결된 폴더의 파일을 수정할 수 있는 권한을 갖습니다."
+            prompt_yes_no "그래도 연결하시겠습니까?" n || return 0
+        else
+            say_user "Extra project folder (optional)"
+            say_user "  Default work stays in ${USER_DATA_DIR}."
+            say_user "  If enabled, the agent can read/write a project folder on your PC."
+            prompt_yes_no "Connect a project folder?" n || return 0
+            say_user ""
+            say_user "⚠ Warning: The agent will be able to modify files in that folder."
+            prompt_yes_no "Continue anyway?" n || return 0
+        fi
+    elif is_ko; then
         say_user "호스트 폴더 연결 (선택)"
         say_user "  기본 작업은 컨테이너 안 /app/user 에서 합니다."
         say_user "  연결하면 PC 폴더가 /workspace 로 마운트됩니다 (필요할 때만 사용)."
@@ -340,25 +556,7 @@ prompt_host_workspace() {
         say_user "  이 설정이 활성화되면 더 이상 tabyAgent가 격리 상태가 아니게 됩니다."
         say_user "  연결된 폴더의 파일을 파괴, 유출할 가능성이 존재합니다."
         prompt_yes_no "그래도 연결하시겠습니까?" n || return 0
-        while true; do
-            read_user_line reply "절대 경로 (예: ${HOME}/my-project): " || return 0
-            path="$(expand_user_path "${reply}")"
-            [ -n "${path}" ] || continue
-            case "${path}" in
-                /*) ;;
-                *)
-                    say_user "절대 경로를 입력하세요."
-                    continue
-                    ;;
-            esac
-            if [ ! -d "${path}" ]; then
-                say_user "폴더가 없습니다: ${path}"
-                continue
-            fi
-            break
-        done
     else
-        say_user ""
         say_user "Host folder mount (optional)"
         say_user "  Default work stays in /app/user inside the container."
         say_user "  If enabled, a PC folder is mounted at /workspace (use only when needed)."
@@ -368,37 +566,49 @@ prompt_host_workspace() {
         say_user "  Enabling this ends tabyAgent's isolation from your host."
         say_user "  Connected files may be destroyed or leaked."
         prompt_yes_no "Continue anyway?" n || return 0
-        while true; do
-            read_user_line reply "Absolute path (e.g. ${HOME}/my-project): " || return 0
-            path="$(expand_user_path "${reply}")"
-            [ -n "${path}" ] || continue
-            case "${path}" in
-                /*) ;;
-                *)
-                    say_user "Enter an absolute path."
-                    continue
-                    ;;
-            esac
-            if [ ! -d "${path}" ]; then
-                say_user "Folder does not exist: ${path}"
-                continue
-            fi
-            break
-        done
     fi
+
+    while true; do
+        if is_ko; then
+            read_user_line reply "절대 경로 (예: ${HOME}/my-project): " || return 0
+        else
+            read_user_line reply "Absolute path (e.g. ${HOME}/my-project): " || return 0
+        fi
+        path="$(expand_user_path "${reply}")"
+        [ -n "${path}" ] || continue
+        case "${path}" in
+            /*) ;;
+            *)
+                if is_ko; then say_user "절대 경로를 입력하세요."; else say_user "Enter an absolute path."; fi
+                continue
+                ;;
+        esac
+        if [ ! -d "${path}" ]; then
+            if is_ko; then say_user "폴더가 없습니다: ${path}"; else say_user "Folder does not exist: ${path}"; fi
+            continue
+        fi
+        break
+    done
 
     HOST_WORKSPACE="${path}"
     export HOST_WORKSPACE
 }
 
 resolve_host_workspace() {
-    local updating="$1"
+    local updating="$1" mode="${2:-docker}"
 
     if [ "${updating}" = true ]; then
         HOST_WORKSPACE="$(read_env_host_workspace)"
         if [ -n "${HOST_WORKSPACE:-}" ]; then
-            validate_host_workspace_path "$(expand_user_path "${HOST_WORKSPACE}")"
-            HOST_WORKSPACE="$(expand_user_path "${HOST_WORKSPACE}")"
+            local expanded
+            expanded="$(expand_user_path "${HOST_WORKSPACE}")"
+            if [ -d "${expanded}" ]; then
+                HOST_WORKSPACE="${expanded}"
+            else
+                if is_ko; then echo "⚠ 작업 폴더가 없어 연결을 해제합니다: ${expanded}"
+                else echo "⚠ Workspace folder missing, clearing: ${expanded}"; fi
+                HOST_WORKSPACE=""
+            fi
         fi
         export HOST_WORKSPACE
         return 0
@@ -408,7 +618,7 @@ resolve_host_workspace() {
     if can_prompt_user; then
         HOST_WORKSPACE=""
         export HOST_WORKSPACE
-        prompt_host_workspace
+        prompt_host_workspace "${mode}"
         return 0
     fi
 
@@ -453,10 +663,12 @@ prompt_token() {
 
 write_compose() {
     local image="$1"
-    local workspace_volumes="" workspace_env=""
+    local workspace_volumes="" workspace_env="" install_dir_escaped ws_escaped
+    install_dir_escaped="$(yaml_escape_double "${INSTALL_DIR}")"
     if [ -n "${HOST_WORKSPACE:-}" ]; then
-        workspace_env=$'            WORKSPACE_ENABLED: "1"\n            WORKSPACE_DIR: /workspace\n            HOST_WORKSPACE: '"${HOST_WORKSPACE}"$'\n'
-        workspace_volumes=$'            - '"${HOST_WORKSPACE}"':/workspace\n'
+        ws_escaped="$(yaml_escape_double "${HOST_WORKSPACE}")"
+        workspace_env=$'            WORKSPACE_ENABLED: "1"\n            WORKSPACE_DIR: /workspace\n            HOST_WORKSPACE: "'"${ws_escaped}"$'"\n'
+        workspace_volumes=$'            - "'"${ws_escaped}"$':/workspace"\n'
     fi
     mkdir -p "${INSTALL_DIR}"
     cat >"${COMPOSE_FILE}" <<EOF
@@ -468,6 +680,9 @@ services:
             - .env
         environment:
             TELEGRAM_BOT_TOKEN: \${TELEGRAM_BOT_TOKEN:-}
+            TABYAGENT_MODE: docker
+            TABYAGENT_HOME: "${install_dir_escaped}"
+            TABYAGENT_DOCKER_SHELL: \${TABYAGENT_DOCKER_SHELL:-docker}
 ${workspace_env}        volumes:
             - tabyagent-user:/app/user
 ${workspace_volumes}        restart: unless-stopped
@@ -477,14 +692,64 @@ volumes:
 EOF
 }
 
+write_env_quoted() {
+    local key="$1" value="$2"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//\$/\\$}"
+    printf '%s="%s"\n' "${key}" "${value}"
+}
+
+yaml_escape_double() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf '%s' "${value}"
+}
+
+write_local_version() {
+    [ -d "${APP_DIR}/.git" ] || return 0
+    local version
+    version="$(git -C "${APP_DIR}" describe --tags --always --dirty 2>/dev/null || true)"
+    [ -n "${version}" ] || return 0
+    printf '%s\n' "${version}" >"${APP_DIR}/VERSION"
+}
+
 write_env() {
-    local token="$1"
+    local token="$1" mode="${2:-docker}"
     local workspace="${HOST_WORKSPACE:-}"
+    local version=""
     umask 077
+    if [ "${mode}" = local ] && [ -f "${APP_DIR}/VERSION" ]; then
+        version="$(tr -d '\n' <"${APP_DIR}/VERSION")"
+    elif [ "${mode}" = local ] && [ -f "${ENV_FILE}" ]; then
+        version="$(grep '^TABYAGENT_VERSION=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2-)"
+        version="$(strip_env_scalar "${version}")"
+    fi
     {
+        printf 'TABYAGENT_MODE=%s\n' "${mode}"
         printf 'TELEGRAM_BOT_TOKEN=%s\n' "${token}"
+        if [ "${mode}" = docker ]; then
+            write_env_quoted TABYAGENT_DOCKER_SHELL "${DOCKER_SHELL}"
+            write_env_quoted TABYAGENT_HOME "${INSTALL_DIR}"
+        fi
+        if [ "${mode}" = local ]; then
+            write_env_quoted TABYAGENT_HOME "${INSTALL_DIR}"
+            write_env_quoted APP_ROOT "${APP_DIR}"
+            write_env_quoted USER_DIR "${USER_DATA_DIR}"
+            write_env_quoted CODES_DIR "${APP_DIR}/codes"
+            write_env_quoted CONFIG_DIR "${APP_DIR}/codes/config"
+            write_env_quoted TABYAGENT_NODE "$(resolve_node_bin)"
+            if [ -n "${version}" ]; then
+                printf 'TABYAGENT_VERSION=%s\n' "${version}"
+            fi
+        fi
         if [ -n "${workspace}" ]; then
-            printf 'HOST_WORKSPACE=%s\n' "${workspace}"
+            write_env_quoted HOST_WORKSPACE "${workspace}"
+            printf 'WORKSPACE_ENABLED=1\n'
+            if [ "${mode}" = local ]; then
+                write_env_quoted WORKSPACE_DIR "${workspace}"
+            fi
         fi
     } >"${ENV_FILE}"
     chmod 600 "${ENV_FILE}"
@@ -541,6 +806,380 @@ pull_image() {
     fi
 }
 
+ensure_node() {
+    local node_ver major
+
+    if ! command -v node >/dev/null 2>&1; then
+        if is_ko; then
+            die "Node.js 22 이상이 필요합니다. https://nodejs.org 에서 설치하거나 TABYAGENT_MODE=docker 로 Docker 설치를 선택하세요."
+        else
+            die "Node.js 22+ is required. Install from https://nodejs.org or choose Docker with TABYAGENT_MODE=docker."
+        fi
+    fi
+
+    node_ver="$(node -p 'process.versions.node' 2>/dev/null || true)"
+    major="${node_ver%%.*}"
+    if [ -z "${major}" ] || [ "${major}" -lt 22 ] 2>/dev/null; then
+        if is_ko; then die "Node.js 22 이상이 필요합니다. 현재: ${node_ver:-unknown}"
+        else die "Node.js 22+ required. Found: ${node_ver:-unknown}"; fi
+    fi
+
+    command -v npm >/dev/null 2>&1 || die "$(if is_ko; then echo "npm이 필요합니다."; else echo "npm is required."; fi)"
+}
+
+resolve_node_bin() {
+    local node_bin
+    node_bin="$(command -v node)"
+    [ -n "${node_bin}" ] || die "$(if is_ko; then echo "node 실행 파일을 찾을 수 없습니다."; else echo "node executable not found."; fi)"
+    printf '%s' "${node_bin}"
+}
+
+download_source_tarball() {
+    local url tmp extracted
+    url="https://github.com/${REPO_OWNER}/tabyAgent/archive/refs/heads/${REPO_BRANCH}.tar.gz"
+    tmp="$(mktemp -t tabyagent-src.XXXXXX.tar.gz)"
+    if is_ko; then echo "==> 소스 코드 받는 중..."; else echo "==> Downloading source..."; fi
+    curl -fsSL "${url}" -o "${tmp}"
+    rm -rf "${APP_DIR}"
+    mkdir -p "${INSTALL_DIR}"
+    tar -xzf "${tmp}" -C "${INSTALL_DIR}"
+    rm -f "${tmp}"
+    extracted="$(find "${INSTALL_DIR}" -maxdepth 1 -mindepth 1 -type d -name 'tabyAgent-*' | head -1)"
+    [ -n "${extracted}" ] || die "$(if is_ko; then echo "소스 압축 해제에 실패했습니다."; else echo "Failed to extract source archive."; fi)"
+    mv "${extracted}" "${APP_DIR}"
+}
+
+update_local_source() {
+    if [ -d "${APP_DIR}/.git" ] && command -v git >/dev/null 2>&1; then
+        if is_ko; then echo "==> 소스 코드 업데이트 중..."; else echo "==> Updating source..."; fi
+        git -C "${APP_DIR}" fetch origin "${REPO_BRANCH}" 2>/dev/null || git -C "${APP_DIR}" fetch origin 2>/dev/null || true
+        git -C "${APP_DIR}" reset --hard "origin/${REPO_BRANCH}" 2>/dev/null \
+            || git -C "${APP_DIR}" reset --hard "origin/main" 2>/dev/null \
+            || git -C "${APP_DIR}" pull --ff-only 2>/dev/null \
+            || download_source_tarball
+        return 0
+    fi
+
+    if [ -d "${APP_DIR}/codes" ]; then
+        download_source_tarball
+        return 0
+    fi
+
+    if command -v git >/dev/null 2>&1; then
+        if is_ko; then echo "==> 저장소 클론 중..."; else echo "==> Cloning repository..."; fi
+        rm -rf "${APP_DIR}"
+        git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${APP_DIR}" 2>/dev/null \
+            || git clone --depth 1 "${REPO_URL}" "${APP_DIR}"
+        return 0
+    fi
+
+    download_source_tarball
+}
+
+install_local_deps() {
+    local pw_dir stealth_script
+
+    if is_ko; then echo "==> Node.js 패키지 설치 중..."; else echo "==> Installing Node.js packages..."; fi
+    (cd "${APP_DIR}" && npm install --omit=dev)
+
+    pw_dir="${APP_DIR}/codes/skills/playwright-cli"
+    if [ -d "${pw_dir}" ]; then
+        if is_ko; then echo "==> Playwright 브라우저 설치 중..."; else echo "==> Installing Playwright browser..."; fi
+        (cd "${pw_dir}" && npm install --omit=dev && npx playwright install chromium)
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        if is_ko; then echo "==> browser-use 설치 중 (선택)..."; else echo "==> Installing browser-use (optional)..."; fi
+        if python3 -m pip install --user 'browser-use' 'uv' >/dev/null 2>&1 \
+            || python3 -m pip install --break-system-packages 'browser-use' 'uv' >/dev/null 2>&1; then
+            if command -v browser-use >/dev/null 2>&1; then
+                browser-use install >/dev/null 2>&1 || true
+            fi
+            stealth_script="${APP_DIR}/codes/skills/browser-use/install-stealth.sh"
+            if [ -f "${stealth_script}" ]; then
+                STEALTH_DIR="${APP_DIR}/codes/skills/browser-use" bash "${stealth_script}" || true
+            fi
+        elif is_ko; then
+            echo "    (browser-use 스킵: Python/pip 없음 — 웹 브라우징 skill 제한될 수 있음)"
+        else
+            echo "    (browser-use skipped: no Python/pip — web browsing skill may be limited)"
+        fi
+    fi
+}
+
+write_run_script() {
+    cat >"${RUN_SCRIPT}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="${INSTALL_DIR}/.env"
+LOG_DIR="${INSTALL_DIR}/logs"
+LAUNCHD_LABEL="io.tabyagent"
+
+load_env() {
+    # shellcheck disable=SC1091
+    [ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
+    export TABYAGENT_HOME="${TABYAGENT_HOME:-${INSTALL_DIR}}"
+    export APP_ROOT="${APP_ROOT:-${INSTALL_DIR}/app}"
+    export USER_DIR="${USER_DIR:-${INSTALL_DIR}/user}"
+    export CODES_DIR="${CODES_DIR:-${APP_ROOT}/codes}"
+    export CONFIG_DIR="${CONFIG_DIR:-${APP_ROOT}/codes/config}"
+}
+
+regex_escape() {
+    printf '%s' "$1" | sed 's/[][\\.*^$()+?{|}]/\\&/g'
+}
+
+resolve_node() {
+    local candidate
+    if [ -n "${TABYAGENT_NODE:-}" ] && [ -x "${TABYAGENT_NODE}" ]; then
+        printf '%s' "${TABYAGENT_NODE}"
+        return 0
+    fi
+    for candidate in /opt/homebrew/bin/node /usr/local/bin/node "$(command -v node 2>/dev/null || true)"; do
+        [ -n "${candidate}" ] && [ -x "${candidate}" ] && printf '%s' "${candidate}" && return 0
+    done
+    return 1
+}
+
+load_env
+NODE_BIN="$(resolve_node)" || {
+    echo "node not found — reinstall or set TABYAGENT_NODE in ${ENV_FILE}" >&2
+    exit 1
+}
+INDEX_JS="${APP_ROOT}/codes/index.js"
+INDEX_PATTERN="$(regex_escape "${INDEX_JS}")"
+
+service_start() {
+    case "$(uname -s)" in
+        Darwin)
+            if launchctl print "gui/$(id -u)/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
+                launchctl kickstart -k "gui/$(id -u)/${LAUNCHD_LABEL}"
+            else
+                launchctl bootstrap "gui/$(id -u)" "${HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist" \
+                    || launchctl load "${HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
+            fi
+            ;;
+        Linux)
+            systemctl --user start tabyagent.service
+            ;;
+        *)
+            echo "Unsupported OS for background service" >&2
+            return 1
+            ;;
+    esac
+}
+
+service_stop() {
+    case "$(uname -s)" in
+        Darwin)
+            launchctl bootout "gui/$(id -u)/${LAUNCHD_LABEL}" 2>/dev/null || pkill -f "${INDEX_PATTERN}" 2>/dev/null || true
+            ;;
+        Linux)
+            systemctl --user stop tabyagent.service 2>/dev/null || pkill -f "${INDEX_PATTERN}" 2>/dev/null || true
+            ;;
+    esac
+}
+
+service_status() {
+    if pgrep -f "${INDEX_PATTERN}" >/dev/null 2>&1; then
+        echo "running (pid $(pgrep -f "${INDEX_PATTERN}" | head -1))"
+        return 0
+    fi
+    echo "not running"
+    return 1
+}
+
+case "${1:-status}" in
+    daemon)
+        exec "${NODE_BIN}" "${INDEX_JS}"
+        ;;
+    approve)
+        shift
+        exec "${NODE_BIN}" "${APP_ROOT}/codes/cli.js" approve "$@"
+        ;;
+    start)
+        service_start
+        service_status
+        ;;
+    stop)
+        service_stop
+        echo "stopped"
+        ;;
+    restart)
+        service_stop
+        sleep 1
+        service_start
+        service_status
+        ;;
+    status)
+        service_status
+        ;;
+    logs)
+        tail -n 80 -f "${LOG_DIR}/stderr.log" 2>/dev/null || tail -n 80 -f "${LOG_DIR}/stdout.log" 2>/dev/null || echo "no logs yet"
+        ;;
+    foreground|run)
+        exec "${NODE_BIN}" "${INDEX_JS}"
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status|logs|approve <code>|foreground}" >&2
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "${RUN_SCRIPT}"
+}
+
+install_launchd_service() {
+    local plist="${HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
+    local node_bin
+    node_bin="$(resolve_node_bin)"
+    mkdir -p "${INSTALL_DIR}/logs" "${HOME}/Library/LaunchAgents"
+    cat >"${plist}" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${LAUNCHD_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${RUN_SCRIPT}</string>
+        <string>daemon</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${HOME}/.local/bin</string>
+        <key>TABYAGENT_NODE</key>
+        <string>${node_bin}</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>${APP_DIR}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>${INSTALL_DIR}/logs/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>${INSTALL_DIR}/logs/stderr.log</string>
+</dict>
+</plist>
+EOF
+    launchctl bootout "gui/$(id -u)/${LAUNCHD_LABEL}" 2>/dev/null || true
+    if ! launchctl bootstrap "gui/$(id -u)" "${plist}" 2>/dev/null; then
+        launchctl load "${plist}" 2>/dev/null || die "$(if is_ko; then echo "백그라운드 서비스 등록 실패. 로그: ${INSTALL_DIR}/logs/"; else echo "Failed to register background service. Logs: ${INSTALL_DIR}/logs/"; fi)"
+    fi
+    launchctl enable "gui/$(id -u)/${LAUNCHD_LABEL}" 2>/dev/null || true
+    launchctl kickstart -k "gui/$(id -u)/${LAUNCHD_LABEL}" 2>/dev/null || true
+}
+
+install_systemd_user_service() {
+    local unit_dir="${HOME}/.config/systemd/user"
+    local unit_file="${unit_dir}/tabyagent.service"
+    local env_file_line="EnvironmentFile=${ENV_FILE}"
+    local exec_start_line="ExecStart=${RUN_SCRIPT} daemon"
+    local workdir_line="WorkingDirectory=${APP_DIR}"
+    if [[ "${ENV_FILE}" == *" "* ]]; then
+        env_file_line="EnvironmentFile=\"${ENV_FILE}\""
+    fi
+    if [[ "${RUN_SCRIPT}" == *" "* ]]; then
+        exec_start_line="ExecStart=\"${RUN_SCRIPT}\" daemon"
+    fi
+    if [[ "${APP_DIR}" == *" "* ]]; then
+        workdir_line="WorkingDirectory=\"${APP_DIR}\""
+    fi
+    mkdir -p "${unit_dir}" "${INSTALL_DIR}/logs"
+    cat >"${unit_file}" <<EOF
+[Unit]
+Description=tabyAgent Telegram bot
+After=network-online.target
+
+[Service]
+Type=simple
+${env_file_line}
+${exec_start_line}
+${workdir_line}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+EOF
+    systemctl --user daemon-reload
+    systemctl --user enable --now tabyagent.service
+}
+
+install_local_service() {
+    case "$(uname -s)" in
+        Darwin) install_launchd_service ;;
+        Linux)
+            if command -v systemctl >/dev/null 2>&1; then
+                install_systemd_user_service
+            else
+                die "$(if is_ko; then echo "systemd가 필요합니다. Linux에서는 systemd 사용자 서비스를 지원합니다."; else echo "systemd is required for local install on Linux."; fi)"
+            fi
+            ;;
+        *) die "$(if is_ko; then echo "Linux/macOS만 지원합니다."; else echo "Linux and macOS only."; fi)" ;;
+    esac
+}
+
+print_local_service_hints() {
+    echo ""
+    if is_ko; then
+        echo "백그라운드에서 실행 중입니다. 터미널을 닫아도 됩니다."
+        echo "  상태: ${RUN_SCRIPT} status"
+        echo "  중지: ${RUN_SCRIPT} stop"
+        echo "  재시작: ${RUN_SCRIPT} restart"
+        echo "  로그: ${RUN_SCRIPT} logs"
+        echo "  (디버그용 포그라운드: ${RUN_SCRIPT} foreground)"
+    else
+        echo "Running in the background — you can close this terminal."
+        echo "  Status: ${RUN_SCRIPT} status"
+        echo "  Stop: ${RUN_SCRIPT} stop"
+        echo "  Restart: ${RUN_SCRIPT} restart"
+        echo "  Logs: ${RUN_SCRIPT} logs"
+        echo "  (Foreground debug: ${RUN_SCRIPT} foreground)"
+    fi
+}
+
+install_local() {
+    local token="$1" updating="$2"
+
+    ensure_node
+    mkdir -p "${INSTALL_DIR}" "${USER_DATA_DIR}"
+    stop_local_runtime
+    stop_docker_runtime
+    resolve_host_workspace "${updating}" local
+    update_local_source
+    write_local_version
+    install_local_deps
+    write_run_script
+    write_env "${token}" local
+    if is_ko; then echo "==> 실행 중..."; else echo "==> Starting..."; fi
+    install_local_service
+    ensure_systemd_linger
+    verify_install local || true
+    print_local_service_hints
+}
+
+deploy_tabyagent_docker() {
+    local token="$1" image="$2" updating="$3" compose
+
+    stop_local_runtime
+    ensure_docker
+    compose="$(compose_cmd)"
+    resolve_host_workspace "${updating}" docker
+    write_compose "${image}"
+    write_env "${token}" docker
+    cd "${INSTALL_DIR}"
+    pull_image "${compose}" "${image}"
+    if is_ko; then echo "==> 실행 중..."; else echo "==> Starting..."; fi
+    ${compose} -f "${COMPOSE_FILE}" up -d
+    verify_install docker || true
+}
+
 main() {
     resolve_lang
     local token="${TELEGRAM_BOT_TOKEN:-}" image="${TABYAGENT_IMAGE:-${IMAGE_DEFAULT}}"
@@ -568,29 +1207,31 @@ main() {
     fi
 
     validate_token "${token}"
-    ensure_docker
-    local compose
-    compose="$(compose_cmd)"
 
-    resolve_host_workspace "${updating}"
+    local mode old_mode=""
+    mode="$(resolve_install_mode "${updating}")"
 
-    write_compose "${image}"
-    write_env "${token}"
-    cd "${INSTALL_DIR}"
+    if [ "${updating}" = true ]; then
+        old_mode="$(read_install_mode 2>/dev/null)" || old_mode=""
+        if [ -n "${old_mode}" ] && [ "${old_mode}" != "${mode}" ]; then
+            prepare_mode_switch "${old_mode}" "${mode}"
+        fi
+    fi
 
-    pull_image "${compose}" "${image}"
-
-    if is_ko; then echo "==> 실행 중..."; else echo "==> Starting..."; fi
-    ${compose} -f "${COMPOSE_FILE}" up -d
+    if [ "${mode}" = local ]; then
+        install_local "${token}" "${updating}"
+    else
+        deploy_tabyagent_docker "${token}" "${image}" "${updating}"
+    fi
 
     echo ""
-    if ${updating}; then
-        if is_ko; then echo "완료. tabyAgent 실행 중."; else echo "Done. tabyAgent is running."; fi
+    if [ "${updating}" = true ]; then
+        if is_ko; then echo "완료. tabyAgent 실행 중 (${mode})."; else echo "Done. tabyAgent is running (${mode})."; fi
     else
         if is_ko; then
-            echo "설치 완료. Telegram에서 봇에게 /start 를 보내세요."
+            echo "설치 완료 (${mode}). Telegram에서 봇에게 /start 를 보내세요."
         else
-            echo "Install complete. Open your bot in Telegram and send /start."
+            echo "Install complete (${mode}). Open your bot in Telegram and send /start."
         fi
     fi
 }

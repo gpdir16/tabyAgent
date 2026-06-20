@@ -4,7 +4,7 @@ English | [한국어](README.ko.md)
 
 A lighter, easier alternative to OpenClaw/Hermes.
 
-Runs autonomously inside Docker and chats with you through Telegram.
+Runs in Docker or locally (Node.js) and chats with you through Telegram.
 
 ## What it does
 
@@ -12,7 +12,7 @@ Runs autonomously inside Docker and chats with you through Telegram.
 - **Connect your inference provider** — Works with OpenAI, OpenRouter, or any custom API endpoint.
 - **Skills, MCP** — Add capabilities like web browsing, scheduled tasks, and more.
 - **Scheduled tasks** — Set up recurring jobs that run automatically and report back.
-- **Runs anywhere** — Lightweight single Docker container, works on any device.
+- **Runs anywhere** — Docker container or local Node.js on your machine.
 
 ## Quick start
 
@@ -24,15 +24,22 @@ Runs autonomously inside Docker and chats with you through Telegram.
 
 ### 2. Install (Linux / macOS)
 
-Paste this one line into your terminal and press Enter. The installer will ask you to **paste the full token from BotFather**, then **(optionally)** whether to connect a host folder — default **no**; if yes, it warns about risk and asks for an absolute path.
+Paste this one line into your terminal and press Enter. The installer will ask you to **paste the full token from BotFather**, then choose **Docker** or **local (Node.js)** runtime. It will **(optionally)** ask whether to connect a host folder — default **no**; if yes, it warns about risk and asks for an absolute path.
 
-When the installer asks you to install Docker, press y to install it. tabyAgent requires Docker to run. Automatic installation is supported on macOS and Linux only.
+If you choose Docker and Docker is missing, the installer can install it. Local install requires Node.js 22+. Non-interactive: `TABYAGENT_MODE=docker` or `TABYAGENT_MODE=local`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh | bash
 ```
 
 When it finishes, open your bot in Telegram and send `/start`. To upgrade later, run the **same command again** — your settings and memory are kept.
+
+**Switch runtime:** re-run the installer with `TABYAGENT_MODE=local` or `TABYAGENT_MODE=docker`. The previous runtime is stopped automatically.
+
+**Local install:** runs as a **background service** — you can close the terminal.
+
+- `~/.tabyagent/run.sh status|stop|restart|logs`
+- `~/.tabyagent/run.sh foreground` — debug only (needs terminal)
 
 ### 3. Configure in Telegram
 
@@ -79,9 +86,10 @@ docker compose up -d --build
 
 ## Requirements
 
-- Docker
 - Telegram bot token (from BotFather)
 - Inference provider API key
+- **Docker mode**: Docker
+- **Local mode**: Node.js 22+, npm (macOS/Linux)
 
 ## License
 

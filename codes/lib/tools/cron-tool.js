@@ -1,12 +1,13 @@
 import { addCronJob, listCronJobs, removeCronJob, updateCronJob } from "../cron/store.js";
 import { reloadCronSchedules } from "../cron/scheduler.js";
+import { cronListDescription } from "../path-labels.js";
 
 export const cronToolDefinitions = [
     {
         type: "function",
         function: {
             name: "cron_list",
-            description: "List scheduled cron jobs from /app/user/cron.json.",
+            description: cronListDescription(),
             parameters: { type: "object", properties: {} },
         },
     },

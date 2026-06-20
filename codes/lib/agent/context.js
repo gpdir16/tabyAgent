@@ -8,7 +8,13 @@ import { loadAgentConfig } from "../config-loader.js";
 import { loadUserConfig } from "../config-loader.js";
 import { buildUserMessageContent, estimateContentTokens } from "../llm/vision.js";
 import { formatSkillsListForPrompt } from "../skills-catalog.js";
-import { buildDateTimePromptVars, buildFilesystemPromptBlock, buildRuntimeInfoLine, buildSystemPromptParts } from "./system-prompt.js";
+import {
+    buildDateTimePromptVars,
+    buildEnvironmentPromptVars,
+    buildFilesystemPromptBlock,
+    buildRuntimeInfoLine,
+    buildSystemPromptParts,
+} from "./system-prompt.js";
 import { cloneStoredMessage, turnToMessages } from "./chat-history.js";
 
 const SYSTEM_PATH = path.join(CODES_DIR, "lib", "prompts", "system.txt");
@@ -65,6 +71,7 @@ export function buildSystemMessageContent(lang, { truncateMemory = false, maxMem
     const template = loadSystemPromptTemplate();
     const vars = {
         ...buildDateTimePromptVars(lang),
+        ...buildEnvironmentPromptVars(),
         FILESYSTEM_BLOCK: buildFilesystemPromptBlock(),
         SKILLS_LIST: formatSkillsListForPrompt(),
         RUNTIME_INFO: buildRuntimeInfoLine(runtimeInfo),

@@ -8,8 +8,8 @@ description: Automates browser interactions for web testing, form filling, scree
 ## tabyAgent
 
 - Run every `browser-use` command via **`terminal_run`** (one per call, or chain with `&&`).
-- CLI is **preinstalled** in the image. Do not `pip install` unless `browser-use doctor` fails after an upgrade.
-- Docker has **no display** — always use default **headless** mode. Do not use `--headed`, `connect`, or `--profile`.
+- CLI should be available after install (`browser-use doctor`). Do not `pip install` unless `browser-use doctor` fails after an upgrade.
+- Always use default **headless** mode. Do not use `--headed`, `connect`, or `--profile`.
 - **Anti-bot stealth is auto-applied** at browser start. No extra step after `open`.
 
 The daemon keeps the browser open between commands (~50ms per call).

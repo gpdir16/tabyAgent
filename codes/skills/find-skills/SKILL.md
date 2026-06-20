@@ -10,7 +10,7 @@ This skill helps you discover and install skills from the open agent skills ecos
 ## tabyAgent
 
 - Built-in and user skills are listed in the **system prompt** each turn; use `skills_read` to load full SKILL.md.
-- Install skills for this instance under **`/app/user/skills/<name>/SKILL.md`** (or copy from another source).
+- Install skills for this instance under **`{{SKILLS_DIR}}/<name>/SKILL.md`** (or copy from another source).
 - Run discovery/install via `terminal_run` (`npx skills find`, `npx skills add`, …) when network is available.
 
 ## When to Use This Skill
@@ -102,7 +102,7 @@ Learn more: https://skills.sh/vercel-labs/agent-skills/react-best-practices
 
 ### Step 6: Offer to Install
 
-If the user wants to proceed, install under `/app/user/skills` when possible:
+If the user wants to proceed, install under `{{SKILLS_DIR}}` when possible:
 
 ```bash
 npx skills add <owner/repo@skill> -y
@@ -136,7 +136,7 @@ If no relevant skills exist:
 
 1. Acknowledge that no existing skill was found
 2. Offer to help with the task directly using your general capabilities
-3. Suggest the user could create their own skill with `skill-author` under `/app/user/skills` or `npx skills init`
+3. Suggest the user could create their own skill with `skill-author` under `{{SKILLS_DIR}}` or `npx skills init`
 
 Example:
 
@@ -144,5 +144,5 @@ Example:
 I searched for skills related to "xyz" but didn't find any matches.
 I can still help you with this task directly! Would you like me to proceed?
 
-If this is something you do often, you could create your own skill under /app/user/skills.
+If this is something you do often, you could create your own skill under {{SKILLS_DIR}}.
 ```

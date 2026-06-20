@@ -1,11 +1,12 @@
 import { exec } from "node:child_process";
-import path from "node:path";
 import { loadAgentConfig } from "../config-loader.js";
-import { USER_DIR, getDefaultWorkDir } from "../paths.js";
+import { USER_DIR, resolveAgentPath } from "../paths.js";
+import { isDockerRuntime } from "../runtime.js";
+import { terminalCwdParamDescription, terminalRunDescription } from "../path-labels.js";
 
 function resolveCwd(cwd) {
-    if (!cwd?.trim()) return getDefaultWorkDir();
-    return path.resolve(cwd.trim());
+    const resolved = resolveAgentPath(cwd);
+    return resolved || USER_DIR;
 }
 
 function truncate(text, maxChars) {
@@ -18,15 +19,14 @@ export const terminalToolDefinitions = [
         type: "function",
         function: {
             name: "terminal_run",
-            description:
-                "Run a shell command inside Docker. Default cwd is /app/user. Pass cwd: /workspace (or another path) only when the task must run in the user's host-mounted folder.",
+            description: terminalRunDescription(),
             parameters: {
                 type: "object",
                 properties: {
                     command: { type: "string", description: "Shell command to run" },
                     cwd: {
                         type: "string",
-                        description: "Working directory (default /app/user; use /workspace only for host-mounted project work)",
+                        description: terminalCwdParamDescription(),
                     },
                 },
                 required: ["command"],
@@ -63,13 +63,14 @@ export async function executeTerminalTool(name, args, { signal } = {}) {
                 timeout: timeoutMs,
                 maxBuffer: maxChars * 2,
                 shell: "/bin/sh",
-                env: { ...process.env, HOME: USER_DIR },
+                env: { ...process.env, HOME: isDockerRuntime() ? USER_DIR : process.env.HOME || USER_DIR },
             },
             (err, stdout, stderr) => {
                 signal?.removeEventListener("abort", onAbort);
                 const out = truncate(stdout || "", maxChars);
                 const errOut = truncate(stderr || "", maxChars);
-                const exitCode = err && typeof err.code === "number" ? err.code : 0;
+                const ok = !err;
+                const exitCode = err && typeof err.code === "number" ? err.code : ok ? 0 : 1;
                 if (stoppedByUser) {
                     resolve({
                         ok: false,
@@ -82,7 +83,7 @@ export async function executeTerminalTool(name, args, { signal } = {}) {
                     return;
                 }
                 resolve({
-                    ok: exitCode === 0,
+                    ok,
                     cwd,
                     exitCode,
                     stdout: out,

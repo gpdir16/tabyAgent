@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { loadMcpConfig } from "../config-loader.js";
+import { mcpConfigEditHint } from "../path-labels.js";
 
 const servers = new Map();
 
@@ -91,7 +92,7 @@ export async function invokeMcpTool(name, args) {
     const entry = servers.get(parsed.serverName);
     if (!entry) {
         return {
-            error: `MCP server not connected: ${parsed.serverName}. Edit /app/user/mcp.json then call mcp_reload or ask the user to send /reload.`,
+            error: mcpConfigEditHint(parsed.serverName),
         };
     }
 

@@ -97,7 +97,7 @@ export function formatFileUserMessage(saved, { visionAttached = false } = {}) {
     if (visionAttached) {
         lines.push("", "The image is attached for vision in this turn — describe or answer from what you see.");
     } else {
-        lines.push("", "The file is stored under /app/user/download. Use terminal_run to inspect if needed.");
+        lines.push("", `The file is stored under ${DOWNLOAD_DIR}. Use terminal_run to inspect if needed.`);
     }
     return lines.join("\n");
 }

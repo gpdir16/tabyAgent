@@ -4,7 +4,7 @@
 
 TabyAgent는 OpenClaw/Hermes의 더 가볍고 쉬운 대안입니다.
 
-Docker 안에서 자율적으로 작동하며, Telegram으로 대화할 수 있습니다.
+Docker 또는 로컬(Node.js) 설치를 선택할 수 있으며, Telegram으로 대화할 수 있습니다.
 
 ## 할 수 있는 것
 
@@ -12,7 +12,7 @@ Docker 안에서 자율적으로 작동하며, Telegram으로 대화할 수 있�
 - **추론 제공자 연결**: OpenAI, OpenRouter, 또는 직접 구축한 API 엔드포인트와 연동합니다.
 - **Skills, MCP**: 웹 브라우징, 예약 작업 등 다양한 기능을 추가할 수 있습니다.
 - **예약 작업**: 정기적으로 실행할 작업을 설정하면 자동으로 실행 결과를 보고합니다.
-- **어디서든 실행**: 가벼운 단일 Docker 컨테이너로 어떤 기기든 실행할 수 있습니다.
+- **어디서든 실행**: Docker 컨테이너 또는 로컬 Node.js로 실행할 수 있습니다.
 
 ## 빠른 시작
 
@@ -24,15 +24,23 @@ Docker 안에서 자율적으로 작동하며, Telegram으로 대화할 수 있�
 
 ### 2. 설치 (Linux / macOS)
 
-터미널에 아래 한 줄을 붙여넣고 Enter를 누르세요. 설치가 진행된 후 1단계에서 복사한 **BotFather가 보내준 토큰**을 붙여넣으라고 안내가 나옵니다. 이어서 PC 폴더를 연결할지 묻습니다. 기본값은 **아니오**입니다.
+터미널에 아래 한 줄을 붙여넣고 Enter를 누르세요. 설치가 진행된 후 1단계에서 복사한 **BotFather가 보내준 토큰**을 붙여넣으라고 안내가 나옵니다. **Docker** 또는 **로컬(Node.js)** 실행 방식을 선택할 수 있습니다. 이어서 PC 폴더를 연결할지 묻습니다. 기본값은 **아니오**입니다.
 
-설치 중에 Docker를 설치하라는 안내가 나오면 y를 눌러 설치하세요. tabyAgent가 작동하려면 Docker가 필요합니다. 자동 설치는 macOS와 Linux에서만 지원됩니다.
+Docker를 선택하면 Docker가 없을 때 설치 안내가 나옵니다. 로컬을 선택하면 Node.js 22 이상이 필요합니다. 비대화형 설치: `TABYAGENT_MODE=docker` 또는 `TABYAGENT_MODE=local`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh | bash
 ```
 
 설치가 끝나면 Telegram에서 봇에게 `/start`를 보내면 됩니다. 나중에 tabyAgent를 업데이트하려면 **같은 명령을 다시** 실행하세요. 설정과 메모리는 지워지지 않습니다.
+
+**실행 방식 변경:** `TABYAGENT_MODE=local` 또는 `TABYAGENT_MODE=docker`를 지정하고 설치 스크립트를 다시 실행하세요. 기존 방식은 자동으로 중지됩니다.
+
+**로컬 설치 관리:** 백그라운드 서비스로 실행됩니다 — **터미널을 닫아도 됩니다.**
+
+- `~/.tabyagent/run.sh status` — 상태
+- `~/.tabyagent/run.sh stop|restart|logs` — 중지·재시작·로그
+- `~/.tabyagent/run.sh foreground` — 디버그용 (터미널 필요)
 
 ### 3. Telegram에서 설정
 
@@ -79,9 +87,10 @@ docker compose up -d --build
 
 ## 요구사항
 
-- Docker
 - Telegram 봇 토큰 (BotFather)
 - 추론 제공자 API 키
+- **Docker 방식**: Docker
+- **로컬 방식**: Node.js 22+, npm (macOS/Linux)
 
 ## 라이선스
 

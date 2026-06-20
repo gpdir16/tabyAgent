@@ -4,7 +4,7 @@ Use when the user wants reminders, daily briefings, or recurring agent work.
 
 ## Storage
 
-Jobs live in `/app/user/cron.json` (managed via `cron_*` tools).
+Jobs live in `{{CRON_PATH}}` (managed via `cron_*` tools).
 
 ## Schedule syntax
 

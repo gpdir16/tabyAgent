@@ -1,8 +1,8 @@
 const MESSAGES = {
     auth_pending: {
-        en: "Access not approved.\n\nOn the server:\ndocker compose exec tabyagent approve {code}\n\nOr ask the approved user to send in Telegram:\n/approve {code}\n\nCode expires in {minutes} minutes.",
-        ko: "접근이 승인되지 않았습니다.\n\n서버에서:\ndocker compose exec tabyagent approve {code}\n\n또는 승인된 사용자에게 Telegram에서 다음을 보내달라고 요청하세요:\n/approve {code}\n\n코드는 {minutes}분 후 만료됩니다.",
-        ja: "未承認です。\n\nサーバーで:\ndocker compose exec tabyagent approve {code}\n\nまたは承認済みユーザーに Telegram で次を送ってもらってください:\n/approve {code}\n\nコードは{minutes}分で期限切れになります。",
+        en: "Access not approved.\n\nIn a terminal:\n{approveCmd}\n\nOr ask the approved user to send in Telegram:\n/approve {code}\n\nCode expires in {minutes} minutes.",
+        ko: "접근이 승인되지 않았습니다.\n\n터미널에서:\n{approveCmd}\n\n또는 승인된 사용자에게 Telegram에서 다음을 보내달라고 요청하세요:\n/approve {code}\n\n코드는 {minutes}분 후 만료됩니다.",
+        ja: "未承認です。\n\nターミナルで:\n{approveCmd}\n\nまたは承認済みユーザーに Telegram で次を送ってもらってください:\n/approve {code}\n\nコードは{minutes}分で期限切れになります。",
     },
     auth_denied_command: {
         en: "This command requires an approved account. Send any message to get an approval code, or ask the owner to approve you.",

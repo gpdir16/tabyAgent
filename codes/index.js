@@ -24,7 +24,7 @@ async function main() {
 
     while (!hasBotToken()) {
         console.error("");
-        console.error("tabyAgent: set TELEGRAM_BOT_TOKEN in docker-compose.yml (or .env), then restart.");
+        console.error("tabyAgent: set TELEGRAM_BOT_TOKEN in .env (or config), then restart.");
         console.error("  All other setup is done in Telegram after the bot is running.");
         console.error("");
         await sleep(10000);

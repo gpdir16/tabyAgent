@@ -1,7 +1,8 @@
 #!/bin/sh
 set -e
 
-STEALTH_DIR="/app/codes/skills/browser-use"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+STEALTH_DIR="${STEALTH_DIR:-${SCRIPT_DIR}}"
 SITE_PACKAGES="$(python3 -c 'import site; print(site.getsitepackages()[0])')"
 PTH_FILE="${SITE_PACKAGES}/tabyagent_browser_stealth.pth"
 

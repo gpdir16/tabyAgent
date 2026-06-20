@@ -13,7 +13,7 @@ description: (한국 사용자 전용) 학교알리미와 컴시간을 이용하
 2. **memory.md의 `## School info`(또는 학교 관련 메모)** → 저장된 이름으로 진행한다.
 3. 위 둘 다 없는 경우에만 사용자에게 학교 이름을 질문한다.
 
-학교 이름을 새로 파악했으면 `/app/user/memory.md`에 저장한다. 같은 턴에서 `file_read`로 `memory.md`를 읽은 뒤 `file_patch`로 `## School info` 섹션을 추가·갱신한다.
+학교 이름을 새로 파악했으면 `{{MEMORY_PATH}}`에 저장한다. 같은 턴에서 `file_read`로 `memory.md`를 읽은 뒤 `file_patch`로 `## School info` 섹션을 추가·갱신한다.
 
 검색 결과 동명이교가 여러 개 나올 때만 지역을 추가로 질문한다.
 
