@@ -41,6 +41,9 @@ export function getApproveCliHint(code = "{code}") {
     if (IS_DOCKER) {
         const dockerShell = shellCommandPrefix(process.env.TABYAGENT_DOCKER_SHELL || "docker");
         const home = process.env.TABYAGENT_HOME?.trim();
+        if (home && fs.existsSync(path.join(home, "tabyagent"))) {
+            return `tabyagent approve ${code}`;
+        }
         if (home) {
             return `${dockerShell} compose -f ${shellQuote(path.join(home, "docker-compose.yml"))} exec -T tabyagent approve ${code}`;
         }
@@ -48,9 +51,8 @@ export function getApproveCliHint(code = "{code}") {
     }
     if (isManagedLocalInstall()) {
         const home = resolveManagedInstallHome(process.argv[1], CODES_DIR);
-        const runSh = path.join(home, "run.sh");
-        if (fs.existsSync(runSh)) {
-            return `${shellQuote(runSh)} approve ${code}`;
+        if (fs.existsSync(path.join(home, "tabyagent"))) {
+            return `tabyagent approve ${code}`;
         }
     }
     const cliJs = path.join(CODES_DIR, "cli.js");

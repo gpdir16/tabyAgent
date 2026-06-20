@@ -41,7 +41,8 @@ REPO_BRANCH="${TABYAGENT_REPO_BRANCH:-main}"
 INSTALL_DIR="${TABYAGENT_HOME:-${HOME}/.tabyagent}"
 APP_DIR="${INSTALL_DIR}/app"
 USER_DATA_DIR="${INSTALL_DIR}/user"
-RUN_SCRIPT="${INSTALL_DIR}/run.sh"
+TABYAGENT_CLI="${INSTALL_DIR}/tabyagent"
+USER_BIN="${HOME}/.local/bin"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 ENV_FILE="${INSTALL_DIR}/.env"
 LAUNCHD_LABEL="io.tabyagent"
@@ -306,7 +307,7 @@ read_install_mode() {
         printf 'docker'
         return 0
     fi
-    if [ -f "${RUN_SCRIPT}" ] || [ -d "${APP_DIR}/codes" ]; then
+    if [ -d "${APP_DIR}/codes" ]; then
         printf 'local'
         return 0
     fi
@@ -413,7 +414,6 @@ prepare_mode_switch() {
     stop_docker_runtime
     if [ "${from}" = "local" ] && [ "${to}" = "docker" ]; then
         uninstall_local_service
-        rm -f "${RUN_SCRIPT}"
     else
         stop_local_runtime
         rm -f "${COMPOSE_FILE}"
@@ -907,14 +907,33 @@ install_local_deps() {
     fi
 }
 
-write_run_script() {
-    cat >"${RUN_SCRIPT}" <<'EOF'
+write_tabyagent_cli() {
+    cat >"${TABYAGENT_CLI}" <<'EOF'
 #!/usr/bin/env bash
+# tabyAgent CLI — manage an installed instance (~/.tabyagent)
 set -euo pipefail
-INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+resolve_install_dir() {
+    local source="${BASH_SOURCE[0]:-$0}"
+    while [ -L "${source}" ]; do
+        local dir target
+        dir="$(cd "$(dirname "${source}")" && pwd)"
+        target="$(readlink "${source}")"
+        case "${target}" in
+            /*) source="${target}" ;;
+            *) source="${dir}/${target}" ;;
+        esac
+    done
+    cd "$(dirname "${source}")" && pwd
+}
+
+INSTALL_DIR="$(resolve_install_dir)"
 ENV_FILE="${INSTALL_DIR}/.env"
-LOG_DIR="${INSTALL_DIR}/logs"
+COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
+USER_BIN="${HOME}/.local/bin/tabyagent"
 LAUNCHD_LABEL="io.tabyagent"
+APP_DIR="${INSTALL_DIR}/app"
+LOG_DIR="${INSTALL_DIR}/logs"
 
 load_env() {
     # shellcheck disable=SC1091
@@ -924,10 +943,6 @@ load_env() {
     export USER_DIR="${USER_DIR:-${INSTALL_DIR}/user}"
     export CODES_DIR="${CODES_DIR:-${APP_ROOT}/codes}"
     export CONFIG_DIR="${CONFIG_DIR:-${APP_ROOT}/codes/config}"
-}
-
-regex_escape() {
-    printf '%s' "$1" | sed 's/[][\\.*^$()+?{|}]/\\&/g'
 }
 
 resolve_node() {
@@ -942,15 +957,198 @@ resolve_node() {
     return 1
 }
 
-load_env
-NODE_BIN="$(resolve_node)" || {
-    echo "node not found — reinstall or set TABYAGENT_NODE in ${ENV_FILE}" >&2
-    exit 1
+require_node() {
+    load_env
+    NODE_BIN="$(resolve_node)" || {
+        if is_ko; then echo "node를 찾을 수 없습니다. ${ENV_FILE} 에 TABYAGENT_NODE 를 설정하거나 설치를 다시 실행하세요." >&2
+        else echo "node not found — set TABYAGENT_NODE in ${ENV_FILE} or re-run the installer." >&2; fi
+        exit 1
+    }
+    INDEX_JS="${APP_ROOT}/codes/index.js"
+    INDEX_PATTERN="$(regex_escape "${INDEX_JS}")"
 }
-INDEX_JS="${APP_ROOT}/codes/index.js"
-INDEX_PATTERN="$(regex_escape "${INDEX_JS}")"
 
-service_start() {
+resolve_lang() {
+    local lang="${TABYAGENT_LANG:-}"
+    if [ -z "${lang}" ]; then
+        case "${LANG:-${LC_ALL:-}}" in
+            ko*|KO*) lang=ko ;;
+            *) lang=en ;;
+        esac
+    fi
+    case "${lang}" in
+        ko|ko_KR|korean) printf ko ;;
+        *) printf en ;;
+    esac
+}
+
+is_ko() {
+    [ "$(resolve_lang)" = ko ]
+}
+
+strip_env_scalar() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [ "${value#\"}" != "${value}" ] && [ "${value%\"}" != "${value}" ]; then
+        value="${value#\"}"
+        value="${value%\"}"
+    elif [ "${value#\'}" != "${value}" ] && [ "${value%\'}" != "${value}" ]; then
+        value="${value#\'}"
+        value="${value%\'}"
+    fi
+    printf '%s' "${value}"
+}
+
+read_install_mode() {
+    load_env
+    if [ -f "${ENV_FILE}" ]; then
+        local mode
+        mode="$(grep '^TABYAGENT_MODE=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2-)"
+        mode="$(strip_env_scalar "${mode}" | tr '[:upper:]' '[:lower:]')"
+        case "${mode}" in
+            docker|local) printf '%s' "${mode}"; return 0 ;;
+        esac
+    fi
+    if [ -f "${COMPOSE_FILE}" ]; then
+        printf docker
+        return 0
+    fi
+    if [ -d "${APP_DIR}/codes" ]; then
+        printf local
+        return 0
+    fi
+    return 1
+}
+
+docker_daemon_ok() {
+    local shell="${TABYAGENT_DOCKER_SHELL:-docker}"
+    if ${shell} info >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+compose_cmd() {
+    local shell="${TABYAGENT_DOCKER_SHELL:-docker}"
+    if ${shell} compose version >/dev/null 2>&1; then
+        printf '%s compose' "${shell}"
+    elif command -v docker-compose >/dev/null 2>&1; then
+        [ "${shell}" = "sudo docker" ] && printf 'sudo docker-compose' || printf 'docker-compose'
+    else
+        return 1
+    fi
+}
+
+regex_escape() {
+    printf '%s' "$1" | sed 's/[][\\.*^$()+?{|}]/\\&/g'
+}
+
+print_help() {
+    if is_ko; then
+        cat <<'TAA_HELP_KO'
+tabyAgent 명령줄 도구
+
+사용법: tabyagent <명령> [인자]
+
+명령:
+  start              백그라운드에서 시작
+  stop               중지
+  restart            재시작
+  status             실행 상태 확인
+  logs               로그 보기 (실시간)
+  approve <코드>     접근 코드 승인
+  foreground         포그라운드 실행 (디버그)
+  uninstall          tabyAgent 제거
+  help               이 도움말
+
+설치/업데이트:
+  curl -fsSL https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh | bash
+
+제거 시 사용자 데이터도 삭제: tabyagent uninstall --purge
+TAA_HELP_KO
+    else
+        cat <<'TAA_HELP_EN'
+tabyAgent command-line tool
+
+Usage: tabyagent <command> [args]
+
+Commands:
+  start              Start in the background
+  stop               Stop the agent
+  restart            Restart the agent
+  status             Show running status
+  logs               Tail logs (follow)
+  approve <code>     Approve an access code
+  foreground         Run in foreground (debug)
+  uninstall          Remove tabyAgent from this machine
+  help               Show this help
+
+Install/update:
+  curl -fsSL https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh | bash
+
+Remove user data too: tabyagent uninstall --purge
+TAA_HELP_EN
+    fi
+}
+
+not_installed_message() {
+    local url="https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh"
+    if is_ko; then
+        echo "tabyAgent가 설치되어 있지 않습니다 (${INSTALL_DIR})." >&2
+        echo "설치: curl -fsSL ${url} | bash" >&2
+    else
+        echo "tabyAgent is not installed (${INSTALL_DIR})." >&2
+        echo "Install: curl -fsSL ${url} | bash" >&2
+    fi
+}
+
+docker_service_start() {
+    local compose
+    compose="$(compose_cmd)" || {
+        if is_ko; then echo "Docker Compose를 찾을 수 없습니다." >&2; else echo "Docker Compose not found." >&2; fi
+        return 1
+    }
+    docker_daemon_ok || {
+        if is_ko; then echo "Docker가 실행 중이 아닙니다." >&2; else echo "Docker is not running." >&2; fi
+        return 1
+    }
+    (cd "${INSTALL_DIR}" && ${compose} -f "${COMPOSE_FILE}" up -d)
+}
+
+docker_service_stop() {
+    local compose
+    [ -f "${COMPOSE_FILE}" ] || return 0
+    docker_daemon_ok || return 0
+    compose="$(compose_cmd)" || return 0
+    (cd "${INSTALL_DIR}" && ${compose} -f "${COMPOSE_FILE}" down 2>/dev/null) || true
+}
+
+docker_service_status() {
+    local shell="${TABYAGENT_DOCKER_SHELL:-docker}"
+    if docker_daemon_ok && ${shell} ps --filter name=tabyagent --format '{{.Names}}' 2>/dev/null | grep -qx tabyagent; then
+        if is_ko; then echo "실행 중 (Docker 컨테이너 tabyagent)"; else echo "running (Docker container tabyagent)"; fi
+        return 0
+    fi
+    if is_ko; then echo "실행 중 아님"; else echo "not running"; fi
+    return 1
+}
+
+stop_local_runtime() {
+    local index_pattern
+    index_pattern="$(regex_escape "${APP_DIR}/codes/index.js")"
+    case "$(uname -s)" in
+        Darwin)
+            launchctl bootout "gui/$(id -u)/${LAUNCHD_LABEL}" 2>/dev/null || true
+            ;;
+        Linux)
+            systemctl --user stop tabyagent.service 2>/dev/null || true
+            ;;
+    esac
+    pkill -f "${index_pattern}" 2>/dev/null || true
+}
+
+local_service_start() {
     case "$(uname -s)" in
         Darwin)
             if launchctl print "gui/$(id -u)/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
@@ -964,70 +1162,289 @@ service_start() {
             systemctl --user start tabyagent.service
             ;;
         *)
-            echo "Unsupported OS for background service" >&2
+            if is_ko; then echo "백그라운드 서비스를 지원하지 않는 OS입니다." >&2
+            else echo "Unsupported OS for background service." >&2; fi
             return 1
             ;;
     esac
 }
 
-service_stop() {
-    case "$(uname -s)" in
-        Darwin)
-            launchctl bootout "gui/$(id -u)/${LAUNCHD_LABEL}" 2>/dev/null || pkill -f "${INDEX_PATTERN}" 2>/dev/null || true
+local_service_status() {
+    require_node
+    if pgrep -f "${INDEX_PATTERN}" >/dev/null 2>&1; then
+        if is_ko; then echo "실행 중 (pid $(pgrep -f "${INDEX_PATTERN}" | head -1))"; else echo "running (pid $(pgrep -f "${INDEX_PATTERN}" | head -1))"; fi
+        return 0
+    fi
+    if is_ko; then echo "실행 중 아님"; else echo "not running"; fi
+    return 1
+}
+
+run_local_command() {
+    local cmd="$1"
+    shift
+    case "${cmd}" in
+        daemon|foreground|run)
+            require_node
+            exec "${NODE_BIN}" "${INDEX_JS}"
             ;;
-        Linux)
-            systemctl --user stop tabyagent.service 2>/dev/null || pkill -f "${INDEX_PATTERN}" 2>/dev/null || true
+        approve)
+            require_node
+            exec "${NODE_BIN}" "${APP_ROOT}/codes/cli.js" approve "$@"
+            ;;
+        start)
+            local_service_start
+            local_service_status || true
+            ;;
+        stop)
+            stop_local_runtime
+            if is_ko; then echo "중지됨"; else echo "stopped"; fi
+            ;;
+        restart)
+            stop_local_runtime
+            sleep 1
+            local_service_start
+            local_service_status || true
+            ;;
+        status)
+            local_service_status
+            ;;
+        logs)
+            tail -n 80 -f "${LOG_DIR}/stderr.log" 2>/dev/null || tail -n 80 -f "${LOG_DIR}/stdout.log" 2>/dev/null || {
+                if is_ko; then echo "로그 없음"; else echo "no logs yet"; fi
+            }
+            ;;
+        *)
+            echo "Unknown command: ${cmd}" >&2
+            print_help >&2
+            exit 1
             ;;
     esac
 }
 
-service_status() {
-    if pgrep -f "${INDEX_PATTERN}" >/dev/null 2>&1; then
-        echo "running (pid $(pgrep -f "${INDEX_PATTERN}" | head -1))"
-        return 0
-    fi
-    echo "not running"
-    return 1
+uninstall_local_service() {
+    stop_local_runtime
+    case "$(uname -s)" in
+        Darwin)
+            rm -f "${HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
+            ;;
+        Linux)
+            if command -v systemctl >/dev/null 2>&1; then
+                systemctl --user disable --now tabyagent.service 2>/dev/null || true
+                rm -f "${HOME}/.config/systemd/user/tabyagent.service"
+                systemctl --user daemon-reload 2>/dev/null || true
+            fi
+            ;;
+    esac
 }
 
-case "${1:-status}" in
-    daemon)
-        exec "${NODE_BIN}" "${INDEX_JS}"
-        ;;
-    approve)
+confirm_uninstall() {
+    local purge="$1" reply
+    if [ "${TABYAGENT_UNINSTALL_YES:-}" = "1" ]; then
+        return 0
+    fi
+    if is_ko; then
+        echo "tabyAgent를 제거합니다: ${INSTALL_DIR}"
+        [ "${purge}" = true ] && echo "  (--purge: Docker 볼륨·로컬 user 데이터도 삭제)"
+        printf "계속할까요? [y/N] "
+    else
+        echo "This will remove tabyAgent from: ${INSTALL_DIR}"
+        [ "${purge}" = true ] && echo "  (--purge: also deletes Docker volume and local user data)"
+        printf "Continue? [y/N] "
+    fi
+    if [ -r /dev/tty ] 2>/dev/null; then
+        IFS= read -r reply </dev/tty
+    elif [ -t 0 ]; then
+        IFS= read -r reply
+    else
+        if is_ko; then echo "비대화형 환경입니다. TABYAGENT_UNINSTALL_YES=1 을 설정하세요." >&2
+        else echo "Non-interactive shell. Set TABYAGENT_UNINSTALL_YES=1 to confirm." >&2; fi
+        return 1
+    fi
+    reply="$(printf '%s' "${reply}" | tr '[:upper:]' '[:lower:]')"
+    [ "${reply}" = y ] || [ "${reply}" = yes ]
+}
+
+do_uninstall() {
+    local purge=false arg
+    shift
+    while [ $# -gt 0 ]; do
+        arg="$1"
         shift
-        exec "${NODE_BIN}" "${APP_ROOT}/codes/cli.js" approve "$@"
-        ;;
-    start)
-        service_start
-        service_status
-        ;;
-    stop)
-        service_stop
-        echo "stopped"
-        ;;
-    restart)
-        service_stop
-        sleep 1
-        service_start
-        service_status
-        ;;
-    status)
-        service_status
-        ;;
-    logs)
-        tail -n 80 -f "${LOG_DIR}/stderr.log" 2>/dev/null || tail -n 80 -f "${LOG_DIR}/stdout.log" 2>/dev/null || echo "no logs yet"
-        ;;
-    foreground|run)
-        exec "${NODE_BIN}" "${INDEX_JS}"
-        ;;
-    *)
-        echo "Usage: $0 {start|stop|restart|status|logs|approve <code>|foreground}" >&2
+        case "${arg}" in
+            --purge|-p) purge=true ;;
+            -h|--help)
+                if is_ko; then
+                    echo "사용법: tabyagent uninstall [--purge]"
+                    echo "  --purge  Docker 볼륨·로컬 user/ 폴더까지 삭제"
+                else
+                    echo "Usage: tabyagent uninstall [--purge]"
+                    echo "  --purge  Also remove Docker volume and local user/ data"
+                fi
+                exit 0
+                ;;
+            *)
+                echo "Unknown option: ${arg}" >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    read_install_mode >/dev/null 2>&1 || {
+        rm -f "${USER_BIN}" 2>/dev/null || true
+        not_installed_message
         exit 1
-        ;;
-esac
+    }
+
+    confirm_uninstall "${purge}" || {
+        if is_ko; then echo "취소됨."; else echo "Cancelled."; fi
+        exit 0
+    }
+
+    local mode
+    mode="$(read_install_mode)"
+
+    if [ "${mode}" = docker ]; then
+        if [ "${purge}" = true ]; then
+            local compose
+            compose="$(compose_cmd)" || true
+            if [ -n "${compose:-}" ] && docker_daemon_ok; then
+                (cd "${INSTALL_DIR}" && ${compose} -f "${COMPOSE_FILE}" down -v 2>/dev/null) || true
+            fi
+        else
+            docker_service_stop
+        fi
+    else
+        uninstall_local_service
+    fi
+
+    rm -f "${USER_BIN}" 2>/dev/null || true
+    local dir="${INSTALL_DIR}"
+    if [ "${purge}" = true ] && [ "${mode}" = local ] && [ -d "${INSTALL_DIR}/user" ]; then
+        rm -rf "${INSTALL_DIR}/user"
+    fi
+    (
+        sleep 0.3
+        rm -rf "${dir}"
+    ) &
+
+    if is_ko; then
+        echo "제거 완료."
+        [ "${purge}" != true ] && [ "${mode}" = docker ] && echo "  (Docker 사용자 데이터 볼륨은 남아 있을 수 있습니다. 완전 삭제: tabyagent uninstall --purge)"
+    else
+        echo "Uninstall complete."
+        [ "${purge}" != true ] && [ "${mode}" = docker ] && echo "  (Docker user-data volume may remain. Full removal: tabyagent uninstall --purge)"
+    fi
+}
+
+run_docker_command() {
+    local cmd="$1"
+    shift
+    local compose
+    compose="$(compose_cmd)" || {
+        if is_ko; then echo "Docker Compose를 찾을 수 없습니다." >&2; else echo "Docker Compose not found." >&2; fi
+        exit 1
+    }
+    case "${cmd}" in
+        start)
+            docker_service_start
+            docker_service_status || true
+            ;;
+        stop)
+            docker_service_stop
+            if is_ko; then echo "중지됨"; else echo "stopped"; fi
+            ;;
+        restart)
+            docker_service_stop
+            sleep 1
+            docker_service_start
+            docker_service_status || true
+            ;;
+        status)
+            docker_service_status
+            ;;
+        logs)
+            docker_daemon_ok || exit 1
+            ${compose} -f "${COMPOSE_FILE}" logs -f --tail=80 tabyagent
+            ;;
+        approve)
+            docker_daemon_ok || exit 1
+            exec ${compose} -f "${COMPOSE_FILE}" exec -T tabyagent approve "$@"
+            ;;
+        foreground|run)
+            docker_daemon_ok || exit 1
+            exec ${compose} -f "${COMPOSE_FILE}" up
+            ;;
+        *)
+            echo "Unknown command: ${cmd}" >&2
+            print_help >&2
+            exit 1
+            ;;
+    esac
+}
+
+main() {
+    local command="${1:-help}"
+
+    case "${command}" in
+        help|-h|--help)
+            print_help
+            exit 0
+            ;;
+        uninstall)
+            do_uninstall "$@"
+            exit 0
+            ;;
+    esac
+
+    if ! read_install_mode >/dev/null 2>&1; then
+        not_installed_message
+        exit 1
+    fi
+
+    local mode
+    mode="$(read_install_mode)"
+
+    if [ "${mode}" = local ]; then
+        run_local_command "${command}" "$@"
+        exit 0
+    fi
+
+    run_docker_command "${command}" "$@"
+}
+
+main "$@"
 EOF
-    chmod +x "${RUN_SCRIPT}"
+    chmod +x "${TABYAGENT_CLI}"
+}
+
+install_tabyagent_cli() {
+    mkdir -p "${USER_BIN}"
+    ln -sf "${TABYAGENT_CLI}" "${USER_BIN}/tabyagent"
+    case ":${PATH}:" in
+        *":${USER_BIN}:"*) ;;
+        *)
+            if is_ko; then
+                echo "  PATH에 ${USER_BIN} 추가: export PATH=\"${USER_BIN}:\$PATH\""
+            else
+                echo "  Add ${USER_BIN} to PATH: export PATH=\"${USER_BIN}:\$PATH\""
+            fi
+            ;;
+    esac
+}
+
+print_manage_hints() {
+    echo ""
+    if is_ko; then
+        echo "관리 명령 (터미널을 닫아도 백그라운드에서 실행):"
+        echo "  tabyagent status|stop|restart|logs|help"
+        echo "  tabyagent uninstall"
+        echo "  (디버그: tabyagent foreground)"
+    else
+        echo "Manage (runs in background — safe to close the terminal):"
+        echo "  tabyagent status|stop|restart|logs|help"
+        echo "  tabyagent uninstall"
+        echo "  (Debug: tabyagent foreground)"
+    fi
 }
 
 install_launchd_service() {
@@ -1044,7 +1461,7 @@ install_launchd_service() {
     <string>${LAUNCHD_LABEL}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${RUN_SCRIPT}</string>
+        <string>${TABYAGENT_CLI}</string>
         <string>daemon</string>
     </array>
     <key>EnvironmentVariables</key>
@@ -1079,13 +1496,13 @@ install_systemd_user_service() {
     local unit_dir="${HOME}/.config/systemd/user"
     local unit_file="${unit_dir}/tabyagent.service"
     local env_file_line="EnvironmentFile=${ENV_FILE}"
-    local exec_start_line="ExecStart=${RUN_SCRIPT} daemon"
+    local exec_start_line="ExecStart=${TABYAGENT_CLI} daemon"
     local workdir_line="WorkingDirectory=${APP_DIR}"
     if [[ "${ENV_FILE}" == *" "* ]]; then
         env_file_line="EnvironmentFile=\"${ENV_FILE}\""
     fi
-    if [[ "${RUN_SCRIPT}" == *" "* ]]; then
-        exec_start_line="ExecStart=\"${RUN_SCRIPT}\" daemon"
+    if [[ "${TABYAGENT_CLI}" == *" "* ]]; then
+        exec_start_line="ExecStart=\"${TABYAGENT_CLI}\" daemon"
     fi
     if [[ "${APP_DIR}" == *" "* ]]; then
         workdir_line="WorkingDirectory=\"${APP_DIR}\""
@@ -1126,22 +1543,7 @@ install_local_service() {
 }
 
 print_local_service_hints() {
-    echo ""
-    if is_ko; then
-        echo "백그라운드에서 실행 중입니다. 터미널을 닫아도 됩니다."
-        echo "  상태: ${RUN_SCRIPT} status"
-        echo "  중지: ${RUN_SCRIPT} stop"
-        echo "  재시작: ${RUN_SCRIPT} restart"
-        echo "  로그: ${RUN_SCRIPT} logs"
-        echo "  (디버그용 포그라운드: ${RUN_SCRIPT} foreground)"
-    else
-        echo "Running in the background — you can close this terminal."
-        echo "  Status: ${RUN_SCRIPT} status"
-        echo "  Stop: ${RUN_SCRIPT} stop"
-        echo "  Restart: ${RUN_SCRIPT} restart"
-        echo "  Logs: ${RUN_SCRIPT} logs"
-        echo "  (Foreground debug: ${RUN_SCRIPT} foreground)"
-    fi
+    print_manage_hints
 }
 
 install_local() {
@@ -1155,7 +1557,8 @@ install_local() {
     update_local_source
     write_local_version
     install_local_deps
-    write_run_script
+    write_tabyagent_cli
+    install_tabyagent_cli
     write_env "${token}" local
     if is_ko; then echo "==> 실행 중..."; else echo "==> Starting..."; fi
     install_local_service
@@ -1172,12 +1575,15 @@ deploy_tabyagent_docker() {
     compose="$(compose_cmd)"
     resolve_host_workspace "${updating}" docker
     write_compose "${image}"
+    write_tabyagent_cli
+    install_tabyagent_cli
     write_env "${token}" docker
     cd "${INSTALL_DIR}"
     pull_image "${compose}" "${image}"
     if is_ko; then echo "==> 실행 중..."; else echo "==> Starting..."; fi
     ${compose} -f "${COMPOSE_FILE}" up -d
     verify_install docker || true
+    print_manage_hints
 }
 
 main() {

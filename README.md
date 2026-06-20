@@ -36,10 +36,11 @@ When it finishes, open your bot in Telegram and send `/start`. To upgrade later,
 
 **Switch runtime:** re-run the installer with `TABYAGENT_MODE=local` or `TABYAGENT_MODE=docker`. The previous runtime is stopped automatically.
 
-**Local install:** runs as a **background service** — you can close the terminal.
+**Manage install** (Docker or local — background service; safe to close the terminal):
 
-- `~/.tabyagent/run.sh status|stop|restart|logs`
-- `~/.tabyagent/run.sh foreground` — debug only (needs terminal)
+- `tabyagent status|stop|restart|logs|help`
+- `tabyagent uninstall` — remove tabyAgent (`--purge` also deletes user data)
+- `tabyagent foreground` — debug only (needs terminal)
 
 ### 3. Configure in Telegram
 

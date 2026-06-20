@@ -36,11 +36,11 @@ curl -fsSL https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/inst
 
 **실행 방식 변경:** `TABYAGENT_MODE=local` 또는 `TABYAGENT_MODE=docker`를 지정하고 설치 스크립트를 다시 실행하세요. 기존 방식은 자동으로 중지됩니다.
 
-**로컬 설치 관리:** 백그라운드 서비스로 실행됩니다 — **터미널을 닫아도 됩니다.**
+**설치 관리** (Docker·로컬 공통 — 백그라운드 실행, 터미널을 닫아도 됨):
 
-- `~/.tabyagent/run.sh status` — 상태
-- `~/.tabyagent/run.sh stop|restart|logs` — 중지·재시작·로그
-- `~/.tabyagent/run.sh foreground` — 디버그용 (터미널 필요)
+- `tabyagent status|stop|restart|logs|help` — 상태·중지·재시작·로그·도움말
+- `tabyagent uninstall` — tabyAgent 제거 (`--purge`는 사용자 데이터까지 삭제)
+- `tabyagent foreground` — 디버그용 (터미널 필요)
 
 ### 3. Telegram에서 설정
 
