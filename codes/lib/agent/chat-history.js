@@ -50,10 +50,37 @@ export function loadChatHistory(chatId) {
     }
 }
 
+export function loadCompressedSummary(chatId) {
+    const filePath = historyPath(chatId);
+    if (!fs.existsSync(filePath)) return null;
+    try {
+        const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        return typeof data.compressedSummary === "string" ? data.compressedSummary : null;
+    } catch {
+        return null;
+    }
+}
+
+export function saveCompressedSummary(chatId, summary) {
+    if (!chatId) return;
+    const turns = loadChatHistory(chatId);
+    const filePath = historyPath(chatId);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, `${JSON.stringify({ version: 2, turns, compressedSummary: summary || null }, null, 2)}\n`, "utf8");
+}
+
 export function clearChatHistory(chatId) {
     if (!chatId) return;
     const filePath = historyPath(chatId);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+}
+
+export function replaceChatHistory(chatId, turns, compressedSummary = undefined) {
+    if (!chatId) return;
+    const existingSummary = compressedSummary !== undefined ? compressedSummary : loadCompressedSummary(chatId);
+    const filePath = historyPath(chatId);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, `${JSON.stringify({ version: 2, turns, compressedSummary: existingSummary || null }, null, 2)}\n`, "utf8");
 }
 
 export function appendChatTurn(chatId, turnMessages) {
@@ -65,7 +92,5 @@ export function appendChatTurn(chatId, turnMessages) {
         messages: turnMessages.map(cloneStoredMessage),
     });
 
-    const filePath = historyPath(chatId);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, `${JSON.stringify({ version: 2, turns }, null, 2)}\n`, "utf8");
+    replaceChatHistory(chatId, turns);
 }
