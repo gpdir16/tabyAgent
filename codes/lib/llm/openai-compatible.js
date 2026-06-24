@@ -27,6 +27,30 @@ function isAbortError(err) {
     return err?.name === "AbortError" || err?.code === "ABORT_ERR";
 }
 
+function normalizeErrorText(err) {
+    return String(err?.message || err || "")
+        .toLowerCase()
+        .trim();
+}
+
+function isTransientTransportError(err) {
+    const text = normalizeErrorText(err);
+    if (!text) return false;
+    return (
+        text.includes("premature close") ||
+        text.includes("socket hang up") ||
+        text.includes("fetch failed") ||
+        text.includes("network error") ||
+        text.includes("connection reset") ||
+        text.includes("connection terminated") ||
+        text.includes("econnreset") ||
+        text.includes("etimedout") ||
+        text.includes("eai_again") ||
+        text.includes("und_err_socket") ||
+        text.includes("terminated")
+    );
+}
+
 export async function chatCompletions({ client, model, messages, tools, tool_choice, stream = false, onTextDelta, signal }) {
     const includeTools = Boolean(tools?.length) && tool_choice !== "none";
     const params = { model, messages: sanitizeMessagesForApi(messages) };
@@ -46,48 +70,7 @@ export async function chatCompletions({ client, model, messages, tools, tool_cho
 
     const requestOptions = signal ? { signal } : undefined;
 
-    if (useStream) {
-        const streamResp = await client.chat.completions.create(
-            {
-                ...params,
-                stream: true,
-                stream_options: { include_usage: true },
-            },
-            requestOptions,
-        );
-
-        let content = "";
-        let usage = null;
-        try {
-            for await (const chunk of streamResp) {
-                if (signal?.aborted) {
-                    const err = new Error("Stopped by user.");
-                    err.name = "AbortError";
-                    throw err;
-                }
-                if (chunk.usage) usage = chunk.usage;
-                const delta = chunk.choices?.[0]?.delta?.content;
-                if (!delta) continue;
-                content += delta;
-                onTextDelta(delta, content);
-            }
-        } catch (err) {
-            if (signal?.aborted || isAbortError(err)) {
-                const abortErr = new Error("Stopped by user.");
-                abortErr.name = "AbortError";
-                abortErr.partialText = content;
-                throw abortErr;
-            }
-            throw err;
-        }
-
-        return {
-            choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
-            usage,
-        };
-    }
-
-    try {
+    const requestNonStream = async () => {
         const completion = await client.chat.completions.create(
             {
                 ...params,
@@ -96,6 +79,73 @@ export async function chatCompletions({ client, model, messages, tools, tool_cho
             requestOptions,
         );
         return completionPayload(completion);
+    };
+
+    if (useStream) {
+        let lastErr = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            let content = "";
+            let usage = null;
+            try {
+                const streamResp = await client.chat.completions.create(
+                    {
+                        ...params,
+                        stream: true,
+                        stream_options: { include_usage: true },
+                    },
+                    requestOptions,
+                );
+
+                for await (const chunk of streamResp) {
+                    if (signal?.aborted) {
+                        const err = new Error("Stopped by user.");
+                        err.name = "AbortError";
+                        throw err;
+                    }
+                    if (chunk.usage) usage = chunk.usage;
+                    const delta = chunk.choices?.[0]?.delta?.content;
+                    if (!delta) continue;
+                    content += delta;
+                    onTextDelta(delta, content);
+                }
+
+                return {
+                    choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
+                    usage,
+                };
+            } catch (err) {
+                if (signal?.aborted || isAbortError(err)) {
+                    const abortErr = new Error("Stopped by user.");
+                    abortErr.name = "AbortError";
+                    abortErr.partialText = content;
+                    throw abortErr;
+                }
+                lastErr = err;
+                if (!isTransientTransportError(err)) {
+                    throw err;
+                }
+                if (attempt === 0) {
+                    continue;
+                }
+            }
+        }
+
+        // Streaming repeatedly failed due to transient transport errors.
+        // Retry once with non-stream to reduce user-facing failures.
+        try {
+            return await requestNonStream();
+        } catch (fallbackErr) {
+            if (signal?.aborted || isAbortError(fallbackErr)) {
+                const abortErr = new Error("Stopped by user.");
+                abortErr.name = "AbortError";
+                throw abortErr;
+            }
+            throw lastErr || fallbackErr;
+        }
+    }
+
+    try {
+        return await requestNonStream();
     } catch (err) {
         if (signal?.aborted || isAbortError(err)) {
             const abortErr = new Error("Stopped by user.");

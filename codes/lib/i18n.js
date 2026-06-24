@@ -54,6 +54,11 @@ const MESSAGES = {
         ko: "메시지 처리 중 오류가 발생했습니다.",
         ja: "メッセージの処理中にエラーが発生しました。",
     },
+    agent_error_transport_closed: {
+        en: "The model connection closed unexpectedly while receiving the response. This is usually a temporary provider/network issue. Please try again.",
+        ko: "응답을 받는 중 모델 연결이 예기치 않게 종료되었습니다. 보통 일시적인 제공자/네트워크 문제입니다. 잠시 후 다시 시도해 주세요.",
+        ja: "応答受信中にモデル接続が予期せず切断されました。通常は一時的なプロバイダー/ネットワーク問題です。少し待って再試行してください。",
+    },
     status_generating: {
         en: "Generating response",
         ko: "응답 생성 중",
@@ -174,11 +179,14 @@ export function t(key, lang = "en", vars = {}) {
 }
 
 export function formatAgentError(err, lang = "en") {
+    const raw = String(err?.message || err || "");
+    const lowered = raw.toLowerCase();
+    if (lowered.includes("premature close") || lowered.includes("und_err_socket") || lowered.includes("socket hang up")) {
+        return t("agent_error_transport_closed", lang);
+    }
+
     const base = t("agent_error", lang);
-    const detail = String(err?.message || err || "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 300);
+    const detail = raw.replace(/\s+/g, " ").trim().slice(0, 300);
     if (!detail) return base;
     return `${base}\n\n${detail}`;
 }
