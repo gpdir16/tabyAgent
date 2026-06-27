@@ -108,9 +108,7 @@ export async function editMessageTextSafe(bot, chatId, messageId, text, { parseM
 
     const body = String(text ?? "").trim() || "…";
 
-    // Prefer rich message editing when rich markdown content is available.
-    // grammy's editMessageText(chat_id, message_id, text_or_rich_message, other):
-    // a string selects text mode, an object selects rich_message mode.
+    // editMessageText: string = text mode; { markdown } = rich_message mode.
     if (richText) {
         const res = await safeTelegramApi(() => api.editMessageText(chatId, messageId, { markdown: String(richText) }));
         if (res.ok) return true;

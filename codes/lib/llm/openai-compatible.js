@@ -130,8 +130,7 @@ export async function chatCompletions({ client, model, messages, tools, tool_cho
             }
         }
 
-        // Streaming repeatedly failed due to transient transport errors.
-        // Retry once with non-stream to reduce user-facing failures.
+        // Transient stream errors: retry once without streaming.
         try {
             return await requestNonStream();
         } catch (fallbackErr) {

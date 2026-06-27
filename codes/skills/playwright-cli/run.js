@@ -179,8 +179,7 @@ async function main() {
         console.log("🚀 Starting automation...\n");
         require(tempFile);
 
-        // Note: Temp file will be cleaned up on next run
-        // This allows long-running async operations to complete safely
+        // Temp file deleted on the next run so async work can finish.
     } catch (error) {
         console.error("❌ Execution failed:", error.message);
         if (error.stack) {

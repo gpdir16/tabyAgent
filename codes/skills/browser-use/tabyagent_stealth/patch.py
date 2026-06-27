@@ -1,4 +1,4 @@
-"""Monkey-patch browser-use CLI to apply anti-bot stealth on every browser start."""
+# Monkey-patch browser-use CLI to apply anti-bot stealth on every browser start.
 
 from __future__ import annotations
 

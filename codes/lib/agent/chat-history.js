@@ -210,10 +210,7 @@ export function replaceChatHistory(chatId, turns, compressedSummary = undefined)
     writeActiveSessionData(chatId, turns, summary);
 }
 
-/**
- * After context compression: keep the full pre-compression session file on disk (archived),
- * and start a new active session file with recent turns + the new compressed summary.
- */
+// After compression: archive full session on disk; active file keeps recent turns + summary.
 export function replaceChatHistoryAfterCompression(chatId, recentTurns, summary) {
     if (!chatId) return null;
     const manifest = ensureManifest(chatId);

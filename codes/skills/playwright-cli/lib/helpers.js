@@ -1,5 +1,4 @@
-// playwright-helpers.js
-// Reusable utility functions for Playwright automation
+// Playwright automation helpers.
 
 const { chromium, firefox, webkit } = require("playwright");
 
