@@ -15,7 +15,7 @@ import {
     buildRuntimeInfoLine,
     buildSystemPromptParts,
 } from "./system-prompt.js";
-import { cloneStoredMessage, turnToMessages } from "./chat-history.js";
+import { formatPastSessionsForPrompt } from "./chat-history.js";
 
 const SYSTEM_PATH = path.join(CODES_DIR, "lib", "prompts", "system.txt");
 
@@ -69,6 +69,7 @@ function loadMemoryForPrompt({ truncateMemory = false, maxMemoryChars = 120000 }
 
 export function buildSystemMessageContent(lang, { truncateMemory = false, maxMemoryChars = 120000, runtimeInfo = {} } = {}) {
     const template = loadSystemPromptTemplate();
+    const pastSessions = formatPastSessionsForPrompt(runtimeInfo.sessionKey);
     const vars = {
         ...buildDateTimePromptVars(lang),
         ...buildEnvironmentPromptVars(),
@@ -76,6 +77,7 @@ export function buildSystemMessageContent(lang, { truncateMemory = false, maxMem
         SKILLS_LIST: formatSkillsListForPrompt(),
         RUNTIME_INFO: buildRuntimeInfoLine(runtimeInfo),
         MEMORY: loadMemoryForPrompt({ truncateMemory, maxMemoryChars }),
+        PAST_SESSIONS_BLOCK: pastSessions ? `\n${pastSessions}\n` : "",
     };
     return buildSystemPromptParts(template, vars).full;
 }

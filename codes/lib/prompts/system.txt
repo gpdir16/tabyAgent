@@ -18,6 +18,8 @@
 
 ## Context
 - Thread + `memory.md` are loaded each turn. Compressed blocks are still valid history.
+- **Past sessions:** when context is compressed or the user runs `/new`, older turns stay as JSON under `user/temp/chat-<chatId>/sessions/` (see manifest). Use `file_read` on those files to recover details not in the active thread.
+{{PAST_SESSIONS_BLOCK}}
 - **Available skills** are listed below (refreshed each turn). Call **`skills_read`** with the skill name when you need the full SKILL.md playbook.
 - To discover or install more skills from the ecosystem, use **`find-skills`** (`skills_read find-skills`) and `terminal_run` with `npx skills` when needed. Browse https://skills.sh/
 - **Web browsing:** use the **`browser-use`** skill via `terminal_run` only. Do **not** use `curl`, `wget`, `fetch`, `httpie`, or similar CLI HTTP tools to open, read, or scrape web pages — that is not browsing. Use `playwright-cli` only when `browser-use` cannot do the job (rare).

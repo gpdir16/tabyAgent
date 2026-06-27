@@ -6,7 +6,7 @@ import {
     getContextLimit,
     getKeepRecentTokenBudget,
 } from "./context.js";
-import { loadChatHistory, loadCompressedSummary, replaceChatHistory, turnToMessages } from "./chat-history.js";
+import { loadChatHistory, loadCompressedSummary, replaceChatHistoryAfterCompression, turnToMessages } from "./chat-history.js";
 
 const COMPRESS_SYSTEM = `You compress chat transcripts for context storage. Rules:
 - Preserve facts, numbers, command outputs, decisions, errors, filenames, and what the user wanted.
@@ -162,8 +162,7 @@ async function applyIntelligentCompression(
     const latestUser = recentUserMessage(recentItems, userMessage);
 
     if (chatId) {
-        replaceChatHistory(chatId, recentHistory, summary);
-        console.log(`tabyAgent: saved compressed context (${recentHistory.length} recent turns kept)`);
+        replaceChatHistoryAfterCompression(chatId, recentHistory, summary);
     }
 
     return buildWithHistory(latestUser, recentHistory, {

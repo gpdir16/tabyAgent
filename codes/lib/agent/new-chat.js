@@ -12,7 +12,7 @@ function memoryFlushPrompt(lang) {
     const memoryPath = memoryFilePath();
     const prompts = {
         ko: `[시스템 · /new]
-사용자가 새 대화를 시작했습니다. 곧 이 스레드 기록이 삭제됩니다.
+사용자가 새 대화를 시작했습니다. 곧 **활성** 스레드만 새 세션 파일로 바뀝니다. 이전 세션 JSON은 \`user/temp/chat-…/sessions/\`에 **보관**됩니다.
 
 위 대화에서 **다음 세션에도 꼭 필요한 사실만** \`${memoryPath}\`에 저장하세요.
 - 먼저 \`file_read\`로 memory.md를 확인한 뒤 \`file_patch\`로 추가·갱신하세요.
@@ -22,7 +22,7 @@ function memoryFlushPrompt(lang) {
 
 저장이 끝나면 한 문장으로 "완료"만 답하세요.`,
         en: `[System · /new]
-The user is starting a new chat. This thread will be cleared shortly.
+The user is starting a new chat. The **active** thread will move to a new session file shortly. Older session JSON files remain **archived** under \`user/temp/chat-…/sessions/\`.
 
 From the conversation above, persist **only facts worth keeping across sessions** to \`${memoryPath}\`.
 - Read memory.md with \`file_read\` first, then add or update with \`file_patch\`.
@@ -32,7 +32,7 @@ From the conversation above, persist **only facts worth keeping across sessions*
 
 When done, reply with one short sentence: "Done."`,
         ja: `[システム · /new]
-ユーザーが新しい会話を始めます。このスレッドはまもなく削除されます。
+ユーザーが新しい会話を始めます。**アクティブ**スレッドだけが新しいセッションファイルに移ります。以前のセッション JSON は \`user/temp/chat-…/sessions/\` に**保管**されます。
 
 上記の会話から、**次のセッションにも必要な事実だけ** \`${memoryPath}\` に保存してください。
 - まず \`file_read\` で memory.md を確認し、\`file_patch\` で追加・更新してください。
