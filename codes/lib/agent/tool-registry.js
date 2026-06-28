@@ -49,5 +49,5 @@ export async function executeTool(name, args, ctx = {}) {
 }
 
 export function toolResultContent(result) {
-    return sanitizeTextForLlm(JSON.stringify(result));
+    return sanitizeTextForLlm(JSON.stringify(result) ?? "");
 }

@@ -164,10 +164,11 @@ export function buildDateTimePromptVars(lang = "en") {
 }
 
 export function buildRuntimeInfoLine(info = {}) {
+    const safe = info || {};
     const parts = [];
-    if (info.model) parts.push(`Model: ${info.model}`);
-    if (info.sessionKey) parts.push(`Session: ${info.sessionKey}`);
-    if (info.channel) parts.push(`Channel: ${info.channel}`);
+    if (safe.model) parts.push(`Model: ${safe.model}`);
+    if (safe.sessionKey) parts.push(`Session: ${safe.sessionKey}`);
+    if (safe.channel) parts.push(`Channel: ${safe.channel}`);
     if (!parts.length) return "";
     return `- ${parts.join(" · ")}`;
 }

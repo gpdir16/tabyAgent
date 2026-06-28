@@ -15,7 +15,7 @@ import {
     buildRuntimeInfoLine,
     buildSystemPromptParts,
 } from "./system-prompt.js";
-import { formatPastSessionsForPrompt } from "./chat-history.js";
+import { formatPastSessionsForPrompt, turnToMessages, cloneStoredMessage } from "./chat-history.js";
 
 const SYSTEM_PATH = path.join(CODES_DIR, "lib", "prompts", "system.txt");
 
@@ -31,7 +31,7 @@ function getTokenizer(model) {
 
 export function countTokens(text, model = "gpt-4o-mini") {
     const enc = getTokenizer(model);
-    const safe = sanitizeTextForLlm(typeof text === "string" ? text : JSON.stringify(text));
+    const safe = sanitizeTextForLlm(typeof text === "string" ? text : JSON.stringify(text) ?? "");
     if (enc) {
         try {
             return enc.encode(safe, undefined, []).length;
@@ -69,13 +69,14 @@ function loadMemoryForPrompt({ truncateMemory = false, maxMemoryChars = 120000 }
 
 export function buildSystemMessageContent(lang, { truncateMemory = false, maxMemoryChars = 120000, runtimeInfo = {} } = {}) {
     const template = loadSystemPromptTemplate();
-    const pastSessions = formatPastSessionsForPrompt(runtimeInfo.sessionKey);
+    const rt = runtimeInfo || {};
+    const pastSessions = formatPastSessionsForPrompt(rt.sessionKey);
     const vars = {
         ...buildDateTimePromptVars(lang),
         ...buildEnvironmentPromptVars(),
         FILESYSTEM_BLOCK: buildFilesystemPromptBlock(),
         SKILLS_LIST: formatSkillsListForPrompt(),
-        RUNTIME_INFO: buildRuntimeInfoLine(runtimeInfo),
+        RUNTIME_INFO: buildRuntimeInfoLine(rt),
         MEMORY: loadMemoryForPrompt({ truncateMemory, maxMemoryChars }),
         PAST_SESSIONS_BLOCK: pastSessions ? `\n${pastSessions}\n` : "",
     };
