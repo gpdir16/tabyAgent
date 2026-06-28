@@ -191,6 +191,8 @@ function texts(lang) {
             manual: "직접 입력",
             cancel: "설정 취소",
             menuTitle: "tabyAgent 설정",
+            catLanguage: "언어",
+            catThinking: "사고 수준",
             catModel: "모델",
             catProvider: "LLM 제공자",
             catApiKey: "API 키",
@@ -201,6 +203,7 @@ function texts(lang) {
             footerPick: "답변 아래 토큰/툴 통계 표시:",
             updatePick: "새 버전 확인 후 알림:",
             backMenu: "◀ 메뉴",
+            toggleOn: "켜기",
             toggleOff: "끄기",
         },
         ja: {
@@ -234,6 +237,7 @@ function texts(lang) {
             footerPick: "返信下にトークン/ツール統計を表示:",
             updatePick: "新バージョンを確認して通知:",
             backMenu: "◀ メニュー",
+            toggleOn: "オン",
             toggleOff: "オフ",
         },
     };
