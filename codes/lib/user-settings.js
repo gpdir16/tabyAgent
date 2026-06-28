@@ -11,6 +11,7 @@ export {
     getThinkingLevelForUser as getThinkingLevel,
     normalizeThinkingForProvider as normalizeThinkingLevel,
     thinkingLevelLabel,
+    getProviderThinkingMeta,
     getCachedProviderThinkingMeta,
 };
 
