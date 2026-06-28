@@ -54,6 +54,9 @@ export function loadUserConfig() {
         language: "en",
         telegram: { botToken: "" },
         provider: { id: "default", apiKey: "", model: "" },
+        thinkingLevel: "high",
+        showReplyFooter: true,
+        updateCheckEnabled: true,
     });
 }
 

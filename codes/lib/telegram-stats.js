@@ -1,5 +1,6 @@
 import { loadUserConfig } from "./config-loader.js";
 import { sendMessageSafe, sendRichMessageSafe } from "./telegram-api.js";
+import { isReplyFooterEnabled } from "./user-settings.js";
 
 function formatNumber(n) {
     return Number(n).toLocaleString("en-US");
@@ -23,7 +24,7 @@ export function formatStatsFooterPlain(stats) {
 
 export function buildReplyMarkdown(bodyText, stats) {
     const body = String(bodyText || "").trim() || "…";
-    if (!stats) return body;
+    if (!stats || !isReplyFooterEnabled()) return body;
 
     const footer = formatStatsFooterPlain(stats);
     // Use a blockquote for the stats footer.

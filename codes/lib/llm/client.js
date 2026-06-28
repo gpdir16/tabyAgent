@@ -1,6 +1,7 @@
 import { getMergedProvider, loadUserConfig } from "../config-loader.js";
 import { chatCompletions, createOpenAIClient } from "./openai-compatible.js";
 import { ensureModelMeta } from "./model-meta.js";
+import { getThinkingLevel, getCachedProviderThinkingMeta } from "../user-settings.js";
 
 export async function createLlmClient() {
     const userConfig = loadUserConfig();
@@ -33,6 +34,8 @@ export async function createLlmClient() {
                 stream,
                 onTextDelta,
                 signal,
+                thinkingLevel: getThinkingLevel(userConfig),
+                thinkingParam: getCachedProviderThinkingMeta(provider.id, provider.model).param || "reasoning_effort",
             });
         },
     };

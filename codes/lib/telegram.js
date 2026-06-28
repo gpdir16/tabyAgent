@@ -230,30 +230,27 @@ async function registerBotCommands(bot) {
             { command: "new", description: "Start a new chat (saves memory first)" },
             { command: "stop", description: "Stop the running task" },
             { command: "reload", description: "Reload MCP servers" },
-            { command: "config", description: "Open settings wizard" },
+            { command: "config", description: "Open settings" },
             { command: "approve", description: "Approve a new device with a 6-digit code" },
             { command: "help", description: "Show help and available commands" },
-            { command: "settings", description: "Open settings (/config)" },
         ],
         ko: [
             { command: "start", description: "시작 / 도움말" },
             { command: "new", description: "새 대화 시작 (먼저 기억 저장)" },
             { command: "stop", description: "진행 중인 작업 중지" },
             { command: "reload", description: "MCP 서버 다시 불러오기" },
-            { command: "config", description: "설정 마법사 열기" },
+            { command: "config", description: "설정 열기" },
             { command: "approve", description: "6자리 코드로 새 기기 승인" },
             { command: "help", description: "도움말 및 명령어 보기" },
-            { command: "settings", description: "설정 열기 (/config)" },
         ],
         ja: [
             { command: "start", description: "開始 / ヘルプ" },
             { command: "new", description: "新しい会話を開始 (先に記憶を保存)" },
             { command: "stop", description: "実行中の作業を停止" },
             { command: "reload", description: "MCP サーバを再読み込み" },
-            { command: "config", description: "設定ウィザードを開く" },
+            { command: "config", description: "設定を開く" },
             { command: "approve", description: "6 桁コードで新端末を承認" },
             { command: "help", description: "ヘルプとコマンド一覧" },
-            { command: "settings", description: "設定を開く (/config)" },
         ],
     };
 
@@ -275,7 +272,7 @@ function helpMessage(lang) {
             "- `/new` — 새 대화 시작 (이전 대화 요약을 memory.md에 저장)",
             "- `/stop` — 진행 중인 작업 중지",
             "- `/reload` — MCP 서버 다시 불러오기",
-            "- `/config` — 설정 마법사 (언어, 모델, 토큰 등)",
+            "- `/config` — 설정 (언어, 모델, 사고 수준, 푸터, 업데이트 등)",
             "- `/approve <6-digit code>` — 새 기기 승인",
             "",
             "## 기능",
@@ -295,7 +292,7 @@ function helpMessage(lang) {
             "- `/new` — 新しい会話を開始 (以前の会話の要約を memory.md に保存)",
             "- `/stop` — 実行中の作業を停止",
             "- `/reload` — MCP サーバを再読み込み",
-            "- `/config` — 設定ウィザード (言語, モデル, トークン等)",
+            "- `/config` — 設定 (言語, モデル, 思考レベル, フッター, 更新確認 等)",
             "- `/approve <6-digit code>` — 新端末を承認",
             "",
             "## 機能",
@@ -314,7 +311,7 @@ function helpMessage(lang) {
         "- `/new` — Start a new chat (saves a summary of the previous one to memory.md)",
         "- `/stop` — Stop the running task",
         "- `/reload` — Reload MCP servers",
-        "- `/config` — Settings wizard (language, model, token, etc.)",
+        "- `/config` — Settings (change language, model, thinking level, footer, updates, etc.)",
         "- `/approve <6-digit code>` — Approve a new device",
         "",
         "## Features",
@@ -369,13 +366,6 @@ export async function startTelegramBot() {
             return;
         }
         await sendMessageSafe(bot.api, String(ctx.chat.id), helpMessage(lang));
-    });
-
-    bot.command("settings", async (ctx) => {
-        if (isConfigReady() && !(await requireApprovedAccess(ctx))) {
-            return;
-        }
-        await openConfigWizard(ctx, bot);
     });
 
     bot.command("new", async (ctx) => {
