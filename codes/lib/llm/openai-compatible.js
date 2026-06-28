@@ -51,9 +51,26 @@ function isTransientTransportError(err) {
     );
 }
 
-export async function chatCompletions({ client, model, messages, tools, tool_choice, stream = false, onTextDelta, signal }) {
+export async function chatCompletions({
+    client,
+    model,
+    messages,
+    tools,
+    tool_choice,
+    stream = false,
+    onTextDelta,
+    signal,
+    thinkingLevel,
+    thinkingParam = "reasoning_effort",
+}) {
     const includeTools = Boolean(tools?.length) && tool_choice !== "none";
     const params = { model, messages: sanitizeMessagesForApi(messages) };
+
+    const level = String(thinkingLevel || "").toLowerCase();
+    if (level && level !== "off") {
+        const param = thinkingParam || "reasoning_effort";
+        params[param] = level;
+    }
 
     if (includeTools) {
         params.tools = tools;

@@ -4,6 +4,8 @@ import { getOwnerChatId } from "../auth.js";
 import { scheduleWork } from "../agent-queue.js";
 import { checkForUpdate } from "./checker.js";
 import { sendUpdateNotification } from "./notify.js";
+import { loadUserConfig } from "../config-loader.js";
+import { getUserUpdateCheckEnabled } from "../user-settings.js";
 import { isRunningVersionKnown, saveUpdateState, setLastNotifiedVersion } from "./store.js";
 
 let task = null;
@@ -48,15 +50,17 @@ function queueUpdateCheck(bot, label) {
 }
 
 export function startUpdateScheduler(bot) {
-    const cfg = loadAgentConfig().updateCheck ?? {};
-    if (cfg.enabled === false) {
+    const agentCfg = loadAgentConfig().updateCheck ?? {};
+    const userOverride = getUserUpdateCheckEnabled(loadUserConfig());
+    const enabled = userOverride === null ? agentCfg.enabled !== false : userOverride;
+    if (!enabled) {
         console.log("tabyAgent: update checker disabled");
         return;
     }
 
     warnIfUnknownProductionVersion();
 
-    const schedule = cfg.intervalCron || "0 * * * *";
+    const schedule = agentCfg.intervalCron || "0 * * * *";
     if (!cron.validate(schedule)) {
         console.warn(`tabyAgent: invalid updateCheck.intervalCron "${schedule}", using "0 * * * *"`);
     }
@@ -66,7 +70,7 @@ export function startUpdateScheduler(bot) {
 
     task = cron.schedule(expr, () => queueUpdateCheck(bot, "scheduled"), { scheduled: true });
 
-    const delayMs = cfg.initialDelayMs ?? 60_000;
+    const delayMs = agentCfg.initialDelayMs ?? 60_000;
     if (initialTimer) clearTimeout(initialTimer);
     initialTimer = setTimeout(() => {
         initialTimer = null;
@@ -74,6 +78,11 @@ export function startUpdateScheduler(bot) {
     }, delayMs);
 
     console.log(`tabyAgent: update checker scheduled (${expr})`);
+}
+
+export function restartUpdateScheduler(bot) {
+    stopUpdateScheduler();
+    startUpdateScheduler(bot);
 }
 
 export function stopUpdateScheduler() {

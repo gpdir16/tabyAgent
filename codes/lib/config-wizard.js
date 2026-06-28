@@ -2,12 +2,21 @@ import fs from "node:fs";
 import path from "node:path";
 import { InlineKeyboard } from "grammy";
 import { USER_DIR } from "./paths.js";
-import { loadUserConfig, saveUserConfig } from "./config-loader.js";
+import { getMergedProvider, loadUserConfig, saveUserConfig } from "./config-loader.js";
 import { claimOwnerIfNone, hasOwner, isApproved, issuePendingCode } from "./auth.js";
 import { t } from "./i18n.js";
 import { getApproveCliHint } from "./runtime.js";
 import { fetchProviderModels, providerFromWizardState, partitionModelsForPicker, buildVendorPickerItems, MODELS_PER_PAGE } from "./llm/models.js";
 import { deleteMessageSafe, sendMessageSafe } from "./telegram-api.js";
+import { restartUpdateScheduler } from "./update/scheduler.js";
+import {
+    getThinkingLevel,
+    isReplyFooterEnabled,
+    normalizeThinkingLevel,
+    seedWizardDataFromConfig,
+    thinkingLevelLabel,
+    getProviderThinkingMeta,
+} from "./user-settings.js";
 
 const STATE_PATH = path.join(USER_DIR, "temp", "onboarding.json");
 
@@ -18,11 +27,12 @@ const PROVIDERS = {
     custom: { id: "default", custom: true, label: "Custom URL" },
 };
 
-function emptyState(chatId) {
+function emptyState(chatId, { mode = "onboarding" } = {}) {
     return {
-        step: "language",
+        mode,
+        step: mode === "reconfig" ? "menu" : "language",
         data: {},
-        adminChatId: String(chatId),
+        done: "Done",
         activeMessageId: null,
     };
 }
@@ -93,7 +103,7 @@ export function isWizardActive(chatId) {
     return Boolean(state?.adminChatId === String(chatId) && state?.step);
 }
 
-function applyConfig(partial) {
+async function applyConfig(partial) {
     const config = loadUserConfig();
     if (!config.telegram) config.telegram = {};
     if (!config.provider) config.provider = { id: "default" };
@@ -109,6 +119,19 @@ function applyConfig(partial) {
     }
     if (partial.apiKey) config.provider.apiKey = partial.apiKey;
     if (partial.model) config.provider.model = partial.model;
+    if (partial.thinkingMeta) {
+        config.thinkingLevel = normalizeThinkingLevel(partial.thinkingLevel ?? config.thinkingLevel, partial.thinkingMeta);
+    } else if (partial.thinkingLevel !== undefined) {
+        const pid = config.provider?.id || "default";
+        const meta = getProviderThinkingMeta(pid);
+        config.thinkingLevel = normalizeThinkingLevel(partial.thinkingLevel, meta);
+    }
+    if (partial.showReplyFooter !== undefined) {
+        config.showReplyFooter = Boolean(partial.showReplyFooter);
+    }
+    if (partial.updateCheckEnabled !== undefined) {
+        config.updateCheckEnabled = Boolean(partial.updateCheckEnabled);
+    }
 
     saveUserConfig(config);
 }
@@ -128,12 +151,26 @@ function texts(lang) {
             prevPage: "◀ Prev",
             nextPage: "Next ▶",
             modelBack: "◀ Providers",
-            done: "✓ Setup complete. Send a message anytime. Use /config to change settings.",
+            done: "Done",
             invalid: "Invalid input. Tap a button or send /config to restart.",
             busy: "Setup is in progress in another chat.",
-            restart: "Setup restarted — choose your language:",
             manual: "Enter manually",
             cancel: "Cancel setup",
+            menuTitle: "tabyAgent settings",
+            catLanguage: "Language",
+            catThinking: "Thinking level",
+            catModel: "Model",
+            catProvider: "LLM provider",
+            catApiKey: "API key",
+            catFooter: "Reply stats footer",
+            catUpdate: "Update notifications",
+            thinkingPick: "Pick a level returned by /models for this model:",
+            thinkingManual: "Send the exact thinking/reasoning value your API expects:",
+            footerPick: "Show token/tool stats under each reply:",
+            updatePick: "Check GitHub for new releases and notify you:",
+            backMenu: "◀ Menu",
+            toggleOn: "On",
+            toggleOff: "Off",
         },
         ko: {
             welcome: "tabyAgent 설정 — 언어를 선택하세요:",
@@ -148,12 +185,23 @@ function texts(lang) {
             prevPage: "◀ 이전",
             nextPage: "다음 ▶",
             modelBack: "◀ 제공자",
-            done: "✓ 설정 완료. 메시지를 보내세요. /config 로 다시 설정할 수 있습니다.",
+            done: "완료",
             invalid: "잘못된 입력입니다. 버튼을 누르거나 /config 로 다시 시작하세요.",
             busy: "다른 채팅에서 설정 중입니다.",
-            restart: "설정을 다시 시작합니다 — 언어를 선택하세요:",
             manual: "직접 입력",
             cancel: "설정 취소",
+            menuTitle: "tabyAgent 설정",
+            catModel: "모델",
+            catProvider: "LLM 제공자",
+            catApiKey: "API 키",
+            catFooter: "답변 통계 푸터",
+            catUpdate: "업데이트 알림",
+            thinkingPick: "이 모델의 /models에 나온 사고 수준:",
+            thinkingManual: "API가 받는 사고/추론 값을 그대로 입력:",
+            footerPick: "답변 아래 토큰/툴 통계 표시:",
+            updatePick: "새 버전 확인 후 알림:",
+            backMenu: "◀ 메뉴",
+            toggleOff: "끄기",
         },
         ja: {
             welcome: "tabyAgent 設定 — 言語を選んでください:",
@@ -168,12 +216,25 @@ function texts(lang) {
             prevPage: "◀ 前へ",
             nextPage: "次へ ▶",
             modelBack: "◀ プロバイダ",
-            done: "✓ 設定完了。/config で再設定できます。",
+            done: "完了",
             invalid: "無効な入力です。ボタンを押すか /config で最初から。",
             busy: "別のチャットで設定中です。",
-            restart: "設定を再開 — 言語を選んでください:",
             manual: "手入力",
             cancel: "キャンセル",
+            menuTitle: "tabyAgent 設定",
+            catLanguage: "言語",
+            catThinking: "思考レベル",
+            catModel: "モデル",
+            catProvider: "LLM プロバイダ",
+            catApiKey: "API キー",
+            catFooter: "返信統計フッター",
+            catUpdate: "更新通知",
+            thinkingPick: "このモデルの /models が返した思考レベル:",
+            thinkingManual: "API が受け付ける思考/推論の値をそのまま送信:",
+            footerPick: "返信下にトークン/ツール統計を表示:",
+            updatePick: "新バージョンを確認して通知:",
+            backMenu: "◀ メニュー",
+            toggleOff: "オフ",
         },
     };
     return t[lang] || t.en;
@@ -183,21 +244,118 @@ function uiLang(state) {
     return state.data.language || "en";
 }
 
-function languageKeyboard(lang) {
-    const msg = texts(lang);
-    return new InlineKeyboard()
-        .text("English", "cfg:lang:en")
-        .row()
-        .text("한국어", "cfg:lang:ko")
-        .row()
-        .text("日本語", "cfg:lang:ja")
-        .row()
-        .text(msg.cancel, "cfg:cancel");
+function isReconfig(state) {
+    return state.mode === "reconfig";
 }
 
-function providerKeyboard(lang) {
+function onOffLabel(lang, on) {
+    if (lang === "ko") return on ? "켜짐" : "꺼짐";
+    if (lang === "ja") return on ? "オン" : "オフ";
+    return on ? "On" : "Off";
+}
+
+function menuKeyboard(state) {
+    const lang = uiLang(state);
     const msg = texts(lang);
-    return new InlineKeyboard()
+    const cfg = loadUserConfig();
+    const kb = new InlineKeyboard();
+    kb.text(`${msg.catLanguage}: ${cfg.language || "en"}`, "cfg:cat:language").row();
+    kb.text(`${msg.catThinking}: ${thinkingLevelLabel(lang, getThinkingLevel(cfg))}`, "cfg:cat:thinking").row();
+    kb.text(`${msg.catModel}: ${cfg.provider?.model || "—"}`, "cfg:cat:model").row();
+    kb.text(`${msg.catProvider}: ${PROVIDERS[state.data.providerKey]?.label || cfg.provider?.id || "—"}`, "cfg:cat:provider").row();
+    kb.text(`${msg.catFooter}: ${onOffLabel(lang, state.data.showReplyFooter !== false)}`, "cfg:cat:footer").row();
+    kb.text(`${msg.catUpdate}: ${onOffLabel(lang, state.data.updateCheckEnabled !== false)}`, "cfg:cat:update").row();
+    kb.text(msg.done, "cfg:done");
+    return kb;
+}
+
+function thinkingKeyboard(state, metaOrPid) {
+    const lang = uiLang(state);
+    const msg = texts(lang);
+    const meta = typeof metaOrPid === "string" ? getProviderThinkingMeta(metaOrPid) : metaOrPid;
+    const cur = normalizeThinkingLevel(state.data.thinkingLevel, meta);
+    const kb = new InlineKeyboard();
+    for (const level of meta.levels || []) {
+        const mark = level === cur ? "✓ " : "";
+        kb.text(`${mark}${thinkingLevelLabel(lang, level)}`, `cfg:think:${level}`).row();
+    }
+    kb.text(msg.backMenu, "cfg:menu");
+    return kb;
+}
+function footerToggleKeyboard(state) {
+    const lang = uiLang(state);
+    const msg = texts(lang);
+    const current = state.data.showReplyFooter ?? true;
+    const kb = new InlineKeyboard();
+    kb.text(`${current ? "✓ " : ""}${msg.toggleOn}`, "cfg:toggle:footer:on").row();
+    kb.text(`${!current ? "✓ " : ""}${msg.toggleOff}`, "cfg:toggle:footer:off").row();
+    kb.text(msg.backMenu, "cfg:menu");
+    return kb;
+}
+
+function updateToggleKeyboard(state) {
+    const lang = uiLang(state);
+    const msg = texts(lang);
+    const current = state.data.updateCheckEnabled ?? true;
+    const kb = new InlineKeyboard();
+    kb.text(`${current ? "✓ " : ""}${msg.toggleOn}`, "cfg:toggle:update:on").row();
+    kb.text(`${!current ? "✓ " : ""}${msg.toggleOff}`, "cfg:toggle:update:off").row();
+    kb.text(msg.backMenu, "cfg:menu");
+    return kb;
+}
+
+async function showThinkingStep(bot, chatId, state) {
+    const lang = uiLang(state);
+    const cfg = loadUserConfig();
+    const pid = state.data.providerId || cfg.provider?.id || "default";
+    const meta = getProviderThinkingMeta(pid);
+    state.data.thinkingMeta = meta;
+    state.data.thinkingLevel = normalizeThinkingLevel(state.data.thinkingLevel, pid);
+    state.step = "thinking";
+    saveState(state);
+    if (!meta.levels?.length) {
+        state.step = "thinking_manual";
+        saveState(state);
+        await replaceStep(bot, chatId, state, texts(lang).thinkingManual);
+        return;
+    }
+    await replaceStep(bot, chatId, state, texts(lang).thinkingPick, thinkingKeyboard(state, meta));
+}
+
+async function showMenuStep(bot, chatId, state) {
+    const lang = uiLang(state);
+    state.step = "menu";
+    saveState(state);
+    await replaceStep(bot, chatId, state, texts(lang).menuTitle, menuKeyboard(state));
+}
+async function returnToMenu(bot, chatId, state) {
+    await showMenuStep(bot, chatId, state);
+}
+
+async function completeModelSelection(bot, chatId, state, { userMessageId } = {}) {
+    if (isReconfig(state)) {
+        await applyConfig({ model: state.data.model });
+        await clearActivePrompt(bot, chatId, state);
+        await deleteMessageSafe(bot, chatId, userMessageId);
+        await returnToMenu(bot, chatId, state);
+        return;
+    }
+    await finishWizard(bot, chatId, state, { userMessageId });
+}
+
+function languageKeyboard(lang, state = null) {
+    const msg = texts(lang);
+    const kb = new InlineKeyboard().text("English", "cfg:lang:en").row().text("한국어", "cfg:lang:ko").row().text("日本語", "cfg:lang:ja").row();
+    if (state && isReconfig(state)) {
+        kb.text(msg.backMenu, "cfg:menu").row();
+    }
+    kb.text(msg.done, "cfg:cancel");
+    return kb;
+}
+
+function providerKeyboard(lang, state = null) {
+    const msg = texts(lang);
+    const kb = new InlineKeyboard()
         .text("OpenAI", "cfg:prov:openai")
         .row()
         .text("OpenRouter", "cfg:prov:openrouter")
@@ -205,8 +363,12 @@ function providerKeyboard(lang) {
         .text("Synthetic", "cfg:prov:synthetic")
         .row()
         .text("Custom API URL", "cfg:prov:custom")
-        .row()
-        .text(msg.cancel, "cfg:cancel");
+        .row();
+    if (state && isReconfig(state)) {
+        kb.text(msg.backMenu, "cfg:menu").row();
+    }
+    kb.text(msg.done, "cfg:cancel");
+    return kb;
 }
 
 function pageRange(total, page) {
@@ -329,7 +491,7 @@ async function showVariantStep(bot, chatId, state) {
 }
 
 export function resetOnboarding(chatId) {
-    saveState(emptyState(chatId));
+    saveState(emptyState(chatId, { mode: "onboarding" }));
 }
 
 export async function openConfigWizard(ctx, bot) {
@@ -338,12 +500,25 @@ export async function openConfigWizard(ctx, bot) {
     if (prev?.activeMessageId) {
         await deleteMessageSafe(bot, chatId, prev.activeMessageId);
     }
+
+    if (isConfigReady()) {
+        const seeded = seedWizardDataFromConfig();
+        const state = {
+            mode: "reconfig",
+            step: "menu",
+            data: { ...seeded },
+            adminChatId: String(chatId),
+            activeMessageId: null,
+        };
+        saveState(state);
+        await showMenuStep(bot, chatId, state);
+        return;
+    }
+
     resetOnboarding(chatId);
     const state = loadState();
-
-    const lang = isConfigReady() ? loadUserConfig().language || "en" : "en";
-    const intro = isConfigReady() ? texts(lang).restart : texts(lang).welcome;
-    await replaceStep(bot, chatId, state, intro, languageKeyboard(lang));
+    const lang = "en";
+    await replaceStep(bot, chatId, state, texts(lang).welcome, languageKeyboard(lang));
 }
 
 async function finishWizard(bot, chatId, state, { userMessageId } = {}) {
@@ -356,13 +531,25 @@ async function finishWizard(bot, chatId, state, { userMessageId } = {}) {
         return;
     }
 
-    applyConfig({
+    const cfg = loadUserConfig();
+    const modelId = state.data.model || "";
+    let provider;
+    try {
+        provider = providerFromWizardState(state);
+    } catch {
+        provider = getMergedProvider(cfg);
+    }
+    const pid = provider.id || cfg.provider?.id || "default";
+    const meta = getProviderThinkingMeta(pid);
+    await applyConfig({
         language: state.data.language,
         providerId: state.data.providerId,
         providerKey: state.data.providerKey,
         baseURL: state.data.baseURL,
         apiKey: state.data.apiKey,
         model: state.data.model,
+        thinkingLevel: state.data.thinkingLevel || meta.defaultLevel,
+        thinkingMeta: meta,
     });
 
     const doneText = texts(state.data.language).done;
@@ -444,10 +631,125 @@ export async function handleConfigWizardCallback(ctx, bot) {
     }
     const { chatId } = access;
 
+    if (data === "cfg:done") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        clearState();
+        return;
+    }
+
     if (data === "cfg:cancel") {
         await ctx.answerCallbackQuery();
         await dismissCallbackPrompt(ctx, bot, chatId, state);
         clearState();
+        return;
+    }
+
+    if (data === "cfg:menu") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await showMenuStep(bot, chatId, state);
+        return;
+    }
+
+    if (data === "cfg:cat:language") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.step = "language";
+        saveState(state);
+        await replaceStep(bot, chatId, state, texts(uiLang(state)).catLanguage, languageKeyboard(uiLang(state), state));
+        return;
+    }
+
+    if (data === "cfg:cat:thinking") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await showThinkingStep(bot, chatId, state);
+        return;
+    }
+
+    if (data === "cfg:cat:model") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await sendModelStep(bot, chatId, state);
+        return;
+    }
+
+    if (data === "cfg:cat:provider") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.step = "provider";
+        saveState(state);
+        const lang = uiLang(state);
+        await replaceStep(bot, chatId, state, texts(lang).provider, providerKeyboard(lang, state));
+        return;
+    }
+
+    if (data === "cfg:cat:apikey") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.step = "api_key";
+        state.data.afterApiKey = "menu";
+        saveState(state);
+        await replaceStep(bot, chatId, state, texts(uiLang(state)).apiKey);
+        return;
+    }
+
+    if (data === "cfg:cat:footer") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.step = "footer_toggle";
+        saveState(state);
+        await replaceStep(bot, chatId, state, texts(uiLang(state)).footerPick, footerToggleKeyboard(state));
+        return;
+    }
+
+    if (data === "cfg:cat:update") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.step = "update_toggle";
+        saveState(state);
+        await replaceStep(bot, chatId, state, texts(uiLang(state)).updatePick, updateToggleKeyboard(state));
+        return;
+    }
+
+    if (data.startsWith("cfg:think:")) {
+        const level = data.slice("cfg:think:".length).toLowerCase();
+        const pid = state.data.providerId || loadUserConfig().provider?.id || "default";
+        const meta = getProviderThinkingMeta(pid);
+        if (!meta.levels.includes(level)) {
+            await ctx.answerCallbackQuery();
+            return;
+        }
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.data.thinkingLevel = level;
+        await applyConfig({ thinkingLevel: level, providerId: pid });
+        saveState(state);
+        await returnToMenu(bot, chatId, state);
+        return;
+    }
+
+    if (data === "cfg:toggle:footer:on" || data === "cfg:toggle:footer:off") {
+        const on = data.endsWith(":on");
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.data.showReplyFooter = on;
+        await applyConfig({ showReplyFooter: on });
+        saveState(state);
+        await returnToMenu(bot, chatId, state);
+        return;
+    }
+
+    if (data === "cfg:toggle:update:on" || data === "cfg:toggle:update:off") {
+        const on = data.endsWith(":on");
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.data.updateCheckEnabled = on;
+        await applyConfig({ updateCheckEnabled: on });
+        saveState(state);
+        restartUpdateScheduler(bot);
+        await returnToMenu(bot, chatId, state);
         return;
     }
 
@@ -461,9 +763,14 @@ export async function handleConfigWizardCallback(ctx, bot) {
         await dismissCallbackPrompt(ctx, bot, chatId, state);
 
         state.data.language = language;
+        saveState(state);
+        await applyConfig({ language });
+        if (isReconfig(state)) {
+            await returnToMenu(bot, chatId, state);
+            return;
+        }
         state.step = "provider";
         saveState(state);
-        applyConfig({ language });
         await replaceStep(bot, chatId, state, texts(language).provider, providerKeyboard(language));
         return;
     }
@@ -480,8 +787,14 @@ export async function handleConfigWizardCallback(ctx, bot) {
 
         state.data.providerKey = providerKey;
         state.data.providerId = provider.id;
+        delete state.data.afterApiKey;
         saveState(state);
-        applyConfig({ providerId: provider.id, providerKey });
+        await applyConfig({ providerId: provider.id, providerKey });
+        const cfg2 = loadUserConfig();
+        const pid2 = cfg2.provider?.id || "default";
+        const meta2 = getProviderThinkingMeta(pid2);
+        state.data.thinkingMeta = meta2;
+        state.data.thinkingLevel = normalizeThinkingLevel(cfg2.thinkingLevel, pid2);
 
         const lang = uiLang(state);
         if (provider.custom) {
@@ -544,7 +857,7 @@ export async function handleConfigWizardCallback(ctx, bot) {
 
         if (item.type === "flat") {
             state.data.model = item.model.id;
-            await finishWizard(bot, chatId, state);
+            await completeModelSelection(bot, chatId, state);
             return;
         }
 
@@ -563,7 +876,7 @@ export async function handleConfigWizardCallback(ctx, bot) {
         await ctx.answerCallbackQuery();
         await dismissCallbackPrompt(ctx, bot, chatId, state);
         state.data.model = picked.id;
-        await finishWizard(bot, chatId, state);
+        await completeModelSelection(bot, chatId, state);
         return;
     }
 
@@ -616,6 +929,11 @@ export async function handleConfigWizardText(ctx, bot) {
     const msg = texts(uiLang(state));
 
     switch (state.step) {
+        case "menu": {
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            await showMenuStep(bot, chatId, state);
+            return;
+        }
         case "language": {
             await deleteMessageSafe(bot, chatId, userMessageId);
             await replaceStep(bot, chatId, state, `${msg.invalid}\n\n${msg.welcome}`, languageKeyboard(uiLang(state)));
@@ -623,7 +941,7 @@ export async function handleConfigWizardText(ctx, bot) {
         }
         case "provider": {
             await deleteMessageSafe(bot, chatId, userMessageId);
-            await replaceStep(bot, chatId, state, msg.provider, providerKeyboard(uiLang(state)));
+            await replaceStep(bot, chatId, state, msg.provider, providerKeyboard(uiLang(state), state));
             return;
         }
         case "base_url": {
@@ -636,7 +954,7 @@ export async function handleConfigWizardText(ctx, bot) {
             state.data.baseURL = baseURL;
             state.step = "api_key";
             saveState(state);
-            applyConfig({ baseURL });
+            await applyConfig({ baseURL });
             await deleteMessageSafe(bot, chatId, userMessageId);
             await replaceStep(bot, chatId, state, msg.apiKey);
             return;
@@ -648,8 +966,14 @@ export async function handleConfigWizardText(ctx, bot) {
                 return;
             }
             state.data.apiKey = text;
-            applyConfig({ apiKey: text });
+            await applyConfig({ apiKey: text });
             await deleteMessageSafe(bot, chatId, userMessageId);
+            if (isReconfig(state) && state.data.afterApiKey === "menu") {
+                delete state.data.afterApiKey;
+                saveState(state);
+                await returnToMenu(bot, chatId, state);
+                return;
+            }
             await sendModelStep(bot, chatId, state);
             return;
         }
@@ -667,6 +991,22 @@ export async function handleConfigWizardText(ctx, bot) {
             await replaceStep(bot, chatId, state, `${msg.invalid}\n\n${variantCaption(uiLang(state), state)}`, variantKeyboard(state));
             return;
         }
+        case "thinking_manual": {
+            if (!text) {
+                await deleteMessageSafe(bot, chatId, userMessageId);
+                await replaceStep(bot, chatId, state, msg.thinkingManual);
+                return;
+            }
+            state.data.thinkingLevel = text.trim().toLowerCase();
+            await applyConfig({ thinkingLevel: state.data.thinkingLevel, thinkingMeta: { levels: [], defaultLevel: state.data.thinkingLevel } });
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            if (isReconfig(state)) {
+                await returnToMenu(bot, chatId, state);
+                return;
+            }
+            await returnToMenu(bot, chatId, state);
+            return;
+        }
         case "model_manual": {
             if (!text) {
                 await deleteMessageSafe(bot, chatId, userMessageId);
@@ -674,7 +1014,7 @@ export async function handleConfigWizardText(ctx, bot) {
                 return;
             }
             state.data.model = text;
-            await finishWizard(bot, chatId, state, { userMessageId });
+            await completeModelSelection(bot, chatId, state, { userMessageId });
             return;
         }
         default:
