@@ -30,6 +30,9 @@ export function getUserUpdateCheckEnabled(config = loadUserConfig()) {
 export function providerKeyFromId(providerId) {
     if (providerId === "openrouter") return "openrouter";
     if (providerId === "synthetic") return "synthetic";
+    if (providerId === "ollama") return "ollama";
+    if (providerId === "ollama-cloud") return "ollamaCloud";
+    if (providerId === "zenmux") return "zenmux";
     return "openai";
 }
 

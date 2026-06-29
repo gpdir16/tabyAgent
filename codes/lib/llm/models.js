@@ -98,10 +98,14 @@ export async function fetchProviderModels(provider, { useCache = true } = {}) {
 export function providerFromWizardState(state) {
     const providerFile = loadProviderConfig(state.data.providerId || "default");
     const baseURL = (state.data.baseURL || providerFile.baseURL || "").replace(/\/$/, "");
+    let apiKey = state.data.apiKey || "";
+    if (!apiKey && providerFile.apiKeyOptional) {
+        apiKey = providerFile.defaultApiKey || "";
+    }
     return {
         id: state.data.providerId || "default",
         baseURL,
-        apiKey: state.data.apiKey || "",
+        apiKey,
         extraHeaders: providerFile.extraHeaders || {},
     };
 }

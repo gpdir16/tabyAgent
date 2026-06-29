@@ -7,7 +7,7 @@ export async function createLlmClient() {
     const userConfig = loadUserConfig();
     const provider = getMergedProvider(userConfig);
 
-    if (!provider.apiKey) throw new Error("provider.apiKey is not set in config.json");
+    if (!provider.apiKey && !provider.apiKeyOptional) throw new Error("provider.apiKey is not set in config.json");
     if (!provider.model) throw new Error("provider.model is not set in config.json");
 
     if (provider.type !== "openai-compatible") {

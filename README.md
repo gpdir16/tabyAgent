@@ -9,7 +9,7 @@ Runs in Docker or locally (Node.js) and chats with you through Telegram.
 ## What it does
 
 - **Daily chat** — Send messages and get replies right in Telegram. Supports text, images, and files.
-- **Connect your inference provider** — Works with OpenAI, OpenRouter, or any custom API endpoint.
+- **Connect your inference provider** — Works with OpenAI, OpenRouter, Synthetic, Ollama (local & Cloud), ZenMux, or any custom API endpoint.
 - **Skills, MCP** — Add capabilities like web browsing, scheduled tasks, and more.
 - **Scheduled tasks** — Set up recurring jobs that run automatically and report back.
 - **Runs anywhere** — Docker container or local Node.js on your machine.

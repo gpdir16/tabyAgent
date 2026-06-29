@@ -78,12 +78,17 @@ export function getMergedProvider(userConfig) {
     const providerFile = loadProviderConfig(id);
     const baseURLOverride = userConfig?.provider?.baseURL?.trim();
     const baseURL = (baseURLOverride || providerFile.baseURL || "").replace(/\/$/, "");
+    let apiKey = substituteEnv(userConfig?.provider?.apiKey || "");
+    if (!apiKey && providerFile.apiKeyOptional) {
+        apiKey = substituteEnv(providerFile.defaultApiKey || "");
+    }
     return {
         id,
         type: providerFile.type,
         baseURL,
-        apiKey: substituteEnv(userConfig?.provider?.apiKey || ""),
+        apiKey,
         model: userConfig?.provider?.model || "",
         extraHeaders: providerFile.extraHeaders || {},
+        apiKeyOptional: Boolean(providerFile.apiKeyOptional),
     };
 }

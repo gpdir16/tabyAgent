@@ -24,6 +24,9 @@ const PROVIDERS = {
     openai: { id: "default", label: "OpenAI" },
     openrouter: { id: "openrouter", label: "OpenRouter" },
     synthetic: { id: "synthetic", label: "Synthetic" },
+    ollama: { id: "ollama", label: "Ollama (local)", apiKeyOptional: true },
+    ollamaCloud: { id: "ollama-cloud", label: "Ollama Cloud" },
+    zenmux: { id: "zenmux", label: "ZenMux" },
     custom: { id: "default", custom: true, label: "Custom URL" },
 };
 
@@ -114,7 +117,7 @@ async function applyConfig(partial) {
         if (partial.baseURL) config.provider.baseURL = partial.baseURL;
         else delete config.provider.baseURL;
     }
-    if (partial.providerKey === "openai" || partial.providerKey === "synthetic" || partial.providerKey === "openrouter") {
+    if (partial.providerKey && partial.providerKey !== "custom") {
         delete config.provider.baseURL;
     }
     if (partial.apiKey) config.provider.apiKey = partial.apiKey;
@@ -365,6 +368,12 @@ function providerKeyboard(lang, state = null) {
         .text("OpenRouter", "cfg:prov:openrouter")
         .row()
         .text("Synthetic", "cfg:prov:synthetic")
+        .row()
+        .text("Ollama (local)", "cfg:prov:ollama")
+        .row()
+        .text("Ollama Cloud", "cfg:prov:ollamaCloud")
+        .row()
+        .text("ZenMux", "cfg:prov:zenmux")
         .row()
         .text("Custom API URL", "cfg:prov:custom")
         .row();
@@ -805,6 +814,9 @@ export async function handleConfigWizardCallback(ctx, bot) {
             state.step = "base_url";
             saveState(state);
             await replaceStep(bot, chatId, state, texts(lang).baseURL);
+        } else if (provider.apiKeyOptional) {
+            saveState(state);
+            await sendModelStep(bot, chatId, state);
         } else {
             state.step = "api_key";
             saveState(state);
