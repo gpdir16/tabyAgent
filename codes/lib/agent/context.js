@@ -16,7 +16,6 @@ import {
     buildSystemPromptParts,
 } from "./system-prompt.js";
 import { formatPastSessionsForPrompt, turnToMessages, cloneStoredMessage } from "./chat-history.js";
-
 const SYSTEM_PATH = path.join(CODES_DIR, "lib", "prompts", "system.txt");
 
 let encoding;
@@ -31,7 +30,7 @@ function getTokenizer(model) {
 
 export function countTokens(text, model = "gpt-4o-mini") {
     const enc = getTokenizer(model);
-    const safe = sanitizeTextForLlm(typeof text === "string" ? text : JSON.stringify(text) ?? "");
+    const safe = sanitizeTextForLlm(typeof text === "string" ? text : (JSON.stringify(text) ?? ""));
     if (enc) {
         try {
             return enc.encode(safe, undefined, []).length;

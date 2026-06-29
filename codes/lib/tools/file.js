@@ -18,6 +18,8 @@ function getMaxFileReadTokens(messages, modelMeta, model) {
     return Math.max(0, half - 1);
 }
 
+const fileReadCache = new Map();
+
 function splitLines(text) {
     if (!text) return [];
     const lines = text.split("\n");
@@ -129,10 +131,6 @@ export async function executeFileRead(args, ctx) {
         };
     }
 
-    const content = fs.readFileSync(resolved, "utf8");
-    recordFileSnapshot(ctx, resolved, content);
-
-    const lines = splitLines(content);
     const startLine = args?.startLine;
     let endLine = args?.endLine;
     const limit = args?.limit;
@@ -142,132 +140,138 @@ export async function executeFileRead(args, ctx) {
         endLine = limit;
     }
 
-    const { start, end, slice } = sliceByLineRange(lines, startLine ?? 1, endLine);
-    const numbered = formatLineNumbered(slice, start);
-    const { text, tokens, truncated } = truncateToTokenBudget(numbered, maxTokens, model);
+    // Re-read dedup — same path + range + mtime within one turn returns a stub.
+    const cacheKey = `${resolved}:${startLine ?? 1}:${endLine ?? "end"}:${stat.mtimeMs}`;
+    if (fileReadCache.has(cacheKey)) {
+        const prev = fileReadCache.get(cacheKey);
+        return {
+            path: resolved,
+            startLine: prev.start,
+            endLine: prev.end,
+            totalLines: prev.totalLines,
+            content: `[Already read in this turn — content suppressed to save context. Re-read with a different startLine/endLine if you need it again, or use the previous result.]`,
+            deduped: true,
+        };
+    }
+
+    const content = fs.readFileSync(resolved, "utf8");
+    recordFileSnapshot(ctx, resolved, content);
+
+    const lines = splitLines(content);
+    const totalLines = lines.length;
+    const requestedStart = Math.max(1, startLine ?? 1);
+    const requestedEnd = endLine == null ? totalLines : Math.min(totalLines, endLine);
+
+    const { start, end, slice } = sliceByLineRange(lines, requestedStart, requestedEnd);
+    const joined = formatLineNumbered(slice, start);
+
+    const { text, tokens, truncated } = truncateToTokenBudget(joined, maxTokens, model);
     const returnedLineCount = text ? text.split("\n").length : 0;
+
+    const notes = [];
+    if (truncated)
+        notes.push(
+            `Output truncated to fit context budget (${totalLines} total lines). Use startLine=${start + returnedLineCount} to read the next page.`,
+        );
+
+    fileReadCache.set(cacheKey, { start, end, totalLines });
 
     return {
         path: resolved,
         startLine: start,
         endLine: truncated && returnedLineCount > 0 ? start + returnedLineCount - 1 : end,
-        totalLines: lines.length,
+        totalLines,
         content: text,
         tokens,
         maxTokens,
         truncated,
-        ...(truncated ? { note: "Output truncated to fit context budget; use a smaller line range or startLine/endLine." } : {}),
+        ...(notes.length ? { note: notes.join(" ") } : {}),
     };
+}
+
+export function clearFileReadCache() {
+    fileReadCache.clear();
 }
 
 function parseUnifiedDiff(diffText) {
     const lines = diffText.replace(/\r\n/g, "\n").split("\n");
     const hunks = [];
-    let i = 0;
-    while (i < lines.length && !lines[i].startsWith("@@")) i += 1;
-
-    while (i < lines.length) {
-        const header = lines[i];
-        if (!header.startsWith("@@")) break;
-        const match = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/.exec(header);
-        if (!match) return { error: `Invalid hunk header: ${header}` };
-        const oldStart = Number(match[1]);
-        i += 1;
-        const hunkLines = [];
-        while (i < lines.length && !lines[i].startsWith("@@")) {
-            const line = lines[i];
-            if (line === "\\ No newline at end of file") {
-                i += 1;
-                continue;
-            }
+    let currentHunk = null;
+    for (const line of lines) {
+        if (line.startsWith("@@")) {
+            if (currentHunk) hunks.push(currentHunk);
+            const m = line.match(/@@\s*-(\d+)(?:,(\d+))?\s*\+(\d+)(?:,(\d+))?\s*@@/);
+            if (!m) continue;
+            currentHunk = {
+                oldStart: parseInt(m[1], 10),
+                oldCount: m[2] ? parseInt(m[2], 10) : 1,
+                newStart: parseInt(m[3], 10),
+                newCount: m[4] ? parseInt(m[4], 10) : 1,
+                lines: [],
+            };
+        } else if (currentHunk) {
+            if (line === "\\ No newline at end of file") continue;
+            if (line === "") continue;
             const prefix = line[0];
-            if (prefix !== " " && prefix !== "+" && prefix !== "-") break;
-            hunkLines.push({ type: prefix, text: line.slice(1) });
-            i += 1;
+            if (prefix !== " " && prefix !== "+" && prefix !== "-") continue;
+            currentHunk.lines.push(line);
         }
-        hunks.push({ oldStart, lines: hunkLines });
     }
-
-    if (!hunks.length) return { error: "No diff hunks found (expected @@ headers)" };
-    return { hunks };
+    if (currentHunk) hunks.push(currentHunk);
+    return hunks;
 }
 
-function applyHunk(fileLines, hunk) {
-    const fileIndex = hunk.oldStart - 1;
-    const expected = [];
-    const replacement = [];
-
-    for (const entry of hunk.lines) {
-        if (entry.type === " ") {
-            expected.push(entry.text);
-            replacement.push(entry.text);
-        } else if (entry.type === "-") {
-            expected.push(entry.text);
-        } else if (entry.type === "+") {
-            replacement.push(entry.text);
-        }
+function applyHunk(fileLines, hunk, offset = 0) {
+    const result = [...fileLines];
+    const oldLines = hunk.lines.filter((l) => l.startsWith(" ") || l.startsWith("-")).map((l) => l.slice(1));
+    const newLines = hunk.lines.filter((l) => l.startsWith(" ") || l.startsWith("+")).map((l) => l.slice(1));
+    const startPos = hunk.oldStart - 1 + offset;
+    const oldSlice = result.slice(startPos, startPos + hunk.oldCount);
+    if (oldSlice.join("\n") !== oldLines.join("\n")) {
+        return { ok: false, error: "Context mismatch — file changed since last read. Re-read the file first." };
     }
-
-    const actual = fileLines.slice(fileIndex, fileIndex + expected.length);
-    if (actual.length !== expected.length || actual.some((l, idx) => l !== expected[idx])) {
-        return {
-            error: "Hunk context does not match file",
-            oldStart: hunk.oldStart,
-            expectedPreview: expected.slice(0, 5),
-            actualPreview: actual.slice(0, 5),
-        };
-    }
-
-    const next = [...fileLines.slice(0, fileIndex), ...replacement, ...fileLines.slice(fileIndex + expected.length)];
-    return { lines: next };
+    result.splice(startPos, hunk.oldCount, ...newLines);
+    return { ok: true, result, offset: offset + newLines.length - hunk.oldCount };
 }
 
 export async function executeFilePatch(args, ctx = {}) {
     const resolved = resolveFilePath(args?.path, { write: true });
     if (!resolved) return { error: `path not allowed or missing (writable: ${formatAllowedPaths({ write: true })})` };
+    if (!fs.existsSync(resolved)) return { error: "file not found", path: resolved };
 
-    const diff = args?.diff;
-    if (!diff?.trim()) return { error: "diff is required" };
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile()) return { error: "not a file", path: resolved };
 
-    const parsed = parseUnifiedDiff(diff);
-    if (parsed.error) return parsed;
-
-    const existed = fs.existsSync(resolved);
-    const snapshots = ctx.fileSnapshots;
-
-    if (existed) {
-        if (!snapshots?.has(resolved)) {
-            return {
-                error: "file_patch requires file_read on this path earlier in the same turn",
-                path: resolved,
-            };
-        }
-        const snapshot = snapshots.get(resolved);
-        const onDisk = fs.readFileSync(resolved, "utf8");
-        if (onDisk !== snapshot) {
-            return {
-                error: "File changed on disk since file_read (not by this agent). Call file_read again, then file_patch.",
-                path: resolved,
-            };
-        }
+    const snapshot = ctx.fileSnapshots?.get(resolved);
+    if (!snapshot) {
+        return { error: "Must file_read this path in this turn before patching." };
     }
 
-    const original = existed ? snapshots.get(resolved) : "";
-    const trailingNewline = existed ? original.endsWith("\n") : true;
-    let fileLines = splitLines(original);
+    const currentContent = fs.readFileSync(resolved, "utf8");
+    if (currentContent !== snapshot) {
+        return { error: "File changed since last read. Re-read it before patching." };
+    }
 
-    const sorted = [...parsed.hunks].sort((a, b) => b.oldStart - a.oldStart);
+    const hunks = parseUnifiedDiff(args?.diff || "");
+    if (!hunks.length) return { error: "No valid hunks in diff" };
+
+    const fileLines = splitLines(currentContent);
+    let resultLines = fileLines;
+    let offset = 0;
+    const sorted = [...hunks].sort((a, b) => a.oldStart - b.oldStart);
     for (const hunk of sorted) {
-        const applied = applyHunk(fileLines, hunk);
-        if (applied.error) return { ...applied, path: resolved };
-        fileLines = applied.lines;
+        const applied = applyHunk(resultLines, hunk, offset);
+        if (!applied.ok) return applied;
+        resultLines = applied.result;
+        offset = applied.offset;
     }
+    const newContent = joinLines(resultLines, { trailingNewline: currentContent.endsWith("\n") });
+    fs.writeFileSync(resolved, newContent, "utf8");
+    ctx.fileSnapshots?.set(resolved, newContent);
 
-    const parent = path.dirname(resolved);
-    fs.mkdirSync(parent, { recursive: true });
-    const out = joinLines(fileLines, { trailingNewline });
-    fs.writeFileSync(resolved, out, "utf8");
-    recordFileSnapshot(ctx, resolved, out);
-
-    return { ok: true, path: resolved, hunksApplied: parsed.hunks.length };
+    return {
+        ok: true,
+        path: resolved,
+        linesWritten: resultLines.length,
+    };
 }

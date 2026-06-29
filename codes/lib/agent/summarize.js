@@ -8,11 +8,39 @@ import {
 } from "./context.js";
 import { loadChatHistory, loadCompressedSummary, replaceChatHistoryAfterCompression, turnToMessages } from "./chat-history.js";
 
-const COMPRESS_SYSTEM = `You compress chat transcripts for context storage. Rules:
+const COMPRESS_SYSTEM = `You compress chat transcripts for long-term context storage.
+
+Output a single markdown block with EXACTLY these sections (omit a section only if empty):
+## Goal
+The user's goal in this conversation.
+
+## Constraints & Preferences
+User preferences, coding style, constraints, and important decisions.
+
+## Progress
+### Done
+### In Progress
+### Blocked
+
+## Key Decisions
+Important technical decisions and rationale.
+
+## Relevant Files
+Files read, modified, or created (with paths).
+
+## Critical Context
+Critical values, error messages, configurations, command outputs that must survive compression.
+
+Rules:
 - Preserve facts, numbers, command outputs, decisions, errors, filenames, and what the user wanted.
-- Same language as the source (Korean stays Korean).
-- Dense markdown bullets or short paragraphs. No filler, no "summary:" prefix.
-- Do not invent information that is not in the transcript.`;
+- Same language as the source (Korean stays Korean, etc.).
+- Dense markdown bullets or short paragraphs. No filler, no "summary:" prefix, no preamble.
+- Do NOT invent information that is not in the transcript. If you are unsure, omit it.
+- Earlier compressed summary (if provided above a --- separator) is already trusted context — preserve its facts and refine/extend, never drop them.`;
+
+const TOOL_OUTPUT_TRIM_THRESHOLD = 600;
+const TOOL_OUTPUT_KEEP_HEAD = 200;
+const TOOL_OUTPUT_KEEP_TAIL = 200;
 
 function buildWithHistory(userMessage, history, opts = {}) {
     return buildInitialMessages(userMessage, { history, ...opts });
@@ -36,6 +64,14 @@ function contentToText(content) {
     return content == null ? "" : String(content);
 }
 
+function trimToolOutput(text) {
+    if (typeof text !== "string" || text.length <= TOOL_OUTPUT_TRIM_THRESHOLD) return text;
+    const head = text.slice(0, TOOL_OUTPUT_KEEP_HEAD);
+    const tail = text.slice(-TOOL_OUTPUT_KEEP_TAIL);
+    const omitted = text.length - head.length - tail.length;
+    return `${head}\n…[trimmed ${omitted} chars]…\n${tail}`;
+}
+
 function messageToTranscriptLine(message) {
     if (message.role === "user") return `User: ${contentToText(message.content)}`;
     if (message.role === "assistant") {
@@ -46,7 +82,7 @@ function messageToTranscriptLine(message) {
         return parts.join("\n");
     }
     if (message.role === "tool") {
-        return `Tool (${message.tool_call_id}): ${contentToText(message.content)}`;
+        return `Tool (${message.tool_call_id}): ${trimToolOutput(contentToText(message.content))}`;
     }
     return "";
 }
@@ -123,7 +159,7 @@ async function compressTranscript(llm, transcript, { signal } = {}) {
             { role: "system", content: COMPRESS_SYSTEM },
             {
                 role: "user",
-                content: `Compress this transcript:\n\n${transcript}`,
+                content: `Compress this transcript into the structured summary. If a prior compressed summary appears above a "---" separator, treat it as trusted context and refine/extend it rather than dropping its facts:\n\n${transcript}`,
             },
         ],
         tool_choice: "none",
@@ -132,6 +168,45 @@ async function compressTranscript(llm, transcript, { signal } = {}) {
     const text = response.choices?.[0]?.message?.content?.trim();
     if (!text) throw new Error("Compression model returned empty summary");
     return text;
+}
+
+function repairToolPairIntegrity(messages) {
+    const survivingCallIds = new Set();
+    for (const m of messages) {
+        if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
+            for (const tc of m.tool_calls) {
+                if (tc?.id) survivingCallIds.add(tc.id);
+            }
+        }
+    }
+
+    const resultIds = new Set();
+    for (const m of messages) {
+        if (m.role === "tool" && m.tool_call_id) resultIds.add(m.tool_call_id);
+    }
+
+    // Drop orphan tool results (no surviving assistant tool_call for them).
+    let repaired = messages.filter((m) => !(m.role === "tool" && m.tool_call_id && !survivingCallIds.has(m.tool_call_id)));
+
+    // Insert stub tool results for orphan tool_calls (assistant asked, no answer).
+    const patched = [];
+    for (const m of repaired) {
+        patched.push(m);
+        if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
+            for (const tc of m.tool_calls) {
+                if (tc?.id && !resultIds.has(tc.id)) {
+                    patched.push({
+                        role: "tool",
+                        tool_call_id: tc.id,
+                        content: "[Result from earlier conversation — see context summary above]",
+                    });
+                    resultIds.add(tc.id);
+                }
+            }
+        }
+    }
+
+    return patched;
 }
 
 async function applyIntelligentCompression(
@@ -165,12 +240,13 @@ async function applyIntelligentCompression(
         replaceChatHistoryAfterCompression(chatId, recentHistory, summary);
     }
 
-    return buildWithHistory(latestUser, recentHistory, {
+    const rebuilt = buildWithHistory(latestUser, recentHistory, {
         compressedSummary: summary,
         modelMeta,
         visionAttachment,
         runtimeInfo,
     });
+    return repairToolPairIntegrity(rebuilt);
 }
 
 export async function ensureWithinContextLimit(
@@ -193,7 +269,7 @@ export async function ensureWithinContextLimit(
     let tokens = tokenCount(messages, model);
 
     if (tokens <= trigger) {
-        return messages;
+        return { messages, didCompress: false };
     }
 
     messages = buildWithHistory(userMessage, fullHistory, {
@@ -205,15 +281,16 @@ export async function ensureWithinContextLimit(
     tokens = tokenCount(messages, model);
 
     if (tokens <= trigger) {
-        return messages;
+        return { messages, didCompress: false };
     }
 
+    let compressed = null;
     try {
         if (session?.isAborted?.()) {
-            return messages;
+            return { messages, didCompress: false };
         }
         onStatusPhase?.("compressing");
-        const compressed = await applyIntelligentCompression(llm, userMessage, fullHistory, model, modelMeta, visionAttachment, {
+        compressed = await applyIntelligentCompression(llm, userMessage, fullHistory, model, modelMeta, visionAttachment, {
             signal: session?.signal,
             runtimeInfo,
             chatId,
@@ -231,12 +308,15 @@ export async function ensureWithinContextLimit(
     }
 
     if (tokens <= hardLimit) {
-        return messages;
+        return { messages, didCompress: Boolean(compressed) };
     }
 
-    return buildWithHistory(userMessage, [], {
-        truncateMemory: true,
-        maxMemoryChars: 40000,
-        ...buildOpts,
-    });
+    return {
+        messages: buildWithHistory(userMessage, [], {
+            truncateMemory: true,
+            maxMemoryChars: 40000,
+            ...buildOpts,
+        }),
+        didCompress: false,
+    };
 }

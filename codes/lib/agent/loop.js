@@ -4,6 +4,7 @@ import { assistantMessageToPlain } from "../llm/messages.js";
 import { executeTool, getAllToolDefinitions, toolResultContent } from "./tool-registry.js";
 import { extractTurnMessages } from "./chat-history.js";
 import { ensureWithinContextLimit } from "./summarize.js";
+import { clearFileReadCache } from "../tools/file.js";
 import { countMessagesTokens } from "./context.js";
 function parseToolArgs(raw) {
     try {
@@ -63,7 +64,6 @@ function injectPendingUserMessages(messages, session) {
     });
     return true;
 }
-
 function pushToolResult(messages, toolCallId, result) {
     messages.push({
         role: "tool",
@@ -170,6 +170,7 @@ export async function runAgent(userMessage, options = {}) {
 }
 
 async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPhase, visionAttachment = null, session = null } = {}) {
+    clearFileReadCache();
     const llm = await createLlmClient();
     const agentConfig = loadAgentConfig();
     const setStatus = (phase, detail = null) => onStatusPhase?.(phase, detail);
@@ -186,13 +187,14 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
     };
 
     setStatus("generating");
-    let messages = await ensureWithinContextLimit(llm, userMessage, llm.modelMeta, {
+    const contextResult = await ensureWithinContextLimit(llm, userMessage, llm.modelMeta, {
         chatId,
         onStatusPhase: setStatus,
         visionAttachment,
         session,
         runtimeInfo,
     });
+    let messages = contextResult.messages;
 
     if (shouldStop(session)) {
         return finishStoppedTurn(llm, messages, messages.length, 0, modelCallCountRef, { partialText: null });

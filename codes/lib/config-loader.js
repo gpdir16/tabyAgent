@@ -33,9 +33,10 @@ function readJson(filePath, fallback = null) {
 export function loadAgentConfig() {
     return readJson(path.join(CONFIG_DIR, "agent.json"), {
         maxToolRounds: 300,
-        maxToolRoundsPerTurn: 16,
-        maxToolCallsPerTurn: 20,
-        maxSameToolRepeat: 2,
+        maxToolRoundsPerTurn: 300,
+        maxToolCallsPerTurn: 300,
+        maxSameToolRepeat: 8,
+        maxEmptyReplyRetries: 8,
         contextCompressTriggerPercent: 75,
         contextKeepRecentPercent: 20,
         contextThresholdPercent: 90,
