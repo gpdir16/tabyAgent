@@ -58,6 +58,7 @@ export function loadUserConfig() {
         thinkingLevel: "high",
         showReplyFooter: true,
         updateCheckEnabled: true,
+        nsfwLevel: "moderate",
     });
 }
 

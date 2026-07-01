@@ -16,6 +16,10 @@ import {
     seedWizardDataFromConfig,
     thinkingLevelLabel,
     getProviderThinkingMeta,
+    getNsfwLevel,
+    normalizeNsfwLevel,
+    nsfwLevelLabel,
+    NSFW_LEVELS,
 } from "./user-settings.js";
 
 const STATE_PATH = path.join(USER_DIR, "temp", "onboarding.json");
@@ -132,6 +136,9 @@ async function applyConfig(partial) {
     if (partial.showReplyFooter !== undefined) {
         config.showReplyFooter = Boolean(partial.showReplyFooter);
     }
+    if (partial.nsfwLevel !== undefined) {
+        config.nsfwLevel = normalizeNsfwLevel(partial.nsfwLevel);
+    }
     if (partial.updateCheckEnabled !== undefined) {
         config.updateCheckEnabled = Boolean(partial.updateCheckEnabled);
     }
@@ -167,6 +174,11 @@ function texts(lang) {
             catApiKey: "API key",
             catFooter: "Reply stats footer",
             catUpdate: "Update notifications",
+            catNsfw: "NSFW content limit",
+            nsfwPick: "Choose the NSFW content level to allow:",
+            nsfwStrict: "Not allowed",
+            nsfwModerate: "Indirect mentions only",
+            nsfwExplicit: "Fully allowed",
             thinkingPick: "Pick a level returned by /models for this model:",
             thinkingManual: "Send the exact thinking/reasoning value your API expects:",
             footerPick: "Show token/tool stats under each reply:",
@@ -201,6 +213,11 @@ function texts(lang) {
             catApiKey: "API 키",
             catFooter: "답변 통계 푸터",
             catUpdate: "업데이트 알림",
+            catNsfw: "NSFW 컨텐츠 제한",
+            nsfwPick: "허용할 NSFW 컨텐츠 수준을 선택하세요:",
+            nsfwStrict: "허용하지 않음",
+            nsfwModerate: "간접 언급만 허용",
+            nsfwExplicit: "전체 허용",
             thinkingManual: "API가 받는 사고/추론 값을 그대로 입력:",
             footerPick: "답변 아래 토큰/툴 통계 표시:",
             updatePick: "새 버전 확인 후 알림:",
@@ -234,6 +251,11 @@ function texts(lang) {
             catApiKey: "API キー",
             catFooter: "返信統計フッター",
             catUpdate: "更新通知",
+            catNsfw: "NSFWコンテンツ制限",
+            nsfwPick: "許可するNSFWコンテンツレベルを選んでください:",
+            nsfwStrict: "許可しない",
+            nsfwModerate: "間接言及のみ許可",
+            nsfwExplicit: "全面許可",
             thinkingPick: "このモデルの /models が返した思考レベル:",
             thinkingManual: "API が受け付ける思考/推論の値をそのまま送信:",
             footerPick: "返信下にトークン/ツール統計を表示:",
@@ -271,6 +293,7 @@ function menuKeyboard(state) {
     kb.text(`${msg.catProvider}: ${PROVIDERS[state.data.providerKey]?.label || cfg.provider?.id || "—"}`, "cfg:cat:provider").row();
     kb.text(`${msg.catFooter}: ${onOffLabel(lang, state.data.showReplyFooter !== false)}`, "cfg:cat:footer").row();
     kb.text(`${msg.catUpdate}: ${onOffLabel(lang, state.data.updateCheckEnabled !== false)}`, "cfg:cat:update").row();
+    kb.text(`${msg.catNsfw}: ${nsfwLevelLabel(lang, getNsfwLevel(cfg))}`, "cfg:cat:nsfw").row();
     kb.text(msg.done, "cfg:done");
     return kb;
 }
@@ -306,6 +329,17 @@ function updateToggleKeyboard(state) {
     const kb = new InlineKeyboard();
     kb.text(`${current ? "✓ " : ""}${msg.toggleOn}`, "cfg:toggle:update:on").row();
     kb.text(`${!current ? "✓ " : ""}${msg.toggleOff}`, "cfg:toggle:update:off").row();
+    kb.text(msg.backMenu, "cfg:menu");
+    return kb;
+}
+function nsfwKeyboard(state) {
+    const lang = uiLang(state);
+    const msg = texts(lang);
+    const cur = normalizeNsfwLevel(state.data.nsfwLevel);
+    const kb = new InlineKeyboard();
+    kb.text(`${cur === "strict" ? "✓ " : ""}${msg.nsfwStrict}`, "cfg:nsfw:strict").row();
+    kb.text(`${cur === "moderate" ? "✓ " : ""}${msg.nsfwModerate}`, "cfg:nsfw:moderate").row();
+    kb.text(`${cur === "explicit" ? "✓ " : ""}${msg.nsfwExplicit}`, "cfg:nsfw:explicit").row();
     kb.text(msg.backMenu, "cfg:menu");
     return kb;
 }
@@ -724,6 +758,14 @@ export async function handleConfigWizardCallback(ctx, bot) {
         await replaceStep(bot, chatId, state, texts(uiLang(state)).updatePick, updateToggleKeyboard(state));
         return;
     }
+    if (data === "cfg:cat:nsfw") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.step = "nsfw_pick";
+        saveState(state);
+        await replaceStep(bot, chatId, state, texts(uiLang(state)).nsfwPick, nsfwKeyboard(state));
+        return;
+    }
 
     if (data.startsWith("cfg:think:")) {
         const level = data.slice("cfg:think:".length).toLowerCase();
@@ -761,6 +803,20 @@ export async function handleConfigWizardCallback(ctx, bot) {
         await applyConfig({ updateCheckEnabled: on });
         saveState(state);
         restartUpdateScheduler(bot);
+        await returnToMenu(bot, chatId, state);
+        return;
+    }
+    if (data.startsWith("cfg:nsfw:")) {
+        const level = data.slice("cfg:nsfw:".length);
+        if (!NSFW_LEVELS.includes(level)) {
+            await ctx.answerCallbackQuery();
+            return;
+        }
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.data.nsfwLevel = level;
+        await applyConfig({ nsfwLevel: level });
+        saveState(state);
         await returnToMenu(bot, chatId, state);
         return;
     }
