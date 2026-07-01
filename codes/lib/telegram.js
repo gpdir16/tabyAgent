@@ -227,7 +227,7 @@ async function registerBotCommands(bot) {
     const commandsByLang = {
         en: [
             { command: "start", description: "Begin / show help" },
-            { command: "new", description: "Start a new chat (saves memory first)" },
+            { command: "new", description: "Start a new chat (self-improves in background)" },
             { command: "stop", description: "Stop the running task" },
             { command: "reload", description: "Reload MCP servers" },
             { command: "config", description: "Open settings" },
@@ -236,7 +236,7 @@ async function registerBotCommands(bot) {
         ],
         ko: [
             { command: "start", description: "시작 / 도움말" },
-            { command: "new", description: "새 대화 시작 (먼저 기억 저장)" },
+            { command: "new", description: "새 대화 시작 (백그라운드 자기개선)" },
             { command: "stop", description: "진행 중인 작업 중지" },
             { command: "reload", description: "MCP 서버 다시 불러오기" },
             { command: "config", description: "설정 열기" },
@@ -245,7 +245,7 @@ async function registerBotCommands(bot) {
         ],
         ja: [
             { command: "start", description: "開始 / ヘルプ" },
-            { command: "new", description: "新しい会話を開始 (先に記憶を保存)" },
+            { command: "new", description: "新しい会話を開始 (バックグラウンド自己改善)" },
             { command: "stop", description: "実行中の作業を停止" },
             { command: "reload", description: "MCP サーバを再読み込み" },
             { command: "config", description: "設定を開く" },
@@ -269,7 +269,7 @@ function helpMessage(lang) {
             "# tabyAgent 도움말",
             "",
             "## 명령어",
-            "- `/new` — 새 대화 시작 (이전 대화 요약을 memory.md에 저장)",
+            "- `/new` — 새 대화 시작 (백그라운드에서 이전 대화 자기개선)",
             "- `/stop` — 진행 중인 작업 중지",
             "- `/reload` — MCP 서버 다시 불러오기",
             "- `/config` — 설정 (언어, 모델, 사고 수준, 푸터, 업데이트 등)",
@@ -289,7 +289,7 @@ function helpMessage(lang) {
             "# tabyAgent ヘルプ",
             "",
             "## コマンド",
-            "- `/new` — 新しい会話を開始 (以前の会話の要約を memory.md に保存)",
+            "- `/new` — 新しい会話を開始 (バックグラウンドで前の会話を自己改善)",
             "- `/stop` — 実行中の作業を停止",
             "- `/reload` — MCP サーバを再読み込み",
             "- `/config` — 設定 (言語, モデル, 思考レベル, フッター, 更新確認 等)",
@@ -308,7 +308,7 @@ function helpMessage(lang) {
         "# tabyAgent help",
         "",
         "## Commands",
-        "- `/new` — Start a new chat (saves a summary of the previous one to memory.md)",
+        "- `/new` — Start a new chat (self-improves on the previous one in the background)",
         "- `/stop` — Stop the running task",
         "- `/reload` — Reload MCP servers",
         "- `/config` — Settings (change language, model, thinking level, footer, updates, etc.)",

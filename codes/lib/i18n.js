@@ -99,11 +99,6 @@ const MESSAGES = {
         ko: "새 대화를 시작했습니다.",
         ja: "新しい会話を開始しました。",
     },
-    new_chat_ok_flushed: {
-        en: "Started a new chat. Long-term memory was updated.",
-        ko: "새 대화를 시작했습니다. 장기 기억을 갱신했습니다.",
-        ja: "新しい会話を開始しました。長期記憶を更新しました。",
-    },
     start_ready: {
         en: "Ready. Send a message.\nSettings: /config · New chat: /new · Stop: /stop · Reload MCP: /reload",
         ko: "준비됐어요. 메시지를 보내세요.\n설정: /config · 새 대화: /new · 중지: /stop · MCP 다시 불러오기: /reload",
@@ -123,11 +118,6 @@ const MESSAGES = {
         en: "Stopped.",
         ko: "중지했습니다.",
         ja: "停止しました。",
-    },
-    new_chat_memory_error: {
-        en: "Failed to update long-term memory. But a new chat has started successfully.",
-        ko: "장기 기억 업데이트를 실패했습니다. 하지만 새 대화는 성공적으로 시작했습니다.",
-        ja: "長期記憶の更新に失敗しました。ただし、新しい会話は正常に開始しました。",
     },
     cron_auto_header: {
         en: "ℹ️ Automatically executed scheduled task",

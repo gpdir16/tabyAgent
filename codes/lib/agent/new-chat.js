@@ -1,8 +1,6 @@
 import { loadUserConfig } from "../config-loader.js";
 import { runAgent } from "./loop.js";
-import { clearChatHistory } from "./chat-history.js";
-import { TelegramStatusMessage } from "../telegram-status.js";
-import { sendChatActionSafe } from "../telegram-api.js";
+import { clearChatHistory, loadChatHistory, loadCompressedSummary } from "./chat-history.js";
 import { t } from "../i18n.js";
 import { memoryFilePath } from "../path-labels.js";
 
@@ -10,7 +8,7 @@ export function memoryFlushPrompt(lang) {
     const memoryPath = memoryFilePath();
     const prompts = {
         ko: `[시스템 · /new]
-사용자가 새 대화를 시작했습니다. 곧 **활성** 스레드만 새 세션 파일로 바뀝니다. 이전 세션 JSON은 \`user/temp/chat-…/sessions/\`에 **보관**됩니다.
+사용자가 새 대화를 시작했습니다. 이전 **활성** 스레드는 이미 새 세션 파일로 교체되었고, 이전 세션 JSON은 \`user/temp/chat-…/sessions/\`에 **보관**되었습니다.
 
 **1. memory.md 갱신**
 \`file_read\`로 memory.md를 먼저 확인한 뒤 \`file_patch\`로 추가·갱신하세요.
@@ -29,7 +27,7 @@ export function memoryFlushPrompt(lang) {
 
 **중요:** 사용자가 자기개선을 요청한 것이 아닙니다. 최종 응답에서 "메모리를 업데이트했습니다", "스킬을 만들었습니다" 등의 언급을 **하지 마세요**. 완료하면 오직 \`__SILENT__\` 만 답하세요.`,
         en: `[System · /new]
-The user is starting a new chat. The **active** thread will move to a new session file shortly. Older session JSON files remain **archived** under \`user/temp/chat-…/sessions/\`.
+The user started a new chat. The previous **active** thread has already been rotated to a new session file; older session JSON remains **archived** under \`user/temp/chat-…/sessions/\`.
 
 Review this conversation and perform self-improvement. Two things:
 
@@ -50,7 +48,7 @@ Do **not** create a skill when none of these apply. One-off questions, greetings
 
 **Important:** The user did not ask you to self-improve. Do **not** mention "I updated memory", "I created a skill", or similar in any final reply. When done, reply with ONLY: \`__SILENT__\``,
         ja: `[システム · /new]
-ユーザーが新しい会話を始めます。**アクティブ**スレッドだけが新しいセッションファイルに移ります。以前のセッション JSON は \`user/temp/chat-…/sessions/\` に**保管**されます。
+ユーザーが新しい会話を始めました。以前の**アクティブ**スレッドはすでに新しいセッションファイルに切り替わり、以前のセッション JSON は \`user/temp/chat-…/sessions/\` に**保管**されています。
 
 この会話を振り返り、自己改善を行ってください。二つのこと:
 
@@ -76,40 +74,10 @@ Do **not** create a skill when none of these apply. One-off questions, greetings
 
 export async function handleNewChat(bot, chatId) {
     const lang = loadUserConfig().language || "en";
-    let memoryFlushed = false;
-    let memoryFlushFailed = false;
 
-    // Always run self-improvement, regardless of turn count.
-    const status = new TelegramStatusMessage(bot, chatId, lang);
-    try {
-        await status.start();
-        await sendChatActionSafe(bot, chatId, "typing");
-        status.setPhase("self_improving");
-
-        const result = await runAgent(memoryFlushPrompt(lang), {
-            chatId,
-            bot,
-            onStatusPhase: (phase, detail) => {
-                // Keep "self_improving" as the top-level phase label; only surface sub-phases.
-                if (phase === "tools") status.setPhase("self_improving", detail);
-                else status.setPhase("self_improving", null);
-            },
-        });
-
-        if (result?.error === "agent_error" || result?.error === "tool_rounds_exceeded") {
-            memoryFlushFailed = true;
-            await status.completeError(t("new_chat_memory_error", lang));
-        } else {
-            await status.completeSuccess();
-            memoryFlushed = true;
-        }
-    } catch (err) {
-        console.error("New chat self-improvement error:", err?.stack || err);
-        await status.completeError(t("new_chat_memory_error", lang));
-        memoryFlushFailed = true;
-    } finally {
-        status.dispose();
-    }
+    // Snapshot the conversation BEFORE clearing, then rotate to a fresh session immediately.
+    const priorHistory = loadChatHistory(chatId);
+    const priorSummary = loadCompressedSummary(chatId);
 
     try {
         clearChatHistory(chatId);
@@ -117,7 +85,31 @@ export async function handleNewChat(bot, chatId) {
         console.error("Clear chat history failed:", err?.stack || err);
     }
 
-    if (memoryFlushFailed) return t("new_chat_memory_error", lang);
-    if (memoryFlushed) return t("new_chat_ok_flushed", lang);
+    // Detached self-improvement: runs in the background, never blocks the user.
+    // Uses the snapshot so it works on the archived conversation regardless of
+    // what the user does in the new session. No chatId passed to runAgent —
+    // tools stay read-only on disk history; no session/abort, silent and unstoppable.
+    void runSelfImprovement(bot, lang, priorHistory, priorSummary).catch((err) => {
+        console.error("Background self-improvement failed:", err?.stack || err);
+    });
+
     return t("new_chat_ok", lang);
+}
+
+async function runSelfImprovement(bot, lang, history, compressedSummary) {
+    // Skip when there was nothing to review.
+    if (!history?.length && !compressedSummary?.trim()) return;
+
+    try {
+        const result = await runAgent(memoryFlushPrompt(lang), {
+            bot,
+            history,
+            compressedSummary,
+        });
+        if (result?.error && result.error !== "stopped_by_user") {
+            console.error("Self-improvement ended with:", result.error, result.errorDetail || "");
+        }
+    } catch (err) {
+        console.error("Self-improvement error:", err?.stack || err);
+    }
 }

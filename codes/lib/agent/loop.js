@@ -169,7 +169,10 @@ export async function runAgent(userMessage, options = {}) {
     }
 }
 
-async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPhase, visionAttachment = null, session = null } = {}) {
+async function runAgentTurn(
+    userMessage,
+    { chatId, bot, onTextDelta, onStatusPhase, visionAttachment = null, session = null, history = null, compressedSummary = null } = {},
+) {
     clearFileReadCache();
     const llm = await createLlmClient();
     const agentConfig = loadAgentConfig();
@@ -193,6 +196,8 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
         visionAttachment,
         session,
         runtimeInfo,
+        history,
+        compressedSummary,
     });
     let messages = contextResult.messages;
 

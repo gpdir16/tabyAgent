@@ -253,10 +253,10 @@ export async function ensureWithinContextLimit(
     llm,
     userMessage,
     modelMeta,
-    { chatId, onStatusPhase, visionAttachment = null, session = null, runtimeInfo = {} } = {},
+    { chatId, onStatusPhase, visionAttachment = null, session = null, runtimeInfo = {}, history = null, compressedSummary = null } = {},
 ) {
-    const fullHistory = chatId ? loadChatHistory(chatId) : [];
-    const existingSummary = chatId ? loadCompressedSummary(chatId) : null;
+    const fullHistory = history ?? (chatId ? loadChatHistory(chatId) : []);
+    const existingSummary = compressedSummary ?? (chatId ? loadCompressedSummary(chatId) : null);
     const model = llm.provider.model;
     const trigger = getCompressTriggerTokens(modelMeta);
     const hardLimit = getContextLimit(modelMeta);
