@@ -201,7 +201,6 @@ function texts(lang) {
             catApiKey: "API 키",
             catFooter: "답변 통계 푸터",
             catUpdate: "업데이트 알림",
-            thinkingPick: "이 모델의 /models에 나온 사고 수준:",
             thinkingManual: "API가 받는 사고/추론 값을 그대로 입력:",
             footerPick: "답변 아래 토큰/툴 통계 표시:",
             updatePick: "새 버전 확인 후 알림:",
