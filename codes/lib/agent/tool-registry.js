@@ -4,6 +4,7 @@ import { skillsToolDefinitions, executeSkillsTool } from "../tools/skills.js";
 import { terminalToolDefinitions, executeTerminalTool } from "../tools/terminal.js";
 import { cronToolDefinitions, executeCronTool } from "../tools/cron-tool.js";
 import { sendFileToolDefinitions, executeSendFileTool } from "../tools/send-file-tool.js";
+import { vizToolDefinitions, executeVizTool } from "../tools/visualization.js";
 import { getMcpToolDefinitions, executeMcpTool } from "../tools/mcp.js";
 import { connectMcpServers, disconnectMcpServers } from "../mcp/servers.js";
 import { stopCronScheduler } from "../cron/scheduler.js";
@@ -28,6 +29,7 @@ export function getAllToolDefinitions() {
         ...cronToolDefinitions,
         ...terminalToolDefinitions,
         ...sendFileToolDefinitions,
+        ...vizToolDefinitions,
         ...getMcpToolDefinitions(),
     ];
 }
@@ -41,6 +43,7 @@ export async function executeTool(name, args, ctx = {}) {
         if (name.startsWith("cron_")) return await executeCronTool(name, args);
         if (name === "terminal_run") return await executeTerminalTool(name, args, ctx);
         if (name === "telegram_send_file") return await executeSendFileTool(name, args, ctx);
+        if (name === "viz_create") return await executeVizTool(name, args);
         if (name === "mcp_reload" || name.startsWith("mcp__")) return await executeMcpTool(name, args);
         return { error: `Unknown tool: ${name}` };
     } catch (err) {

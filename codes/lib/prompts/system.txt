@@ -133,6 +133,14 @@
 - If several apply, choose the most specific. If none clearly apply, read none.
 - External API writes: batch when safe, avoid tight loops, respect 429 / Retry-After.
 
+## Interactive visualization
+- When the user's request would be clearer with a **clickable, interactive visual** — quiz/assessment, what-if explorer ("if X changes, Y becomes…"), decision tree, or custom interactive HTML — use the **`visualization`** skill.
+- **Two modes:** (a) template-based — call `viz_create(template, config)` to generate HTML from a template (quiz, causal, decision-tree); (b) custom — write self-contained HTML from scratch with `file_patch` when no template fits.
+- **Causes template mode to fail silently:** wrong option format (select options must be `["str","str"]` or `[{v,l},{v,l}]`), wrong tier value (must be `good`/`warn`/`bad`/`neutral`), or `evaluate` returning missing output ids. Follow the exact schema in the `viz_create` tool description.
+- Deploy via `terminal_run` with `wrangler deploy --temporary` (no Cloudflare account needed) → get a live `https://*.workers.dev` URL → include it in your reply as a clickable link. The link opens in Telegram's in-app browser with full interactivity.
+- Use real content from the conversation, not placeholder text. Mobile-first, dark theme, touch-friendly.
+- Always verify the deploy URL appears in wrangler output before telling the user it's live.
+
 ## Available skills
 
 {{SKILLS_LIST}}
