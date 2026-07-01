@@ -84,6 +84,11 @@ const MESSAGES = {
         ko: "컨텍스트 압축 중",
         ja: "コンテキストを圧縮中",
     },
+    status_self_improving: {
+        en: "Finding ways to improve",
+        ko: "개선할 방법을 찾는 중",
+        ja: "改善方法を探している",
+    },
     status_error: {
         en: "Error",
         ko: "오류",

@@ -1,82 +1,114 @@
 import { loadUserConfig } from "../config-loader.js";
 import { runAgent } from "./loop.js";
-import { clearChatHistory, loadChatHistory } from "./chat-history.js";
+import { clearChatHistory } from "./chat-history.js";
 import { TelegramStatusMessage } from "../telegram-status.js";
 import { sendChatActionSafe } from "../telegram-api.js";
 import { t } from "../i18n.js";
 import { memoryFilePath } from "../path-labels.js";
 
-export const MIN_TURNS_FOR_MEMORY_FLUSH = 5;
-
-function memoryFlushPrompt(lang) {
+export function memoryFlushPrompt(lang) {
     const memoryPath = memoryFilePath();
     const prompts = {
         ko: `[시스템 · /new]
 사용자가 새 대화를 시작했습니다. 곧 **활성** 스레드만 새 세션 파일로 바뀝니다. 이전 세션 JSON은 \`user/temp/chat-…/sessions/\`에 **보관**됩니다.
 
-위 대화에서 **다음 세션에도 꼭 필요한 사실만** \`${memoryPath}\`에 저장하세요.
-- 먼저 \`file_read\`로 memory.md를 확인한 뒤 \`file_patch\`로 추가·갱신하세요.
+**1. memory.md 갱신**
+\`file_read\`로 memory.md를 먼저 확인한 뒤 \`file_patch\`로 추가·갱신하세요.
 - 이미 memory.md에 있는 내용은 중복하지 마세요.
 - 일시적인 잡담, 추측, 중복, 불필요한 세부사항은 **넣지 마세요**.
 - 사용자 선호, 진행 중인 작업, 중요 결정 등 장기적으로 유용한 것만 간결히 남기세요.
 
-저장이 끝나면 한 문장으로 "완료"만 답하세요.`,
+**2. 스킬 생성 (해당할 때만)**
+아래 조건 중 하나 이상이면 \`skill-author\` 스킬(\`skills_read skill-author\`)을 읽고, \`user/skills/<slug>/SKILL.md\`에 스킬을 만드세요:
+- 도구 호출 5회 이상이 사용된 비자발적 워크플로
+- 오류에서 회복한 경로 (실패 후 해결책을 찾음)
+- 사용자가 정정한 지식 (다음에 같은 실수를 반복하지 않도록)
+- 반복될 가능성이 높은 비자명적 다단계 작업
+
+스킬을 만들 **필요가 없으면** 만들지 마세요. 일회성 질문, 인사, 단일 명령 작업은 스킬 대상이 아닙니다.
+
+**중요:** 사용자가 자기개선을 요청한 것이 아닙니다. 최종 응답에서 "메모리를 업데이트했습니다", "스킬을 만들었습니다" 등의 언급을 **하지 마세요**. 완료하면 오직 \`__SILENT__\` 만 답하세요.`,
         en: `[System · /new]
 The user is starting a new chat. The **active** thread will move to a new session file shortly. Older session JSON files remain **archived** under \`user/temp/chat-…/sessions/\`.
 
-From the conversation above, persist **only facts worth keeping across sessions** to \`${memoryPath}\`.
-- Read memory.md with \`file_read\` first, then add or update with \`file_patch\`.
+Review this conversation and perform self-improvement. Two things:
+
+**1. Update memory.md**
+Read memory.md with \`file_read\` first, then add or update with \`file_patch\`.
 - Do not duplicate what is already in memory.md.
 - Do **not** add transient chit-chat, guesses, duplicates, or unnecessary detail.
 - Keep only durable items: preferences, ongoing work, important decisions — briefly.
 
-When done, reply with one short sentence: "Done."`,
+**2. Create a skill (only when warranted)**
+If any of the following apply, read the \`skill-author\` skill (\`skills_read skill-author\`) and create a skill at \`user/skills/<slug>/SKILL.md\`:
+- An involuntary workflow with 5+ tool calls
+- Recovery from an error (found a solution after a failure)
+- Knowledge corrected by the user (to avoid repeating the same mistake)
+- A non-trivial multi-step task likely to recur
+
+Do **not** create a skill when none of these apply. One-off questions, greetings, single-command tasks are not skill candidates.
+
+**Important:** The user did not ask you to self-improve. Do **not** mention "I updated memory", "I created a skill", or similar in any final reply. When done, reply with ONLY: \`__SILENT__\``,
         ja: `[システム · /new]
 ユーザーが新しい会話を始めます。**アクティブ**スレッドだけが新しいセッションファイルに移ります。以前のセッション JSON は \`user/temp/chat-…/sessions/\` に**保管**されます。
 
-上記の会話から、**次のセッションにも必要な事実だけ** \`${memoryPath}\` に保存してください。
-- まず \`file_read\` で memory.md を確認し、\`file_patch\` で追加・更新してください。
+この会話を振り返り、自己改善を行ってください。二つのこと:
+
+**1. memory.md の更新**
+まず \`file_read\` で memory.md を確認し、\`file_patch\` で追加・更新してください。
 - memory.md に既にある内容は重複させないでください。
 - 一時的な雑談、推測、重複、不要な詳細は **入れないでください**。
 - 好み、進行中の作業、重要な決定など、長期的に有用なものだけを簡潔に残してください。
 
-完了したら「完了」の一文だけ返答してください。`,
+**2. スキル作成 (該当する場合のみ)**
+以下のいずれかが当てはまる場合、\`skill-author\` スキル(\`skills_read skill-author\`)を読み、\`user/skills/<slug>/SKILL.md\` にスキルを作成してください:
+- ツール呼び出し5回以上の非自発的ワークフロー
+- エラーからの回復 (失敗後に解決策を発見)
+- ユーザーが訂正した知識 (同じミスを繰り返さないため)
+- 繰り返される可能性の高い非自明な多段階タスク
+
+該当しない場合はスキルを作成しないでください。一回限りの質問、挨拶、単一コマンドのタスクはスキル対象ではありません。
+
+**重要:** ユーザーは自己改善を要求していません。最終応答で「メモリを更新しました」「スキルを作成しました」などの言及は**しないでください**。完了したら \`__SILENT__\` のみ返答してください。`,
     };
     return prompts[lang] || prompts.en;
 }
 
 export async function handleNewChat(bot, chatId) {
     const lang = loadUserConfig().language || "en";
-    const turnCount = loadChatHistory(chatId).length;
     let memoryFlushed = false;
     let memoryFlushFailed = false;
 
-    if (turnCount >= MIN_TURNS_FOR_MEMORY_FLUSH) {
-        const status = new TelegramStatusMessage(bot, chatId, lang);
-        try {
-            await status.start();
-            await sendChatActionSafe(bot, chatId, "typing");
+    // Always run self-improvement, regardless of turn count.
+    const status = new TelegramStatusMessage(bot, chatId, lang);
+    try {
+        await status.start();
+        await sendChatActionSafe(bot, chatId, "typing");
+        status.setPhase("self_improving");
 
-            const result = await runAgent(memoryFlushPrompt(lang), {
-                chatId,
-                bot,
-                onStatusPhase: (phase, detail) => status.setPhase(phase, detail),
-            });
+        const result = await runAgent(memoryFlushPrompt(lang), {
+            chatId,
+            bot,
+            onStatusPhase: (phase, detail) => {
+                // Keep "self_improving" as the top-level phase label; only surface sub-phases.
+                if (phase === "tools") status.setPhase("self_improving", detail);
+                else status.setPhase("self_improving", null);
+            },
+        });
 
-            if (result?.error === "agent_error") {
-                memoryFlushFailed = true;
-                await status.completeError(t("new_chat_memory_error", lang));
-            } else {
-                await status.completeSuccess();
-                memoryFlushed = true;
-            }
-        } catch (err) {
-            console.error("New chat memory flush error:", err?.stack || err);
-            await status.completeError(t("new_chat_memory_error", lang));
+        if (result?.error === "agent_error" || result?.error === "tool_rounds_exceeded") {
             memoryFlushFailed = true;
-        } finally {
-            status.dispose();
+            await status.completeError(t("new_chat_memory_error", lang));
+        } else {
+            await status.completeSuccess();
+            memoryFlushed = true;
         }
+    } catch (err) {
+        console.error("New chat self-improvement error:", err?.stack || err);
+        await status.completeError(t("new_chat_memory_error", lang));
+        memoryFlushFailed = true;
+    } finally {
+        status.dispose();
     }
 
     try {
