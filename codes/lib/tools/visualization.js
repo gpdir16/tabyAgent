@@ -46,8 +46,7 @@ function validateQuizConfig(config) {
         const q = config.questions[i];
         if (!q.q || typeof q.q !== "string") return `questions[${i}].q must be a string`;
         if (!Array.isArray(q.options) || q.options.length < 2) return `questions[${i}].options must have >= 2 items`;
-        if (typeof q.answer !== "number" || q.answer < 0 || q.answer >= q.options.length)
-            return `questions[${i}].answer must be a valid index`;
+        if (typeof q.answer !== "number" || q.answer < 0 || q.answer >= q.options.length) return `questions[${i}].answer must be a valid index`;
     }
     return null;
 }

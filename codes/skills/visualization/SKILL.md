@@ -36,11 +36,11 @@ viz_create(template="quiz", config={
 
 Templates available:
 
-| template | use case | config shape |
-|----------|----------|--------------|
-| `quiz` | multiple-choice quiz with scoring | `{title, description, questions:[{q, options[], answer, explain}], passRatio, passText, failText}` |
-| `causal` | sliders/selects → live outputs | `{title, description, inputs:[{id, label, type:"range"\|"select", min, max, step, default, unit, options[]}], outputs:[{id, label}], evaluate:"JS function body as string"}` — select `options` can be `["단리","복리"]` (strings) or `[{v:"a",l:"A"},{v:"b",l:"B"}]` (objects). `tier` in evaluate return must be one of: `"good"`, `"warn"`, `"bad"`, `"neutral"`. |
-| `decision-tree` | branching choices → leaf results | `{title, description, start, nodes:{id:{type:"question"\|"leaf", text, choices:[{label,next}], detail}}}` |
+| template        | use case                          | config shape                                                                                                                                                                                                                                                                                                                                                         |
+| --------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `quiz`          | multiple-choice quiz with scoring | `{title, description, questions:[{q, options[], answer, explain}], passRatio, passText, failText}`                                                                                                                                                                                                                                                                   |
+| `causal`        | sliders/selects → live outputs    | `{title, description, inputs:[{id, label, type:"range"\|"select", min, max, step, default, unit, options[]}], outputs:[{id, label}], evaluate:"JS function body as string"}` — select `options` can be `["단리","복리"]` (strings) or `[{v:"a",l:"A"},{v:"b",l:"B"}]` (objects). `tier` in evaluate return must be one of: `"good"`, `"warn"`, `"bad"`, `"neutral"`. |
+| `decision-tree` | branching choices → leaf results  | `{title, description, start, nodes:{id:{type:"question"\|"leaf", text, choices:[{label,next}], detail}}}`                                                                                                                                                                                                                                                            |
 
 **`causal` evaluate**: the `evaluate` field is a string of JS function body. It receives `s` (state object with input id→value), returns an object keyed by output id → `{value, tier, trace}`. Example:
 
@@ -51,6 +51,7 @@ evaluate: "const r = Math.min(0.95, 0.3 + s.hours * 0.05); return { retention: {
 ### 2. Custom mode
 
 When no template fits, write a complete self-contained HTML file with `file_patch`:
+
 - Inline all CSS in `<style>`, all JS in `<script>`.
 - No external resources (no CDN, no fonts, no images via URL).
 - Dark theme, mobile-first, touch-friendly (Telegram in-app browser).
