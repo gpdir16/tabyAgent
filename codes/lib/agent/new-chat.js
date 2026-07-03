@@ -1,6 +1,6 @@
 import { loadUserConfig } from "../config-loader.js";
 import { runAgent } from "./loop.js";
-import { clearChatHistory, loadChatHistory, loadCompressedSummary } from "./chat-history.js";
+import { clearChatHistory, loadChatHistory } from "./chat-history.js";
 import { t } from "../i18n.js";
 import { memoryFilePath } from "../path-labels.js";
 
@@ -77,7 +77,6 @@ export async function handleNewChat(bot, chatId) {
 
     // Snapshot the conversation BEFORE clearing, then rotate to a fresh session immediately.
     const priorHistory = loadChatHistory(chatId);
-    const priorSummary = loadCompressedSummary(chatId);
 
     try {
         clearChatHistory(chatId);
@@ -89,22 +88,21 @@ export async function handleNewChat(bot, chatId) {
     // Uses the snapshot so it works on the archived conversation regardless of
     // what the user does in the new session. No chatId passed to runAgent —
     // tools stay read-only on disk history; no session/abort, silent and unstoppable.
-    void runSelfImprovement(bot, lang, priorHistory, priorSummary).catch((err) => {
+    void runSelfImprovement(bot, lang, priorHistory).catch((err) => {
         console.error("Background self-improvement failed:", err?.stack || err);
     });
 
     return t("new_chat_ok", lang);
 }
 
-async function runSelfImprovement(bot, lang, history, compressedSummary) {
+async function runSelfImprovement(bot, lang, history) {
     // Skip when there was nothing to review.
-    if (!history?.length && !compressedSummary?.trim()) return;
+    if (!history?.length) return;
 
     try {
         const result = await runAgent(memoryFlushPrompt(lang), {
             bot,
             history,
-            compressedSummary,
         });
         if (result?.error && result.error !== "stopped_by_user") {
             console.error("Self-improvement ended with:", result.error, result.errorDetail || "");

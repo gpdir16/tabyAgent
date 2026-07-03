@@ -169,10 +169,7 @@ export async function runAgent(userMessage, options = {}) {
     }
 }
 
-async function runAgentTurn(
-    userMessage,
-    { chatId, bot, onTextDelta, onStatusPhase, visionAttachment = null, session = null, history = null, compressedSummary = null } = {},
-) {
+async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPhase, visionAttachment = null, session = null, history = null } = {}) {
     clearFileReadCache();
     const llm = await createLlmClient();
     const agentConfig = loadAgentConfig();
@@ -197,15 +194,14 @@ async function runAgentTurn(
         session,
         runtimeInfo,
         history,
-        compressedSummary,
     });
     let messages = contextResult.messages;
 
     if (shouldStop(session)) {
-        return finishStoppedTurn(llm, messages, messages.length, 0, modelCallCountRef, { partialText: null });
+        return finishStoppedTurn(llm, messages, messages.length - 1, 0, modelCallCountRef, { partialText: null });
     }
     const tools = getAllToolDefinitions();
-    const contextBaseLength = messages.length;
+    const contextBaseLength = messages.length - 1; // user message is last in messages; -1 keeps it in extractTurnMessages
 
     let toolCallCount = 0;
     const toolSigCounts = new Map();

@@ -6,7 +6,7 @@ import {
     getContextLimit,
     getKeepRecentTokenBudget,
 } from "./context.js";
-import { loadChatHistory, loadCompressedSummary, replaceChatHistoryAfterCompression, turnToMessages } from "./chat-history.js";
+import { loadChatHistory, replaceChatHistoryAfterCompression, turnToMessages } from "./chat-history.js";
 
 const COMPRESS_SYSTEM = `You compress chat transcripts for long-term context storage.
 
@@ -73,6 +73,7 @@ function trimToolOutput(text) {
 }
 
 function messageToTranscriptLine(message) {
+    if (message.role === "system") return `System: ${contentToText(message.content)}`;
     if (message.role === "user") return `User: ${contentToText(message.content)}`;
     if (message.role === "assistant") {
         const parts = [`Assistant: ${contentToText(message.content)}`];
@@ -127,14 +128,27 @@ function splitHistoryForCompression(turns, userMessage, model, recentBudget) {
 
 function oldItemsToTranscript(oldItems) {
     const lines = [];
+    let summaryPrefix = "";
     for (const item of oldItems) {
         if (item.kind === "user") {
             lines.push(`User: ${item.text}`);
         } else {
-            lines.push(turnToTranscript(item.turn));
+            // Extract system-message summary turns so they appear above the --- separator
+            // in the transcript, telling the compression model to preserve their facts.
+            const msgs = turnToMessages(item.turn);
+            const summaryMsg = msgs.find((m) => m?.role === "system" && typeof m?.content === "string" && m.content.includes("compressed summary"));
+            if (summaryMsg) {
+                summaryPrefix = summaryPrefix ? `${summaryPrefix}\n\n${summaryMsg.content}` : summaryMsg.content;
+                const remaining = msgs.filter((m) => m !== summaryMsg);
+                if (remaining.length) lines.push(remaining.map(messageToTranscriptLine).filter(Boolean).join("\n\n"));
+            } else {
+                lines.push(turnToTranscript(item.turn));
+            }
         }
     }
-    return lines.join("\n\n");
+    const transcript = lines.join("\n\n");
+    if (!summaryPrefix) return transcript;
+    return `## Earlier conversation (compressed summary)\n\n${summaryPrefix}\n\n---\n\n${transcript}`;
 }
 
 function recentItemsToHistory(recentItems) {
@@ -216,7 +230,7 @@ async function applyIntelligentCompression(
     model,
     modelMeta,
     visionAttachment = null,
-    { signal, runtimeInfo = {}, chatId = null, existingSummary = null } = {},
+    { signal, runtimeInfo = {}, chatId = null } = {},
 ) {
     const recentBudget = getKeepRecentTokenBudget(modelMeta);
     const { oldItems, recentItems } = splitHistoryForCompression(fullHistory, userMessage, model, recentBudget);
@@ -225,10 +239,7 @@ async function applyIntelligentCompression(
         return null;
     }
 
-    let transcript = oldItemsToTranscript(oldItems);
-    if (existingSummary?.trim()) {
-        transcript = `## Earlier conversation (compressed)\n\n${existingSummary.trim()}\n\n---\n\n${transcript}`;
-    }
+    const transcript = oldItemsToTranscript(oldItems);
 
     console.log(`tabyAgent: compressing context (${oldItems.length} older block(s), keeping ~${recentBudget} recent tokens verbatim)`);
 
@@ -241,7 +252,6 @@ async function applyIntelligentCompression(
     }
 
     const rebuilt = buildWithHistory(latestUser, recentHistory, {
-        compressedSummary: summary,
         modelMeta,
         visionAttachment,
         runtimeInfo,
@@ -253,19 +263,15 @@ export async function ensureWithinContextLimit(
     llm,
     userMessage,
     modelMeta,
-    { chatId, onStatusPhase, visionAttachment = null, session = null, runtimeInfo = {}, history = null, compressedSummary = null } = {},
+    { chatId, onStatusPhase, visionAttachment = null, session = null, runtimeInfo = {}, history = null } = {},
 ) {
     const fullHistory = history ?? (chatId ? loadChatHistory(chatId) : []);
-    const existingSummary = compressedSummary ?? (chatId ? loadCompressedSummary(chatId) : null);
     const model = llm.provider.model;
     const trigger = getCompressTriggerTokens(modelMeta);
     const hardLimit = getContextLimit(modelMeta);
 
     const buildOpts = { visionAttachment, modelMeta, runtimeInfo };
-    let messages = buildWithHistory(userMessage, fullHistory, {
-        ...buildOpts,
-        compressedSummary: existingSummary,
-    });
+    let messages = buildWithHistory(userMessage, fullHistory, buildOpts);
     let tokens = tokenCount(messages, model);
 
     if (tokens <= trigger) {
@@ -276,7 +282,6 @@ export async function ensureWithinContextLimit(
         truncateMemory: true,
         maxMemoryChars: 60000,
         ...buildOpts,
-        compressedSummary: existingSummary,
     });
     tokens = tokenCount(messages, model);
 
@@ -294,7 +299,6 @@ export async function ensureWithinContextLimit(
             signal: session?.signal,
             runtimeInfo,
             chatId,
-            existingSummary,
         });
         if (compressed) {
             messages = compressed;

@@ -85,27 +85,12 @@ export function buildSystemMessageContent(lang, { truncateMemory = false, maxMem
 
 export function buildInitialMessages(
     userMessage,
-    {
-        truncateMemory = false,
-        maxMemoryChars = 120000,
-        history = [],
-        compressedSummary = null,
-        visionAttachment = null,
-        modelMeta = null,
-        runtimeInfo = {},
-    } = {},
+    { truncateMemory = false, maxMemoryChars = 120000, history = [], visionAttachment = null, modelMeta = null, runtimeInfo = {} } = {},
 ) {
     const lang = loadUserConfig().language || "en";
     const systemContent = buildSystemMessageContent(lang, { truncateMemory, maxMemoryChars, runtimeInfo });
 
     const messages = [{ role: "system", content: systemContent }];
-
-    if (compressedSummary?.trim()) {
-        messages.push({
-            role: "user",
-            content: `## Earlier conversation (compressed)\n\n${compressedSummary.trim()}`,
-        });
-    }
 
     for (const turn of history) {
         for (const message of turnToMessages(turn)) {
