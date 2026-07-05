@@ -877,16 +877,9 @@ update_local_source() {
 }
 
 install_local_deps() {
-    local pw_dir stealth_script
-
+    local stealth_script
     if is_ko; then echo "==> Node.js 패키지 설치 중..."; else echo "==> Installing Node.js packages..."; fi
     (cd "${APP_DIR}" && npm install --omit=dev)
-
-    pw_dir="${APP_DIR}/codes/skills/playwright-cli"
-    if [ -d "${pw_dir}" ]; then
-        if is_ko; then echo "==> Playwright 브라우저 설치 중..."; else echo "==> Installing Playwright browser..."; fi
-        (cd "${pw_dir}" && npm install --omit=dev && npx playwright install chromium)
-    fi
 
     if command -v python3 >/dev/null 2>&1; then
         if is_ko; then echo "==> browser-use 설치 중 (선택)..."; else echo "==> Installing browser-use (optional)..."; fi

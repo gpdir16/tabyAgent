@@ -13,8 +13,6 @@ ENV APP_ROOT=/app
 ENV CODES_DIR=/app/codes
 ENV CONFIG_DIR=/app/codes/config
 ENV NODE_ENV=production
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 ENV HEADLESS=true
 
 RUN apt-get update \
@@ -37,11 +35,6 @@ COPY codes ./codes
 
 RUN chmod +x /app/codes/skills/browser-use/install-stealth.sh \
     && /app/codes/skills/browser-use/install-stealth.sh
-
-WORKDIR /app/codes/skills/playwright-cli
-RUN npm install --omit=dev \
-    && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 npx playwright install chromium
-WORKDIR /app
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh codes/cli.js

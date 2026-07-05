@@ -83,7 +83,6 @@ export function buildSkillContentVars() {
         MCP_CONFIG_PATH: mcpConfigPath(),
         CRON_PATH: cronConfigPath(),
         DOWNLOAD_DIR: downloadDirPath(),
-        PLAYWRIGHT_CLI_DIR: path.join(CODES_DIR, "skills", "playwright-cli"),
         BROWSER_USE_DIR: path.join(CODES_DIR, "skills", "browser-use"),
     };
 }
@@ -101,7 +100,6 @@ const LEGACY_SKILL_PATHS = [
     ["/app/user/cron.json", (v) => v.CRON_PATH],
     ["/app/user/skills", (v) => v.SKILLS_DIR],
     ["/app/user/download", (v) => v.DOWNLOAD_DIR],
-    ["/app/codes/skills/playwright-cli", (v) => v.PLAYWRIGHT_CLI_DIR],
     ["/app/codes/skills", (v) => path.join(v.CODES_DIR, "skills")],
     ["/app/user", (v) => v.USER_DIR],
     ["/app/codes", (v) => v.CODES_DIR],
