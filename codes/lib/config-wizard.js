@@ -343,7 +343,6 @@ function nsfwKeyboard(state) {
     kb.text(msg.backMenu, "cfg:menu");
     return kb;
 }
-
 async function showThinkingStep(bot, chatId, state) {
     const lang = uiLang(state);
     const cfg = loadUserConfig();
@@ -766,7 +765,6 @@ export async function handleConfigWizardCallback(ctx, bot) {
         await replaceStep(bot, chatId, state, texts(uiLang(state)).nsfwPick, nsfwKeyboard(state));
         return;
     }
-
     if (data.startsWith("cfg:think:")) {
         const level = data.slice("cfg:think:".length).toLowerCase();
         const pid = state.data.providerId || loadUserConfig().provider?.id || "default";
