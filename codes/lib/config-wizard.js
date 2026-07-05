@@ -854,6 +854,9 @@ export async function handleConfigWizardCallback(ctx, bot) {
         state.data.providerKey = providerKey;
         state.data.providerId = provider.id;
         delete state.data.afterApiKey;
+        if (!provider.custom) {
+            state.data.baseURL = "";
+        }
         saveState(state);
         await applyConfig({ providerId: provider.id, providerKey });
         const cfg2 = loadUserConfig();
