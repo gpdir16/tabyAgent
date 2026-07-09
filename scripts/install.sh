@@ -46,6 +46,7 @@ USER_BIN="${HOME}/.local/bin"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 ENV_FILE="${INSTALL_DIR}/.env"
 LAUNCHD_LABEL="io.tabyagent"
+BROWSER_USE_PIP_SPEC="${BROWSER_USE_PIP_SPEC:-browser-use==0.13.3}"
 
 DOCKER_SHELL="docker"
 TABYAGENT_LANG_RESOLVED=""
@@ -883,8 +884,8 @@ install_local_deps() {
 
     if command -v python3 >/dev/null 2>&1; then
         if is_ko; then echo "==> browser-use 설치 중 (선택)..."; else echo "==> Installing browser-use (optional)..."; fi
-        if python3 -m pip install --user 'browser-use' 'uv' >/dev/null 2>&1 \
-            || python3 -m pip install --break-system-packages 'browser-use' 'uv' >/dev/null 2>&1; then
+        if python3 -m pip install --upgrade --user "${BROWSER_USE_PIP_SPEC}" 'uv' >/dev/null 2>&1 \
+            || python3 -m pip install --upgrade --break-system-packages "${BROWSER_USE_PIP_SPEC}" 'uv' >/dev/null 2>&1; then
             if command -v browser-use >/dev/null 2>&1; then
                 browser-use install >/dev/null 2>&1 || true
             fi

@@ -1,67 +1,118 @@
-# Monkey-patch browser-use CLI to apply anti-bot stealth on every browser start.
+# Anti-bot stealth for Browser Use CLI 3.0 (browser-harness backend).
+#
+# browser-use 0.13.x replaced the old `browser_use.skill_cli.browser.CLIBrowserSession`
+# with a Browser Harness daemon (browser_harness.daemon.Daemon) that holds a raw
+# CDP WebSocket. We patch Daemon._enable_default_domains — called on initial
+# attach AND on every set_session (tab switch / new_tab) — so stealth is applied
+# to every CDP session, not just the first.
+#
+# The .pth file loads this at interpreter startup, so the daemon subprocess
+# (spawned via `python -m browser_harness.daemon`) is patched before it serves.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from pathlib import Path
 
 logger = logging.getLogger("tabyagent_stealth")
 
-STEALTH_JS = (Path(__file__).parent / "stealth.js").read_text(encoding="utf-8")
-
-# Recent desktop Chrome UA without "HeadlessChrome"
-DEFAULT_USER_AGENT = (
+STEALTH_JS_TEMPLATE = (Path(__file__).parent / "stealth.js").read_text(encoding="utf-8")
+FALLBACK_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
+    "Chrome/149.0.0.0 Safari/537.36"
 )
+DEFAULT_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
+DEFAULT_PLATFORM = "Linux x86_64"
 
 
-async def _apply_stealth(session) -> None:
-    from browser_use.skill_cli.browser import CLIBrowserSession
-
-    if not isinstance(session, CLIBrowserSession):
-        return
-    if not session._cdp_client_root:
-        return
-
-    await session._cdp_add_init_script(STEALTH_JS)
-
-    ua_params = {
-        "userAgent": DEFAULT_USER_AGENT,
-        "acceptLanguage": "en-US,en;q=0.9",
-        "platform": "Linux x86_64",
-    }
+async def _user_agent(cdp) -> str:
     try:
-        await session.cdp_client.send.Network.setUserAgentOverride(params=ua_params)
-        await session.cdp_client.send.Emulation.setUserAgentOverride(params=ua_params)
-        await session._cdp_set_viewport(1920, 1080, device_scale_factor=1.0)
+        version = await asyncio.wait_for(cdp.send_raw("Browser.getVersion"), timeout=4)
+        user_agent = str(version.get("userAgent") or "")
+        if user_agent:
+            return user_agent.replace("HeadlessChrome/", "Chrome/")
     except Exception as exc:
-        logger.debug("CDP override skipped: %s", exc)
+        logger.debug("Browser.getVersion failed: %s", exc)
+    return FALLBACK_USER_AGENT
 
-    logger.info("tabyAgent stealth patches applied")
+
+def _stealth_js(user_agent: str) -> str:
+    return STEALTH_JS_TEMPLATE.replace("__TABYAGENT_USER_AGENT_JSON__", json.dumps(user_agent))
 
 
-def _patch_cli_browser_session() -> None:
-    from browser_use.skill_cli.browser import CLIBrowserSession
-
-    if getattr(CLIBrowserSession.start, "_tabyagent_stealth", False):
+def _patch_daemon() -> None:
+    try:
+        from browser_harness.daemon import Daemon
+    except Exception as exc:  # browser-harness not installed yet at .pth load time
+        logger.debug("browser_harness not importable yet: %s", exc)
         return
 
-    original_start = CLIBrowserSession.start
+    original = getattr(Daemon, "_enable_default_domains", None)
+    if original is None:
+        logger.debug("browser_harness.daemon.Daemon has no _enable_default_domains hook")
+        return
 
-    async def start_with_stealth(self, *args, **kwargs):
-        profile = self.browser_profile
-        if profile.is_local and not profile.cdp_url and not profile.use_cloud:
-            profile.user_agent = profile.user_agent or DEFAULT_USER_AGENT
-        await original_start(self, *args, **kwargs)
+    if getattr(original, "_tabyagent_stealth", False):
+        return
+
+    async def enable_with_stealth(self, session_id):
+        await original(self, session_id)
+        cdp = self.cdp
+        if cdp is None:
+            return
+        user_agent = await _user_agent(cdp)
+        # Page.addScriptToEvaluateOnNewDocument runs on every new document load
+        # for this session — survives navigation, SPA route changes, iframes.
         try:
-            await _apply_stealth(self)
+            await asyncio.wait_for(
+                cdp.send_raw(
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    {"source": _stealth_js(user_agent)},
+                    session_id=session_id,
+                ),
+                timeout=4,
+            )
         except Exception as exc:
-            logger.warning("Failed to apply stealth patches: %s", exc)
+            logger.debug("stealth init script failed on %s: %s", session_id, exc)
+        # UA override at the emulation layer (affects navigator.userAgent,
+        # navigator.platform, Accept-Language header). Per-session is correct:
+        # the daemon routes Emulation.* through the active session.
+        try:
+            await asyncio.wait_for(
+                cdp.send_raw(
+                    "Emulation.setUserAgentOverride",
+                    {
+                        "userAgent": user_agent,
+                        "acceptLanguage": DEFAULT_ACCEPT_LANGUAGE,
+                        "platform": DEFAULT_PLATFORM,
+                    },
+                    session_id=session_id,
+                ),
+                timeout=4,
+            )
+        except Exception as exc:
+            logger.debug("UA override failed on %s: %s", session_id, exc)
+        try:
+            await asyncio.wait_for(
+                cdp.send_raw(
+                    "Network.setUserAgentOverride",
+                    {
+                        "userAgent": user_agent,
+                        "acceptLanguage": DEFAULT_ACCEPT_LANGUAGE,
+                        "platform": DEFAULT_PLATFORM,
+                    },
+                    session_id=session_id,
+                ),
+                timeout=4,
+            )
+        except Exception as exc:
+            logger.debug("Network UA override failed on %s: %s", session_id, exc)
 
-    start_with_stealth._tabyagent_stealth = True  # type: ignore[attr-defined]
-    CLIBrowserSession.start = start_with_stealth  # type: ignore[method-assign]
-    logger.info("Patched CLIBrowserSession.start for stealth")
+    enable_with_stealth._tabyagent_stealth = True  # type: ignore[attr-defined]
+    Daemon._enable_default_domains = enable_with_stealth  # type: ignore[method-assign]
+    logger.info("Patched browser_harness.daemon.Daemon for stealth (CLI 3.0)")
 
 
-_patch_cli_browser_session()
+_patch_daemon()

@@ -2,6 +2,7 @@ import { loadAgentConfig } from "../config-loader.js";
 import { createLlmClient } from "../llm/client.js";
 import { assistantMessageToPlain } from "../llm/messages.js";
 import { executeTool, getAllToolDefinitions, toolResultContent } from "./tool-registry.js";
+import { buildToolResultContent } from "../llm/vision.js";
 import { extractTurnMessages } from "./chat-history.js";
 import { ensureWithinContextLimit } from "./summarize.js";
 import { clearFileReadCache } from "../tools/file.js";
@@ -70,6 +71,15 @@ function pushToolResult(messages, toolCallId, result) {
         tool_call_id: toolCallId,
         content: toolResultContent(result),
     });
+}
+
+function buildToolImageObservation(result, { visionEnabled = false } = {}) {
+    if (!visionEnabled || !result || typeof result !== "object" || !result.__image) return null;
+    const { __image, ...stripped } = result;
+    return {
+        role: "user",
+        content: buildToolResultContent(JSON.stringify(stripped) ?? "", __image, { visionEnabled }),
+    };
 }
 
 function pushSkippedToolResults(messages, toolCalls, startIndex = 0) {
@@ -207,6 +217,7 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
     const toolSigCounts = new Map();
     const fileSnapshots = new Map();
     let forceReplyNext = false;
+    const visionSupport = Boolean(llm.modelMeta?.supportsVision);
 
     const partialTextRef = { value: null };
 
@@ -326,17 +337,24 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
         messages.push(choice);
 
         if (toolCallCount >= maxToolCalls) {
+            pushSkippedToolResults(messages, toolCalls, 0);
             messages.push({ role: "user", content: FORCE_REPLY_HINT });
             forceReplyNext = true;
             continue;
         }
 
-        for (const tc of toolCalls) {
-            if (toolCallCount >= maxToolCalls) break;
+        const toolImageObservations = [];
+
+        for (let toolIndex = 0; toolIndex < toolCalls.length; toolIndex += 1) {
+            const tc = toolCalls[toolIndex];
+            if (toolCallCount >= maxToolCalls) {
+                pushSkippedToolResults(messages, toolCalls, toolIndex);
+                break;
+            }
 
             injectPendingUserMessages(messages, session);
             if (shouldStop(session)) {
-                pushSkippedToolResults(messages, toolCalls, toolCalls.indexOf(tc));
+                pushSkippedToolResults(messages, toolCalls, toolIndex);
                 return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
                     partialText: partialTextRef.value,
                 });
@@ -374,12 +392,18 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
 
             if (shouldStop(session)) {
                 pushToolResult(messages, tc.id, result);
-                pushSkippedToolResults(messages, toolCalls, toolCalls.indexOf(tc) + 1);
+                pushSkippedToolResults(messages, toolCalls, toolIndex + 1);
                 return finishStoppedTurn(llm, messages, contextBaseLength, toolCallCount, modelCallCountRef, {
                     partialText: partialTextRef.value,
                 });
             }
             pushToolResult(messages, tc.id, result);
+            const imageObservation = buildToolImageObservation(result, { visionEnabled: visionSupport });
+            if (imageObservation) toolImageObservations.push(imageObservation);
+        }
+
+        if (toolImageObservations.length) {
+            messages.push(...toolImageObservations);
         }
 
         if (forceReplyNext || toolCallCount >= maxToolCalls) {

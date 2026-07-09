@@ -14,10 +14,33 @@ export function sanitizeTextForLlm(text) {
     return out;
 }
 
+const MAX_IMAGES = 50; // API limit is 60; keep 50 for safety margin
+
+function trimImages(messages) {
+    let imageCount = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (!Array.isArray(m.content)) continue;
+        for (let j = 0; j < m.content.length; j++) {
+            const part = m.content[j];
+            if (part?.type === "image_url") {
+                imageCount++;
+                if (imageCount > MAX_IMAGES) {
+                    m.content[j] = { type: "text", text: "[screenshot removed to stay under API image limit]" };
+                }
+            }
+        }
+        if (Array.isArray(m.content) && !m.content.some((p) => p.type === "image_url")) {
+            const text = m.content.map((p) => p.text || "").join("");
+            if (text) m.content = text;
+        }
+    }
+    return messages;
+}
 export function sanitizeMessagesForApi(messages) {
     if (!Array.isArray(messages)) return messages;
 
-    return messages.map((m) => {
+    const sanitized = messages.map((m) => {
         const out = { ...m };
 
         if (typeof out.content === "string") {
@@ -45,4 +68,6 @@ export function sanitizeMessagesForApi(messages) {
 
         return out;
     });
+
+    return trimImages(sanitized);
 }

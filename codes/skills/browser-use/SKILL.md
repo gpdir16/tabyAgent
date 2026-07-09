@@ -1,98 +1,152 @@
 ---
 name: browser-use
-description: Automates browser interactions for web testing, form filling, screenshots, and data extraction. Use when the user needs to navigate websites, interact with web pages, fill forms, take screenshots, or extract information from web pages.
+description: "Direct browser control via CDP for web interaction: automation, scraping, testing, screenshots, and site/app work. Browser Use CLI 3.0 Python heredoc workflow."
 ---
 
-# Browser Automation with browser-use CLI
+# Browser Use
+
+Direct browser control via CDP. For task-specific edits, use `agent-workspace/agent_helpers.py`. For setup, install, or connection problems, read https://github.com/browser-use/browser-harness/blob/main/install.md.
+
+Domain skills are off by default. Set `BH_DOMAIN_SKILLS=1` to enable them; see the bottom section.
+
+**If `BH_DOMAIN_SKILLS=1` and the task is site-specific, read every file in the matching `$BH_AGENT_WORKSPACE/domain-skills/<site>/` directory before inventing an approach.**
 
 ## tabyAgent
 
-- Run every `browser-use` command via **`terminal_run`** (one per call, or chain with `&&`).
-- CLI should be available after install (`browser-use doctor`). Do not `pip install` unless `browser-use doctor` fails after an upgrade.
-- Always use default **headless** mode. Do not use `--headed`, `connect`, or `--profile`.
-- **Anti-bot stealth is auto-applied** at browser start. No extra step after `open`.
+- Run every `browser-use` command via **`terminal_run`** using a heredoc:
+    ```bash
+    browser-use <<'PY'
+    new_tab("https://example.com")
+    print(page_info())
+    PY
+    ```
+- Helpers are pre-imported; do not `import` them.
+- tabyAgent applies its Chromium compatibility patch when Browser Harness starts a CDP session.
+- In Docker the daemon auto-connects to the bundled Chromium (`BU_CDP_URL`); no `chrome://inspect` setup needed. On macOS it attaches to the running Chrome CDP endpoint - run `browser-use --doctor` if it can't connect.
+- Use **`xvfb_gui`** only for non-browser Linux GUI apps in Docker (`skills_read xvfb`). Web browsing stays on `browser-use`.
 
-The daemon keeps the browser open between commands (~50ms per call).
-
-## Core workflow
-
-1. `browser-use open <url>`
-2. `browser-use state` — clickable elements with indices
-3. Interact by index (`click`, `input`, `keys`, …)
-4. `browser-use state` or `browser-use screenshot` to verify
-5. `browser-use close` when done (or leave open for the next command)
-
-If a command fails: `browser-use close`, then retry.
-
-## Commands
+## Usage
 
 ```bash
-# Navigation
-browser-use open <url>
-browser-use back
-browser-use scroll down          # --amount N for pixels
-browser-use scroll up
-
-# Page state — run state first
-browser-use state
-browser-use screenshot [path.png]   # --full for full page
-
-# Interactions — indices from state
-browser-use click <index>
-browser-use click <x> <y>
-browser-use type "text"
-browser-use input <index> "text"
-browser-use input <index> ""        # clear field
-browser-use keys "Enter"            # also "Control+a", etc.
-browser-use select <index> "option"
-browser-use upload <index> <path>
-browser-use hover <index>
-browser-use dblclick <index>
-browser-use rightclick <index>
-
-# Data
-browser-use eval "js code"
-browser-use get title
-browser-use get html [--selector "h1"]
-browser-use get text <index>
-browser-use get value <index>
-browser-use get attributes <index>
-
-# Wait
-browser-use wait selector "css"     # --timeout ms, --state visible|hidden
-browser-use wait text "text"
-
-# Session
-browser-use close
-browser-use close --all
+browser-use <<'PY'
+print(page_info())
+PY
 ```
 
-## Command chaining
+- Invoke as `browser-use`. Use heredocs for multi-line commands.
+- Helpers are pre-imported. `run.py` calls `ensure_daemon()` before `exec`.
+- First navigation is `new_tab(url)`, not `goto_url(url)`.
+- The normal local flow attaches to the running Chrome/Chromium CDP endpoint. No browser ids or local profile selection.
+
+## Local Chrome
+
+If the daemon cannot connect, run diagnostics:
 
 ```bash
-browser-use open https://example.com && browser-use state
-browser-use input 5 "user@example.com" && browser-use input 6 "password" && browser-use click 7
+browser-use --doctor
 ```
 
-Chain when you do not need intermediate output. Run `state` separately first when you need to discover indices.
+If Chrome remote debugging is not enabled, the harness opens:
 
-## Blocked sites
+```text
+chrome://inspect/#remote-debugging
+```
 
-Stealth patches apply on browser start. If still blocked:
+Ask the user to tick "Allow remote debugging for this browser instance" and click Allow if Chrome shows a permission popup. Then retry the same `browser-use` command.
 
-1. `browser-use close` then reopen (stale sessions may miss patches)
-2. Do not fall back to `curl`/`wget` — use browser automation or URL mirrors (see system prompt for X links)
-3. Captcha / login-only walls — tell the user; you cannot complete those for them
+## Remote Browsers
 
-## Tips
+Use Browser Use cloud for headless servers, parallel sub-agents, or isolated work.
 
-1. Always run **`state`** before clicking — indices change after navigation
-2. Browser **persists** between commands in the same session
-3. Aliases: `bu`, `browser`, `browseruse`
-4. On failure: **`browser-use close`** then retry
+Authenticate once:
 
-## Troubleshooting
+```bash
+browser-use auth login
+```
 
-- Browser won't start → `browser-use close` then `browser-use open <url>`
-- Element not found → `browser-use scroll down` then `browser-use state`
-- Install issues → `browser-use doctor`
+Or import a key safely:
+
+```bash
+printf '%s' "$BROWSER_USE_API_KEY" | browser-use auth login --api-key-stdin
+```
+
+Pick a short made-up name; `r7k2` below is just a placeholder:
+
+```bash
+browser-use <<'PY'
+start_remote_daemon("r7k2")
+PY
+
+BU_NAME=r7k2 browser-use <<'PY'
+new_tab("https://example.com")
+print(page_info())
+PY
+```
+
+When the task is done and a cloud browser is still running, ask directly: "Should I close this browser now?" If yes, run `stop_remote_daemon(name)`. Remote daemons bill until they stop or time out.
+
+Do not start a remote daemon and then keep using the default daemon. Use the same name for `BU_NAME`.
+
+Cloud profile cookie sync reference: https://github.com/browser-use/browser-harness/blob/main/interaction-skills/profile-sync.md.
+
+## Page Workflow
+
+- Screenshots first: use `capture_screenshot()` to understand visible state.
+- Clicking: screenshot -> read pixel -> `click_at_xy(x, y)` -> screenshot again.
+- After navigation, call `wait_for_load()`.
+- If the current tab is stale or internal, call `ensure_real_tab()`.
+- Use `js(...)` for DOM inspection or extraction when coordinates are the wrong tool.
+- Login walls: stop and ask. Exception: use available SSO automatically when Chrome is already signed in; still stop for passwords, MFA, consent, or ambiguous account choice.
+- Raw CDP is available with `cdp("Domain.method", ...)`.
+
+## Don't know the URL? Search first.
+
+**Never guess URLs.** Search in the browser, then click the right result:
+
+```python
+new_tab("https://html.duckduckgo.com/html/?q=<query>")
+# screenshot → read result coordinates → click_at_xy(x, y) on the right link
+```
+
+## Interaction Skills
+
+If you get stuck on a browser mechanic, check https://github.com/browser-use/browser-harness/tree/main/interaction-skills.
+
+- connection.md
+- cookies.md
+- cross-origin-iframes.md
+- dialogs.md
+- downloads.md
+- drag-and-drop.md
+- dropdowns.md
+- iframes.md
+- network-requests.md
+- print-as-pdf.md
+- profile-sync.md
+- screenshots.md
+- scrolling.md
+- shadow-dom.md
+- tabs.md
+- uploads.md
+- viewport.md
+
+## Design Constraints
+
+- Coordinate clicks default. CDP mouse events pass through iframes/shadow/cross-origin at the compositor level.
+- Keep the connection model simple: use the default daemon, `BU_NAME`, `BU_CDP_URL`, `BU_CDP_WS`, or `start_remote_daemon(...)`.
+- Core helpers stay short. Put task-specific helper additions in `$BH_AGENT_WORKSPACE/agent_helpers.py`.
+
+## Gotchas
+
+- `chrome://inspect/#remote-debugging` must be enabled for local Chrome control.
+- Chrome may show an "Allow remote debugging?" popup; wait for the user to click Allow.
+- Omnibox popups are not real work tabs.
+- CDP target order is not Chrome's visible tab-strip order.
+- `BU_CDP_URL` is an HTTP DevTools endpoint; the daemon resolves it to WebSocket.
+- Ask before leaving cloud browsers running; stop them with `stop_remote_daemon(name)` or `PATCH /browsers/{id} {"action":"stop"}`.
+
+## Domain Skills
+
+Only applies when `BH_DOMAIN_SKILLS=1`. Otherwise ignore domain skills.
+
+When enabled, search `$BH_AGENT_WORKSPACE/domain-skills/<host>/` before inventing an approach. `goto_url(...)` returns up to 10 skill filenames for the navigated host.

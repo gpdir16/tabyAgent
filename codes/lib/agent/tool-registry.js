@@ -5,11 +5,13 @@ import { terminalToolDefinitions, executeTerminalTool } from "../tools/terminal.
 import { cronToolDefinitions, executeCronTool } from "../tools/cron-tool.js";
 import { sendFileToolDefinitions, executeSendFileTool } from "../tools/send-file-tool.js";
 import { vizToolDefinitions, executeVizTool } from "../tools/visualization.js";
+import { xvfbGuiToolDefinitions, executeXvfbGuiTool } from "../tools/xvfb-gui.js";
 import { getMcpToolDefinitions, executeMcpTool } from "../tools/mcp.js";
 import { connectMcpServers, disconnectMcpServers } from "../mcp/servers.js";
 import { stopCronScheduler } from "../cron/scheduler.js";
 import { stopUpdateScheduler } from "../update/scheduler.js";
 import { sanitizeTextForLlm } from "../llm/sanitize-messages.js";
+import { isDockerRuntime } from "../runtime.js";
 
 export async function initTools() {
     await connectMcpServers();
@@ -30,6 +32,7 @@ export function getAllToolDefinitions() {
         ...terminalToolDefinitions,
         ...sendFileToolDefinitions,
         ...vizToolDefinitions,
+        ...(isDockerRuntime() ? xvfbGuiToolDefinitions : []),
         ...getMcpToolDefinitions(),
     ];
 }
@@ -45,6 +48,7 @@ export async function executeTool(name, args, ctx = {}) {
         if (name === "telegram_send_file") return await executeSendFileTool(name, args, ctx);
         if (name === "viz_create") return await executeVizTool(name, args);
         if (name === "mcp_reload" || name.startsWith("mcp__")) return await executeMcpTool(name, args);
+        if (name === "xvfb_gui") return await executeXvfbGuiTool(name, args, ctx);
         return { error: `Unknown tool: ${name}` };
     } catch (err) {
         return { error: err?.message || String(err) };
@@ -52,5 +56,9 @@ export async function executeTool(name, args, ctx = {}) {
 }
 
 export function toolResultContent(result) {
+    if (result && typeof result === "object" && result.__image) {
+        const { __image, ...stripped } = result;
+        return sanitizeTextForLlm(JSON.stringify(stripped) ?? "");
+    }
     return sanitizeTextForLlm(JSON.stringify(result) ?? "");
 }
