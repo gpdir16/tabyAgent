@@ -33,6 +33,7 @@ export function providerKeyFromId(providerId) {
     if (providerId === "ollama") return "ollama";
     if (providerId === "ollama-cloud") return "ollamaCloud";
     if (providerId === "zenmux") return "zenmux";
+    if (providerId === "codex") return "codex";
     return "openai";
 }
 export const NSFW_LEVELS = ["strict", "moderate", "explicit"];

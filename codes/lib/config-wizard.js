@@ -2,13 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { InlineKeyboard } from "grammy";
 import { USER_DIR } from "./paths.js";
-import { getMergedProvider, loadUserConfig, saveUserConfig } from "./config-loader.js";
+import { getMergedProvider, loadUserConfig, saveUserConfig, loadProviderConfig } from "./config-loader.js";
 import { claimOwnerIfNone, hasOwner, isApproved, issuePendingCode } from "./auth.js";
 import { t } from "./i18n.js";
 import { getApproveCliHint } from "./runtime.js";
 import { fetchProviderModels, providerFromWizardState, partitionModelsForPicker, buildVendorPickerItems, MODELS_PER_PAGE } from "./llm/models.js";
 import { deleteMessageSafe, sendMessageSafe } from "./telegram-api.js";
 import { restartUpdateScheduler } from "./update/scheduler.js";
+import { hasCodexAuth, startDeviceFlow, pollDeviceFlow } from "./llm/codex-tokens.js";
 import {
     getThinkingLevel,
     isReplyFooterEnabled,
@@ -31,8 +32,17 @@ const PROVIDERS = {
     ollama: { id: "ollama", label: "Ollama (local)", apiKeyOptional: true },
     ollamaCloud: { id: "ollama-cloud", label: "Ollama Cloud" },
     zenmux: { id: "zenmux", label: "ZenMux" },
+    codex: { id: "codex", label: "Codex OAuth (ChatGPT Plus/Pro)", apiKeyOptional: true },
     custom: { id: "default", custom: true, label: "Custom URL" },
 };
+
+const CODEX_MODELS = [
+    { id: "gpt-5.6-sol", label: "gpt-5.6-sol" },
+    { id: "gpt-5.6-terra", label: "gpt-5.6-terra" },
+    { id: "gpt-5.6-luna", label: "gpt-5.6-luna" },
+    { id: "gpt-5.5", label: "gpt-5.5" },
+    { id: "gpt-5.3-codex-spark", label: "gpt-5.3-codex-spark (Pro)" },
+];
 
 function emptyState(chatId, { mode = "onboarding" } = {}) {
     return {
@@ -86,7 +96,16 @@ async function replaceStep(bot, chatId, state, text, keyboard) {
 
 export function isConfigReady() {
     const config = loadUserConfig();
-    return Boolean(config.telegram?.botToken?.trim() && config.provider?.apiKey?.trim() && config.provider?.model?.trim());
+    if (!config.telegram?.botToken?.trim()) return false;
+    if (!config.provider?.model?.trim()) return false;
+    const pid = config.provider?.id || "default";
+    try {
+        const p = loadProviderConfig(pid);
+        if (p.apiKeyOptional) return true;
+    } catch {
+        // unknown provider — require apiKey
+    }
+    return Boolean(config.provider?.apiKey?.trim());
 }
 
 export function bootstrapBotTokenFromEnv() {
@@ -166,6 +185,13 @@ function texts(lang) {
             busy: "Setup is in progress in another chat.",
             manual: "Enter manually",
             cancel: "Cancel setup",
+            codexLoginTitle: "Codex (ChatGPT OAuth)",
+            codexLoginPending:
+                "Waiting for authorization… Open the link below, enter the code, then approve.\n\n🔗 {url}\n\nCode: {code}\n\nThis will auto-complete when you approve.",
+            codexLoginSuccess: "✅ ChatGPT login successful!",
+            codexLoginFailed: "❌ Login failed: {error}\n\nTap retry to try again.",
+            codexLoginRetry: "Retry login",
+            codexLoginCancel: "Cancel",
             menuTitle: "tabyAgent settings",
             catLanguage: "Language",
             catThinking: "Thinking level",
@@ -205,6 +231,13 @@ function texts(lang) {
             busy: "다른 채팅에서 설정 중입니다.",
             manual: "직접 입력",
             cancel: "설정 취소",
+            codexLoginTitle: "Codex (ChatGPT OAuth)",
+            codexLoginPending:
+                "인증 대기 중… 아래 링크를 열고 코드를 입력한 뒤 승인하세요.\n\n🔗 {url}\n\n코드: {code}\n\n승인하면 자동으로 완료됩니다.",
+            codexLoginSuccess: "✅ ChatGPT 로그인 성공!",
+            codexLoginFailed: "❌ 로그인 실패: {error}\n\n다시 시도하려면 버튼을 누르세요.",
+            codexLoginRetry: "다시 시도",
+            codexLoginCancel: "취소",
             menuTitle: "tabyAgent 설정",
             catLanguage: "언어",
             catThinking: "사고 수준",
@@ -243,6 +276,13 @@ function texts(lang) {
             busy: "別のチャットで設定中です。",
             manual: "手入力",
             cancel: "キャンセル",
+            codexLoginTitle: "Codex (ChatGPT OAuth)",
+            codexLoginPending:
+                "認証待機中… 以下のリンクを開き、コードを入力して承認してください。\n\n🔗 {url}\n\nコード: {code}\n\n承認すると自動的に完了します。",
+            codexLoginSuccess: "✅ ChatGPT ログイン成功！",
+            codexLoginFailed: "❌ ログイン失敗: {error}\n\n再試行ボタンを押してください。",
+            codexLoginRetry: "再試行",
+            codexLoginCancel: "キャンセル",
             menuTitle: "tabyAgent 設定",
             catLanguage: "言語",
             catThinking: "思考レベル",
@@ -406,6 +446,8 @@ function providerKeyboard(lang, state = null) {
         .text("Ollama Cloud", "cfg:prov:ollamaCloud")
         .row()
         .text("ZenMux", "cfg:prov:zenmux")
+        .row()
+        .text("Codex OAuth (ChatGPT Plus/Pro)", "cfg:prov:codex")
         .row()
         .text("Custom API URL", "cfg:prov:custom")
         .row();
@@ -617,6 +659,27 @@ async function sendModelStep(bot, chatId, state) {
     saveState(state);
     await replaceStep(bot, chatId, state, texts(lang).modelLoading);
 
+    // Codex has no /models endpoint — use a built-in list
+    if (state.data.providerId === "codex") {
+        const models = CODEX_MODELS.map((m) => ({
+            id: m.id,
+            label: m.label,
+            contextWindow: 200000,
+            supportsVision: false,
+        }));
+        const partition = partitionModelsForPicker(models);
+        state.data.availableModels = models;
+        state.data.modelPartition = {
+            flat: partition.flat,
+            prefixes: partition.prefixes,
+            byPrefix: Object.fromEntries(partition.byPrefix),
+        };
+        state.data.modelPage = 0;
+        saveState(state);
+        await showVendorStep(bot, chatId, state);
+        return;
+    }
+
     try {
         const provider = providerFromWizardState(state);
         const models = await fetchProviderModels(provider, { useCache: false });
@@ -642,6 +705,62 @@ async function sendModelStep(bot, chatId, state) {
         saveState(state);
         await replaceStep(bot, chatId, state, texts(lang).modelFetchFailed);
     }
+}
+
+async function startCodexLogin(bot, chatId, state) {
+    const lang = uiLang(state);
+    const msg = texts(lang);
+
+    // Already logged in — skip to model selection
+    if (hasCodexAuth()) {
+        saveState(state);
+        await sendModelStep(bot, chatId, state);
+        return;
+    }
+
+    // Abort any previous attempt
+    if (state.data.codexAbort) state.data.codexAbort.abort();
+    const abort = new AbortController();
+    state.data.codexAbort = abort;
+    state.step = "codex_login";
+    saveState(state);
+
+    let flow;
+    try {
+        flow = await startDeviceFlow();
+    } catch (err) {
+        const kb = new InlineKeyboard().text(msg.codexLoginRetry, "cfg:codex:retry").row().text(msg.codexLoginCancel, "cfg:codex:cancel");
+        await replaceStep(bot, chatId, state, msg.codexLoginFailed.replace("{error}", err.message), kb);
+        return;
+    }
+
+    state.data.codexFlow = { deviceAuthId: flow.deviceAuthId, userCode: flow.userCode, intervalMs: flow.intervalMs };
+    saveState(state);
+
+    const text = msg.codexLoginPending.replace("{url}", flow.deviceUrl).replace("{code}", flow.userCode);
+    const kb = new InlineKeyboard().text(msg.codexLoginCancel, "cfg:codex:cancel");
+    await replaceStep(bot, chatId, state, text, kb);
+
+    // Poll in background
+    pollDeviceFlow({ deviceAuthId: flow.deviceAuthId, userCode: flow.userCode, intervalMs: flow.intervalMs, signal: abort.signal })
+        .then(async () => {
+            if (state.data.codexAbort !== abort) return; // superseded
+            delete state.data.codexAbort;
+            delete state.data.codexFlow;
+            saveState(state);
+            await clearActivePrompt(bot, chatId, state);
+            await sendMessageSafe(bot, chatId, msg.codexLoginSuccess);
+            await sendModelStep(bot, chatId, state);
+        })
+        .catch(async (err) => {
+            if (state.data.codexAbort !== abort) return;
+            delete state.data.codexAbort;
+            delete state.data.codexFlow;
+            saveState(state);
+            if (err.message === "Login cancelled." || abort.signal.aborted) return;
+            const kb = new InlineKeyboard().text(msg.codexLoginRetry, "cfg:codex:retry").row().text(msg.codexLoginCancel, "cfg:codex:cancel");
+            await replaceStep(bot, chatId, state, msg.codexLoginFailed.replace("{error}", err.message), kb);
+        });
 }
 
 function assertWizardChat(ctx, state) {
@@ -870,6 +989,8 @@ export async function handleConfigWizardCallback(ctx, bot) {
             state.step = "base_url";
             saveState(state);
             await replaceStep(bot, chatId, state, texts(lang).baseURL);
+        } else if (providerKey === "codex") {
+            await startCodexLogin(bot, chatId, state);
         } else if (provider.apiKeyOptional) {
             saveState(state);
             await sendModelStep(bot, chatId, state);
@@ -878,6 +999,25 @@ export async function handleConfigWizardCallback(ctx, bot) {
             saveState(state);
             await replaceStep(bot, chatId, state, texts(lang).apiKey);
         }
+        return;
+    }
+
+    if (data === "cfg:codex:retry") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await startCodexLogin(bot, chatId, state);
+        return;
+    }
+
+    if (data === "cfg:codex:cancel") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        if (state.data.codexAbort) state.data.codexAbort.abort();
+        delete state.data.codexAbort;
+        delete state.data.codexFlow;
+        saveState(state);
+        const lang = uiLang(state);
+        await replaceStep(bot, chatId, state, texts(lang).provider, providerKeyboard(lang, state));
         return;
     }
 
@@ -1050,6 +1190,10 @@ export async function handleConfigWizardText(ctx, bot) {
             return;
         }
         case "model_loading": {
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            return;
+        }
+        case "codex_login": {
             await deleteMessageSafe(bot, chatId, userMessageId);
             return;
         }

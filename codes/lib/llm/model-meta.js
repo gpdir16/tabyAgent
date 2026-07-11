@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { USER_DIR } from "../paths.js";
+import { loadProviderConfig } from "../config-loader.js";
 import { fetchProviderModels, findModelContextWindow, findModelVisionSupport } from "./models.js";
 
 const META_PATH = path.join(USER_DIR, "temp", "model-meta.json");
@@ -24,12 +25,20 @@ export function saveModelMeta(meta) {
 }
 
 export async function ensureModelMeta(provider) {
+    let defaultContext = DEFAULT_CONTEXT;
+    try {
+        const p = loadProviderConfig(provider.id);
+        if (p.defaultContextWindow) defaultContext = p.defaultContextWindow;
+    } catch {
+        // keep default
+    }
+
     const cached = loadModelMeta();
     if (cached.model === provider.model && cached.contextWindow != null && cached.supportsVision != null) {
         return cached;
     }
 
-    let contextWindow = DEFAULT_CONTEXT;
+    let contextWindow = defaultContext;
     let supportsVision = findModelVisionSupport(null, provider.model);
     try {
         const models = await fetchProviderModels(provider);
