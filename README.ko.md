@@ -2,47 +2,101 @@
 
 # tabyAgent
 
-TabyAgent는 OpenClaw/Hermes의 더 가볍고 쉬운 대안입니다.
+OpenClaw/Hermes보다 더 자율적이며, 더 끈기있고, 더 쉬운 대안입니다.
 
-Docker 또는 로컬(Node.js) 설치를 선택할 수 있으며, Telegram으로 대화할 수 있습니다.
+작업을 시키면, 몇시간이 걸리던, 문제가 있던, 작업을 수행합니다.
+
+메모리, 스킬, 자기개선, 예약 작업, 웹 브라우징, GUI 앱 사용 등의 기능이 기본적으로 작동하며 추가 설정이 필요하지 않습니다.
 
 ## 할 수 있는 것
 
 - **일상적인 채팅**: 메시지를 보내면 텔레그램에서 바로 답변을 받습니다. 텍스트, 이미지, 파일 모두 지원합니다.
-- **추론 제공자 연결**: OpenAI, OpenRouter, Synthetic, Ollama(로컬 & Cloud), ZenMux, 또는 직접 구축한 API 엔드포인트와 연동합니다.
-- **Skills, MCP**: 웹 브라우징, 예약 작업 등 다양한 기능을 추가할 수 있습니다.
-- **예약 작업**: 정기적으로 실행할 작업을 설정하면 자동으로 실행 결과를 보고합니다.
-- **어디서든 실행**: Docker 컨테이너 또는 로컬 Node.js로 실행할 수 있습니다.
+- **추론 제공자 연결**: OpenAI, OpenRouter, Synthetic, Ollama(로컬 & Cloud), ZenMux, Codex OAuth 등 또는 직접 구축한 API 엔드포인트와 연동합니다.
+- **Skills, MCP**: 에이전트에게 원하는 다양한 기능과 도구를 직접 추가할 수 있습니다.
+- **예약 작업**: 정기적으로 실행이 필요한 작업이 있다면 반복해서 실행되며 완료 후에는 보고하거나, 필요하지 않다면 건너뜁니다.
+- **어디서든 실행**: Docker 컨테이너 또는 로컬 Node.js로 실행할 수 있습니다. 네이티브 지원은 macOS와 Linux이며, Windows는 Docker를 통해 작동 가능하지만 보장되지는 않습니다.
+- **자기개선**: tabyAgent는 스스로를 개선할 수 있습니다. 문제를 해결한 방법, 사용자의 지적 등을 학습하며 사용할수록 더 똑똑해집니다.
+
+## 차이점
+
+| 기능                   | tabyAgent                       | OpenClaw                          | Hermes                                       | ChatGPT                                                      |
+| ---------------------- | ------------------------------- | --------------------------------- | -------------------------------------------- | ------------------------------------------------------------ |
+| 일상 채팅              | ✅ 예                           | ✅ 예                             | ✅ 예                                        | ✅ 예                                                        |
+| 검색                   | ✅ 예                           | ✅ 예                             | ✅ 예                                        | ✅ 예                                                        |
+| 여러 제공자 지원       | ✅ 예                           | ✅ 예                             | ✅ 예                                        | ❌ 아니요                                                    |
+| 스킬 지원              | ✅ 예                           | ✅ 예                             | ✅ 예                                        | ❌ 아니요                                                    |
+| MCP 지원               | ✅ 예                           | ✅ 예                             | ✅ 예                                        | ❌ 유료 플랜, 서버형 MCP만                                   |
+| 예약 작업              | ✅ 예                           | ✅ 예                             | ✅ 예                                        | ✅ 예                                                        |
+| 자기개선               | ✅ 예                           | ❌ 아니요                         | ✅ 예                                        | ❌ 아니요                                                    |
+| 터미널 사용            | ✅ 예                           | ✅ 예                             | ✅ 예                                        | ❌ 샌드박스만                                                |
+| 브라우저 사용          | ✅ 예                           | ✅ 예                             | ✅ 예                                        | ❌ 아니요                                                    |
+| GUI 앱 사용            | ✅ 예                           | ❌ 아니요                         | ❌ 아니요                                    | ❌ 아니요                                                    |
+| 로컬 실행              | ✅ 예                           | ✅ 예                             | ✅ 예                                        | ❌ 아니요                                                    |
+| 끈기 (높을수록 좋음)\* | ✅ 2시간동안 작업한적 있음      | ✅ 15분동안 작업한적 있음         | ✅ 20분동안 작업한적 있음                    | ❌ 아니요                                                    |
+| "윤리적 이유"로 거부\* | ✅ 대부분의 작업에서 거부 안함  | ✅ 레드팀 보안 등의 경우에서 거부 | ❌ 레드팀 보안, 캡차 우회 등의 경우에서 거부 | ❌ 레드/블루팀 보안, 타인 비난, 캡차 우회 등의 경우에서 거부 |
+| NSFW 레벨 설정         | ✅ 허용, 간접 언급만 허용, 차단 | ❌ 기능 없음                      | ❌ 기능 없음                                 | ❌ 차단                                                      |
+| 메모리 사용량          | ✅ ~800MB                       | ❌ ~2GB                           | ✅ ~800MB                                    | ✅ -                                                         |
+| 라이선스               | ✅ AGPL-3.0                     | ✅ MIT                            | ✅ MIT                                       | ❌ 독점                                                      |
+
+> 별표 표시(\*)된 항목은 tabyAgent의 개발자가 직접 테스트 또는 실사용하면서 확인한 내용이며, 환경에 따라 달라질수 있습니다.
+> 테스트시 OpenClaw와 Hermes는 Ollama Cloud 제공자와 Kimi-K2.6 모델을 사용했습니다.
+
+## 사용 예시 프롬프트
+
+- "디지털오션 저번달 청구액 얼마냐'
+- "문서 폴더에 파일들 중에서 '보고서'라는 단어가 들어간 파일들 싹다 찾아서 요약해줘"
+- "gemma4 e4b랑 e2b 성능 직접 이 컴에서 돌려서 테스트한다음에 비교"
+- "다음주 일정들 정리좀"
+- "이 엑셀파일에서 매출 행 삭제하고 값 들어간 열에는 색 강조해줘"
+- "chatgpt 플러스 구독좀 대신 취소시켜줘"
+- "(X/Reddit 등 링크) 이거 진짜 되는거임?"
+- "(붙여넣은 긴 글) 요약"
+- "나중에 너가 쓸수있게 내 이메일 계정 줄게 주소는 () 고 smtp/pop3 비번은 ()야"
+- "전에 알려준 메일 계정으로 스포티파이 가입좀 해놔줘"
+- "(논문 링크) 요거 쉽게 이해 가능하게 시각화해줘"
+- "privatestater analytics랑 privatestater captcha 이거 구글 애널리틱스랑 리캡차랑 비교해줘"
+- "프라이버시 존중하는 gmail 대안이 뭐가있지?"
+- "좀이따 점심 뭐먹을까 통장에 4328원 있는데"
 
 ## 빠른 시작
 
-### 1. Telegram 봇 만들기
+### 설치 옵션 A: 자동 스크립트 사용
+
+#### 1. Telegram 봇 만들기
 
 1. Telegram에서 [@BotFather](https://t.me/botfather)를 검색하세요.
 2. `/newbot`을 보내고 안내에 따라 진행하세요.
 3. 받은 봇 토큰을 복사해두세요.
 
-### 2. 설치 (Linux / macOS)
+#### 2. 설치 (Linux / macOS)
 
-터미널에 아래 한 줄을 붙여넣고 Enter를 누르세요. 설치가 진행된 후 1단계에서 복사한 **BotFather가 보내준 토큰**을 붙여넣으라고 안내가 나옵니다. **Docker** 또는 **로컬(Node.js)** 실행 방식을 선택할 수 있습니다. 이어서 PC 폴더를 연결할지 묻습니다. 기본값은 **아니오**입니다.
+터미널에 아래 한 줄을 붙여넣고 엔터를 누르세요. 설치에는 시간이 오래 소요될수 있으니 잠시 기다리세요.
 
-Docker를 선택하면 Docker가 없을 때 설치 안내가 나옵니다. 로컬을 선택하면 Node.js 22 이상이 필요합니다. 비대화형 설치: `TABYAGENT_MODE=docker` 또는 `TABYAGENT_MODE=local`.
+설치가 진행된 후 1단계에서 복사한 **BotFather가 보내준 토큰**을 붙여넣으라고 안내가 나오면 붙여넣고 엔터를 누릅니다. 그 후 Docker 또는 로컬 실행 방식을 선택할 수 있으며 권장은 Docker입니다. 이어서 PC 폴더를 연결할지 물어보며 권장 및 기본값은 N (아니요) 입니다.
+
+**요구사항:** Docker 실행을 선택한 경우 필요한 모든것을 자동으로 설치하며 신경쓸것이 없습니다. 로컬 실행을 선택한 경우 Node.js 22 이상이 설치되어있어야 합니다.
+
+자동 스크립트는 Windows를 지원하지 않습니다. 또한 Windows를 사용중이라면 메인 OS를 Linux 기반 배포판으로 전환하는것을 고려해보세요 - 대부분의 경우, 더 빠르고 프라이버시 친화적이며 자유가 보장됩니다.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh | bash
 ```
 
-설치가 끝나면 Telegram에서 봇에게 `/start`를 보내면 됩니다. 나중에 tabyAgent를 업데이트하려면 **같은 명령을 다시** 실행하세요. 설정과 메모리는 지워지지 않습니다.
+나중에 tabyAgent를 업데이트하려면 위 명령을 다시 실행하세요. 설정과 메모리는 유지된 상태로 업데이트됩니다.
 
-**실행 방식 변경:** `TABYAGENT_MODE=local` 또는 `TABYAGENT_MODE=docker`를 지정하고 설치 스크립트를 다시 실행하세요. 기존 방식은 자동으로 중지됩니다.
+#### CLI 명령줄 도구
 
-**설치 관리** (Docker·로컬 공통 — 백그라운드 실행, 터미널을 닫아도 됨):
+Docker와 로컬 모두 호스트에서 실행하세요.
 
-- `tabyagent status|stop|restart|logs|help` — 상태·중지·재시작·로그·도움말
-- `tabyagent uninstall` — tabyAgent 제거 (`--purge`는 사용자 데이터까지 삭제)
-- `tabyagent foreground` — 디버그용 (터미널 필요)
+- `tabyagent status` — 실행 상태 보기
+- `tabyagent stop` — tabyAgent 중지
+- `tabyagent restart` — tabyAgent 재시작
+- `tabyagent logs` — 로그 보기
+- `tabyagent help` — 명령줄 도구 도움말
+- `tabyagent uninstall` - tabyAgent 제거 (`--purge`는 사용자 데이터까지 삭제)
+- `tabyagent foreground` — 디버그용 (일반 사용자는 필요 없음)
 
-### 3. Telegram에서 설정
+#### 3. Telegram에서 설정
 
 1. Telegram에서 만든 봇을 열고 `/start`를 보내세요. 처음 메시지를 보낸 사람은 자동으로 승인됩니다.
 2. 설정 마법사가 언어, LLM 제공자, API 키, 모델을 안내합니다.
@@ -50,47 +104,17 @@ curl -fsSL https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/inst
 
 언제든 `/config`를 보내 설정을 변경할 수 있습니다.
 
-## 소스에서 실행 (Docker Compose)
+### 설치 옵션 B: Docker Compose (권장하지 않음)
 
 ```bash
 git clone https://github.com/gpdir16/tabyAgent.git
 cd tabyAgent
 cp .env.example .env   # TELEGRAM_BOT_TOKEN 설정
 docker compose up -d
-```
-
-PC 폴더를 연결하려면 (선택, 기본 없음):
-
-```bash
+# PC 호스트 폴더를 Docker 안에 연결하려면 아래 명령어 사용 (선택, 기본 없음):
 echo 'HOST_WORKSPACE=/absolute/path/to/your/project' >> .env
 docker compose -f docker-compose.yml -f docker-compose.workspace.yml up -d
 ```
-
-연결 시 컨테이너 `/workspace`에 마운트됩니다. 기본 작업은 `/app/user`이고, PC에서 보이는 파일을 다룰 때만 `/workspace`를 씁니다.
-
-코드를 받은 뒤 이미지를 다시 빌드할 때:
-
-```bash
-docker compose up -d --build
-```
-
-## 봇 명령어
-
-| 명령어            | 설명                                                               |
-| ----------------- | ------------------------------------------------------------------ |
-| `/start`          | 봇 시작 또는 첫 실행인 경우 설정 마법사 열기                       |
-| `/config`         | 설정 마법사 열기                                                   |
-| `/new`            | 새 대화 시작 (5턴 이상이면 memory.md에 요약 저장 후 기록 삭제)     |
-| `/stop`           | 진행 중인 작업 중지 (진행 중 보낸 메시지는 현재 작업에 반영)       |
-| `/reload`         | MCP 도구 다시 불러오기 (Skills은 reload 필요 없음)                 |
-| `/approve <코드>` | 승인된 사용자가 다른 사람의 접근 코드 승인 (기존 사용자 연결 해제) |
-
-## 요구사항
-
-- Telegram 봇 토큰 (BotFather)
-- 추론 제공자 API 키
-- **Docker 방식**: Docker
-- **로컬 방식**: Node.js 22+, npm (macOS/Linux)
 
 ## 라이선스
 
