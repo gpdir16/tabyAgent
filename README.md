@@ -1,4 +1,4 @@
-[English](README.md) | 한국어
+English | [한국어](README.ko.md)
 
 # tabyAgent
 
