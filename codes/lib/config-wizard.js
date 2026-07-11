@@ -172,8 +172,8 @@ function texts(lang) {
             provider: "Choose LLM provider:",
             baseURL: "Send your API base URL (e.g. https://api.example.com/v1)",
             apiKey: "Send your API key.",
-            modelVendorPick: "Choose a provider ({from}-{to} / {total}) · no slash = pick model directly",
-            modelVariantPick: "Choose a model under “{prefix}” ({from}-{to} / {total})",
+            modelVendorPick: "Model selection ({total} detected)",
+            modelVariantPick: "Organization selection ({total} detected)",
             modelLoading: "Loading models from your provider…",
             modelFetchFailed: "Could not load the model list. Send the model name manually.",
             modelManual: "Send the model name.",
@@ -218,8 +218,8 @@ function texts(lang) {
             provider: "LLM 제공자를 선택하세요:",
             baseURL: "API base URL을 보내주세요 (예: https://api.example.com/v1)",
             apiKey: "API 키를 보내주세요.",
-            modelVendorPick: "제공자(앞부분) 선택 ({from}-{to} / {total}) · / 없으면 바로 선택",
-            modelVariantPick: "「{prefix}」 모델 선택 ({from}-{to} / {total})",
+            modelVendorPick: "모델 선택 ({total}개 감지됨)",
+            modelVariantPick: "조직 선택 ({total}개 감지됨)",
             modelLoading: "제공자에서 모델 목록을 불러오는 중…",
             modelFetchFailed: "모델 목록을 가져오지 못했습니다. 모델 이름을 직접 보내주세요.",
             modelManual: "모델 이름을 보내주세요.",
@@ -263,8 +263,8 @@ function texts(lang) {
             provider: "LLM プロバイダを選んでください:",
             baseURL: "API base URL を送信 (例: https://api.example.com/v1)",
             apiKey: "API キーを送信してください。",
-            modelVendorPick: "プロバイダ（前半）を選択 ({from}-{to} / {total}) · / なしはそのまま選択",
-            modelVariantPick: "「{prefix}」のモデル ({from}-{to} / {total})",
+            modelVendorPick: "モデル選択 ({total}件検出)",
+            modelVariantPick: "組織選択 ({total}件検出)",
             modelLoading: "プロバイダからモデル一覧を取得中…",
             modelFetchFailed: "モデル一覧を取得できませんでした。モデル名を手入力してください。",
             modelManual: "モデル名を送信してください。",
@@ -428,7 +428,6 @@ function languageKeyboard(lang, state = null) {
     if (state && isReconfig(state)) {
         kb.text(msg.backMenu, "cfg:menu").row();
     }
-    kb.text(msg.done, "cfg:cancel");
     return kb;
 }
 
@@ -454,14 +453,17 @@ function providerKeyboard(lang, state = null) {
     if (state && isReconfig(state)) {
         kb.text(msg.backMenu, "cfg:menu").row();
     }
-    kb.text(msg.done, "cfg:cancel");
     return kb;
 }
 
-function pageRange(total, page) {
-    const from = total ? page * MODELS_PER_PAGE + 1 : 0;
-    const to = Math.min((page + 1) * MODELS_PER_PAGE, total);
-    return { from, to, total };
+function modelCount(state) {
+    const partition = state.data.modelPartition;
+    if (!partition) return 0;
+    if (state.data.selectedModelPrefix) {
+        return partition.byPrefix?.[state.data.selectedModelPrefix]?.length || 0;
+    }
+    const items = vendorPickerItems(state);
+    return items.length;
 }
 
 function vendorPickerItems(state) {
@@ -481,22 +483,14 @@ function variantPickerItems(state) {
 
 function vendorCaption(lang, state) {
     const msg = texts(lang);
-    const items = vendorPickerItems(state);
-    const page = state.data.modelPage || 0;
-    const { from, to, total } = pageRange(items.length, page);
-    return msg.modelVendorPick.replace("{from}", String(from)).replace("{to}", String(to)).replace("{total}", String(total));
+    const total = modelCount(state);
+    return msg.modelVendorPick.replace("{total}", String(total));
 }
 
 function variantCaption(lang, state) {
     const msg = texts(lang);
-    const items = variantPickerItems(state);
-    const page = state.data.modelPage || 0;
-    const { from, to, total } = pageRange(items.length, page);
-    return msg.modelVariantPick
-        .replace("{prefix}", state.data.selectedModelPrefix || "")
-        .replace("{from}", String(from))
-        .replace("{to}", String(to))
-        .replace("{total}", String(total));
+    const total = modelCount(state);
+    return msg.modelVariantPick.replace("{total}", String(total));
 }
 
 function trimLabel(label, max = 36) {
@@ -535,7 +529,10 @@ function vendorKeyboard(state) {
     }
 
     addPager(kb, msg, page, items.length, "cfg:mvpage");
-    kb.text(msg.manual, "cfg:model:__manual__").row().text(msg.cancel, "cfg:cancel");
+    kb.text(msg.manual, "cfg:model:__manual__").row();
+    if (isReconfig(state)) {
+        kb.text(msg.backMenu, "cfg:menu").row();
+    }
     return kb;
 }
 
@@ -556,7 +553,10 @@ function variantKeyboard(state) {
 
     addPager(kb, msg, page, items.length, "cfg:mdpage");
     kb.text(msg.modelBack, "cfg:modelback").row();
-    kb.text(msg.manual, "cfg:model:__manual__").row().text(msg.cancel, "cfg:cancel");
+    kb.text(msg.manual, "cfg:model:__manual__").row();
+    if (isReconfig(state)) {
+        kb.text(msg.backMenu, "cfg:menu").row();
+    }
     return kb;
 }
 
@@ -796,13 +796,6 @@ export async function handleConfigWizardCallback(ctx, bot) {
     const { chatId } = access;
 
     if (data === "cfg:done") {
-        await ctx.answerCallbackQuery();
-        await dismissCallbackPrompt(ctx, bot, chatId, state);
-        clearState();
-        return;
-    }
-
-    if (data === "cfg:cancel") {
         await ctx.answerCallbackQuery();
         await dismissCallbackPrompt(ctx, bot, chatId, state);
         clearState();
