@@ -68,11 +68,13 @@ skill-name/
 #### Progressive Disclosure
 
 Skills use a three-level loading system:
+
 1. **Metadata** (name + description) - Always in context (~100 words)
 2. **SKILL.md body** - In context whenever skill triggers (<500 lines ideal)
 3. **Bundled resources** - As needed (read with `file_read` when needed)
 
 **Key patterns:**
+
 - Keep SKILL.md under 500 lines; if approaching this limit, add hierarchy with clear pointers to reference files.
 - Reference files clearly from SKILL.md with guidance on when to read them
 - For large reference files (>300 lines), include a table of contents
@@ -100,12 +102,14 @@ After writing the draft, improve the skill based on user feedback.
 ### The iteration loop
 
 After improving the skill:
+
 1. Apply your improvements to the skill (using `file_patch`)
 2. Present the changes to the user
 3. Wait for feedback
 4. Read the new feedback, improve again, repeat
 
 Keep going until:
+
 - The user says they're happy
 - You're not making meaningful progress
 

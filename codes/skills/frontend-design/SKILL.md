@@ -63,6 +63,7 @@ Keep the register conversational and tuned: plain verbs, sentence case, no fille
 ## Mobile-first for Telegram
 
 Since the user will likely view the result in Telegram's in-app browser:
+
 - Tap targets ≥ 44px
 - No hover-only interactions
 - No horizontal scroll

@@ -16,11 +16,11 @@ All script paths below are relative to this skill directory: `{{SYSTEM_SKILLS_DI
 
 ## Quick Reference
 
-| Task | Guide |
-|------|-------|
-| Read/analyze content | `python -m markitdown presentation.pptx` |
-| Edit or create from template | Read [editing.md](editing.md) with `file_read` |
-| Create from scratch | Read [pptxgenjs.md](pptxgenjs.md) with `file_read` |
+| Task                         | Guide                                              |
+| ---------------------------- | -------------------------------------------------- |
+| Read/analyze content         | `python -m markitdown presentation.pptx`           |
+| Edit or create from template | Read [editing.md](editing.md) with `file_read`     |
+| Create from scratch          | Read [pptxgenjs.md](pptxgenjs.md) with `file_read` |
 
 ---
 
@@ -47,6 +47,7 @@ python {{SYSTEM_SKILLS_DIR}}/pptx/scripts/office/unpack.py presentation.pptx unp
 2. Unpack → manipulate slides → edit content with `file_read`/`file_patch` → clean → pack
 
 Key scripts:
+
 ```bash
 # Unpack
 python {{SYSTEM_SKILLS_DIR}}/pptx/scripts/office/unpack.py presentation.pptx unpacked/
@@ -86,30 +87,32 @@ Use when no template or reference presentation is available. Uses `pptxgenjs` (`
 
 Choose colors that match your topic — don't default to generic blue.
 
-| Theme | Primary | Secondary | Accent |
-|-------|---------|-----------|--------|
-| **Midnight Executive** | `1E2761` (navy) | `CADCFC` (ice blue) | `FFFFFF` (white) |
-| **Forest & Moss** | `2C5F2D` (forest) | `97BC62` (moss) | `F5F5F5` (cream) |
-| **Coral Energy** | `F96167` (coral) | `F9E795` (gold) | `2F3C7E` (navy) |
-| **Warm Terracotta** | `B85042` (terracotta) | `E7E8D1` (sand) | `A7BEAE` (sage) |
-| **Ocean Gradient** | `065A82` (deep blue) | `1C7293` (teal) | `21295C` (midnight) |
-| **Charcoal Minimal** | `36454F` (charcoal) | `F2F2F2` (off-white) | `212121` (black) |
-| **Teal Trust** | `028090` (teal) | `00A896` (seafoam) | `02C39A` (mint) |
-| **Berry & Cream** | `6D2E46` (berry) | `A26769` (dusty rose) | `ECE2D0` (cream) |
-| **Sage Calm** | `84B59F` (sage) | `69A297` (eucalyptus) | `50808E` (slate) |
-| **Cherry Bold** | `990011` (cherry) | `FCF6F5` (off-white) | `2F3C7E` (navy) |
+| Theme                  | Primary               | Secondary             | Accent              |
+| ---------------------- | --------------------- | --------------------- | ------------------- |
+| **Midnight Executive** | `1E2761` (navy)       | `CADCFC` (ice blue)   | `FFFFFF` (white)    |
+| **Forest & Moss**      | `2C5F2D` (forest)     | `97BC62` (moss)       | `F5F5F5` (cream)    |
+| **Coral Energy**       | `F96167` (coral)      | `F9E795` (gold)       | `2F3C7E` (navy)     |
+| **Warm Terracotta**    | `B85042` (terracotta) | `E7E8D1` (sand)       | `A7BEAE` (sage)     |
+| **Ocean Gradient**     | `065A82` (deep blue)  | `1C7293` (teal)       | `21295C` (midnight) |
+| **Charcoal Minimal**   | `36454F` (charcoal)   | `F2F2F2` (off-white)  | `212121` (black)    |
+| **Teal Trust**         | `028090` (teal)       | `00A896` (seafoam)    | `02C39A` (mint)     |
+| **Berry & Cream**      | `6D2E46` (berry)      | `A26769` (dusty rose) | `ECE2D0` (cream)    |
+| **Sage Calm**          | `84B59F` (sage)       | `69A297` (eucalyptus) | `50808E` (slate)    |
+| **Cherry Bold**        | `990011` (cherry)     | `FCF6F5` (off-white)  | `2F3C7E` (navy)     |
 
 ### For Each Slide
 
 **Every slide needs a visual element** — image, chart, icon, or shape. Text-only slides are forgettable.
 
 **Layout options:**
+
 - Two-column (text left, illustration on right)
 - Icon + text rows (icon in colored circle, bold header, description below)
 - 2x2 or 2x3 grid (image on one side, grid of content blocks on other)
 - Half-bleed image (full left or right side) with content overlay
 
 **Data display:**
+
 - Large stat callouts (big numbers 60-72pt with small labels below)
 - Comparison columns (before/after, pros/cons, side-by-side options)
 - Timeline or process flow (numbered steps, arrows)
@@ -118,23 +121,23 @@ Choose colors that match your topic — don't default to generic blue.
 
 **Choose an interesting font pairing** — don't default to Arial.
 
-| Header Font | Body Font |
-|-------------|-----------|
-| Georgia | Calibri |
-| Arial Black | Arial |
-| Calibri | Calibri Light |
-| Cambria | Calibri |
-| Trebuchet MS | Calibri |
-| Impact | Arial |
-| Palatino | Garamond |
-| Consolas | Calibri |
+| Header Font  | Body Font     |
+| ------------ | ------------- |
+| Georgia      | Calibri       |
+| Arial Black  | Arial         |
+| Calibri      | Calibri Light |
+| Cambria      | Calibri       |
+| Trebuchet MS | Calibri       |
+| Impact       | Arial         |
+| Palatino     | Garamond      |
+| Consolas     | Calibri       |
 
-| Element | Size |
-|---------|------|
-| Slide title | 36-44pt bold |
-| Section header | 20-24pt bold |
-| Body text | 14-16pt |
-| Captions | 10-12pt muted |
+| Element        | Size          |
+| -------------- | ------------- |
+| Slide title    | 36-44pt bold  |
+| Section header | 20-24pt bold  |
+| Body text      | 14-16pt       |
+| Captions       | 10-12pt muted |
 
 ### Spacing
 
@@ -170,6 +173,7 @@ python -m markitdown output.pptx
 ```
 
 Check for missing content, typos, wrong order. Check for leftover placeholder text:
+
 ```bash
 python -m markitdown output.pptx | grep -iE "xxxx|lorem|ipsum|this.*(page|slide).*layout"
 ```
@@ -177,12 +181,14 @@ python -m markitdown output.pptx | grep -iE "xxxx|lorem|ipsum|this.*(page|slide)
 ### Visual QA
 
 Convert slides to images for visual inspection:
+
 ```bash
 python {{SYSTEM_SKILLS_DIR}}/pptx/scripts/office/soffice.py --headless --convert-to pdf output.pptx
 pdftoppm -jpeg -r 150 output.pdf slide
 ```
 
 Then use `file_read` on each slide image to inspect it. Look for:
+
 - Overlapping elements (text through shapes, lines through words)
 - Text overflow or cut off at edges/box boundaries
 - Elements too close (< 0.3" gaps) or cards/sections nearly touching
@@ -206,6 +212,7 @@ Then use `file_read` on each slide image to inspect it. Look for:
 ## Sending the result
 
 After creating or editing the .pptx, send it to the user:
+
 ```
 telegram_send_file(path="<output.pptx>")
 ```

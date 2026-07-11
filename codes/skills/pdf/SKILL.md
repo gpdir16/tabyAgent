@@ -36,6 +36,7 @@ for page in reader.pages:
 ### pypdf — Basic Operations
 
 #### Merge PDFs
+
 ```python
 from pypdf import PdfWriter, PdfReader
 
@@ -50,6 +51,7 @@ with open("merged.pdf", "wb") as output:
 ```
 
 #### Split PDF
+
 ```python
 reader = PdfReader("input.pdf")
 for i, page in enumerate(reader.pages):
@@ -60,6 +62,7 @@ for i, page in enumerate(reader.pages):
 ```
 
 #### Rotate Pages
+
 ```python
 reader = PdfReader("input.pdf")
 writer = PdfWriter()
@@ -75,6 +78,7 @@ with open("rotated.pdf", "wb") as output:
 ### pdfplumber — Text and Table Extraction
 
 #### Extract Text with Layout
+
 ```python
 import pdfplumber
 
@@ -85,6 +89,7 @@ with pdfplumber.open("document.pdf") as pdf:
 ```
 
 #### Extract Tables
+
 ```python
 with pdfplumber.open("document.pdf") as pdf:
     for i, page in enumerate(pdf.pages):
@@ -98,6 +103,7 @@ with pdfplumber.open("document.pdf") as pdf:
 ### reportlab — Create PDFs
 
 #### Basic PDF Creation
+
 ```python
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -110,6 +116,7 @@ c.save()
 ```
 
 #### Create PDF with Multiple Pages
+
 ```python
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
@@ -131,6 +138,7 @@ doc.build(story)
 #### Subscripts and Superscripts
 
 **IMPORTANT**: Never use Unicode subscript/superscript characters in ReportLab PDFs — they render as black boxes. Use ReportLab's XML markup tags:
+
 ```python
 chemical = Paragraph("H<sub>2</sub>O", styles['Normal'])
 squared = Paragraph("x<super>2</super> + y<super>2</super>", styles['Normal'])
@@ -139,6 +147,7 @@ squared = Paragraph("x<super>2</super> + y<super>2</super>", styles['Normal'])
 ## Command-Line Tools
 
 ### pdftotext (poppler-utils)
+
 ```bash
 pdftotext input.pdf output.txt
 pdftotext -layout input.pdf output.txt
@@ -146,6 +155,7 @@ pdftotext -f 1 -l 5 input.pdf output.txt  # Pages 1-5
 ```
 
 ### qpdf
+
 ```bash
 # Merge PDFs
 qpdf --empty --pages file1.pdf file2.pdf -- merged.pdf
@@ -163,6 +173,7 @@ qpdf --password=mypassword --decrypt encrypted.pdf decrypted.pdf
 ## Common Tasks
 
 ### Extract Text from Scanned PDFs (OCR)
+
 ```python
 # Requires: pip install pytesseract pdf2image
 import pytesseract
@@ -178,6 +189,7 @@ for i, image in enumerate(images):
 ```
 
 ### Add Watermark
+
 ```python
 from pypdf import PdfReader, PdfWriter
 
@@ -194,11 +206,13 @@ with open("watermarked.pdf", "wb") as output:
 ```
 
 ### Convert PDF to Images
+
 ```bash
 python {{SYSTEM_SKILLS_DIR}}/pdf/scripts/convert_pdf_to_images.py document.pdf output_dir/
 ```
 
 ### Password Protection
+
 ```python
 from pypdf import PdfReader, PdfWriter
 
@@ -217,6 +231,7 @@ with open("encrypted.pdf", "wb") as output:
 ### Fill PDF Forms
 
 For fillable PDF forms, read `forms.md` with `file_read` first, then use the provided scripts:
+
 ```bash
 python {{SYSTEM_SKILLS_DIR}}/pdf/scripts/check_fillable_fields.py form.pdf
 python {{SYSTEM_SKILLS_DIR}}/pdf/scripts/extract_form_field_info.py form.pdf
@@ -224,26 +239,28 @@ python {{SYSTEM_SKILLS_DIR}}/pdf/scripts/fill_fillable_fields.py form.pdf output
 ```
 
 For annotation-based form filling:
+
 ```bash
 python {{SYSTEM_SKILLS_DIR}}/pdf/scripts/fill_pdf_form_with_annotations.py form.pdf output.pdf data.json
 ```
 
 ## Quick Reference
 
-| Task | Best Tool | Command/Code |
-|------|-----------|--------------|
-| Merge PDFs | pypdf | `writer.add_page(page)` |
-| Split PDFs | pypdf | One page per file |
-| Extract text | pdfplumber | `page.extract_text()` |
-| Extract tables | pdfplumber | `page.extract_tables()` |
-| Create PDFs | reportlab | Canvas or Platypus |
-| Command line merge | qpdf | `qpdf --empty --pages ...` |
-| OCR scanned PDFs | pytesseract | Convert to image first |
-| Fill PDF forms | see `forms.md` | Use provided scripts |
+| Task               | Best Tool      | Command/Code               |
+| ------------------ | -------------- | -------------------------- |
+| Merge PDFs         | pypdf          | `writer.add_page(page)`    |
+| Split PDFs         | pypdf          | One page per file          |
+| Extract text       | pdfplumber     | `page.extract_text()`      |
+| Extract tables     | pdfplumber     | `page.extract_tables()`    |
+| Create PDFs        | reportlab      | Canvas or Platypus         |
+| Command line merge | qpdf           | `qpdf --empty --pages ...` |
+| OCR scanned PDFs   | pytesseract    | Convert to image first     |
+| Fill PDF forms     | see `forms.md` | Use provided scripts       |
 
 ## Sending the result
 
 After creating or editing the PDF, send it to the user:
+
 ```
 telegram_send_file(path="<output.pdf>")
 ```
