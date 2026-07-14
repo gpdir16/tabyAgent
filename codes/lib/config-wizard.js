@@ -32,6 +32,7 @@ const PROVIDERS = {
     ollama: { id: "ollama", label: "Ollama (local)", apiKeyOptional: true },
     ollamaCloud: { id: "ollama-cloud", label: "Ollama Cloud" },
     zenmux: { id: "zenmux", label: "ZenMux" },
+    upstage: { id: "upstage", label: "Upstage" },
     codex: { id: "codex", label: "Codex OAuth (ChatGPT Plus/Pro)", apiKeyOptional: true },
     custom: { id: "default", custom: true, label: "Custom URL" },
 };
@@ -445,6 +446,8 @@ function providerKeyboard(lang, state = null) {
         .text("Ollama Cloud", "cfg:prov:ollamaCloud")
         .row()
         .text("ZenMux", "cfg:prov:zenmux")
+        .row()
+        .text("Upstage", "cfg:prov:upstage")
         .row()
         .text("Codex OAuth (ChatGPT Plus/Pro)", "cfg:prov:codex")
         .row()

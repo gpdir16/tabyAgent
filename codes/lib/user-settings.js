@@ -27,13 +27,17 @@ export function getUserUpdateCheckEnabled(config = loadUserConfig()) {
     return null;
 }
 
-export function providerKeyFromId(providerId) {
+export function providerKeyFromId(providerId, config = loadUserConfig()) {
     if (providerId === "openrouter") return "openrouter";
     if (providerId === "synthetic") return "synthetic";
     if (providerId === "ollama") return "ollama";
     if (providerId === "ollama-cloud") return "ollamaCloud";
     if (providerId === "zenmux") return "zenmux";
+    if (providerId === "upstage") return "upstage";
     if (providerId === "codex") return "codex";
+    // provider.id === "default" — distinguish OpenAI from a custom baseURL override
+    const override = (config?.provider?.baseURL || "").trim().replace(/\/$/, "");
+    if (override && override !== "https://api.openai.com/v1") return "custom";
     return "openai";
 }
 export const NSFW_LEVELS = ["strict", "moderate", "explicit"];
@@ -97,7 +101,7 @@ export function seedWizardDataFromConfig(config = loadUserConfig()) {
     return {
         language: config.language || "en",
         providerId,
-        providerKey: providerKeyFromId(providerId),
+        providerKey: providerKeyFromId(providerId, config),
         baseURL: config.provider?.baseURL || "",
         apiKey: config.provider?.apiKey || "",
         model: config.provider?.model || "",
