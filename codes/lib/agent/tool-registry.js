@@ -44,7 +44,9 @@ export async function executeTool(name, args, ctx = {}) {
         if (name === "config_set") return await executeConfigTool(name, args);
         if (name.startsWith("skills_")) return await executeSkillsTool(name, args);
         if (name.startsWith("cron_")) return await executeCronTool(name, args);
-        if (name === "terminal_run") return await executeTerminalTool(name, args, ctx);
+        if (name === "terminal_run" || name === "bg_status" || name === "bg_list" || name === "bg_kill") {
+            return await executeTerminalTool(name, args, ctx);
+        }
         if (name === "telegram_send_file") return await executeSendFileTool(name, args, ctx);
         if (name === "viz_create") return await executeVizTool(name, args);
         if (name.startsWith("mcp__")) return await invokeMcpTool(name, args);
