@@ -21,6 +21,10 @@ import {
     normalizeNsfwLevel,
     nsfwLevelLabel,
     NSFW_LEVELS,
+    getApprovalLevel,
+    normalizeApprovalLevel,
+    approvalLevelLabel,
+    APPROVAL_LEVELS,
 } from "./user-settings.js";
 
 const STATE_PATH = path.join(USER_DIR, "temp", "onboarding.json");
@@ -159,6 +163,9 @@ async function applyConfig(partial) {
     if (partial.nsfwLevel !== undefined) {
         config.nsfwLevel = normalizeNsfwLevel(partial.nsfwLevel);
     }
+    if (partial.approvalLevel !== undefined) {
+        config.approvalLevel = normalizeApprovalLevel(partial.approvalLevel);
+    }
     if (partial.updateCheckEnabled !== undefined) {
         config.updateCheckEnabled = Boolean(partial.updateCheckEnabled);
     }
@@ -206,6 +213,8 @@ function texts(lang) {
             nsfwStrict: "Not allowed",
             nsfwModerate: "Indirect mentions only",
             nsfwExplicit: "Fully allowed",
+            catApproval: "Permanent actions",
+            approvalPick: "For permanent/irreversible actions (payments, account/data deletion, external sends), decide who approves them.",
             thinkingPick: "Pick a level returned by /models for this model:",
             thinkingManual: "Send the exact thinking/reasoning value your API expects:",
             footerPick: "Show token/tool stats under each reply:",
@@ -252,6 +261,8 @@ function texts(lang) {
             nsfwStrict: "허용하지 않음",
             nsfwModerate: "간접 언급만 허용",
             nsfwExplicit: "전체 허용",
+            catApproval: "영구적인 행위",
+            approvalPick: "영구적이고 되돌릴 수 없는 행위(결제, 계정/데이터 삭제, 외부 발송)를 어떻게 승인할지 설정하세요.",
             thinkingManual: "API가 받는 사고/추론 값을 그대로 입력:",
             footerPick: "답변 아래 토큰/툴 통계 표시:",
             updatePick: "새 버전 확인 후 알림:",
@@ -297,6 +308,8 @@ function texts(lang) {
             nsfwStrict: "許可しない",
             nsfwModerate: "間接言及のみ許可",
             nsfwExplicit: "全面許可",
+            catApproval: "恒久的な行為",
+            approvalPick: "恒久的・取り消し不能な行為（決済、アカウント・データ削除、外部送信）の承認方法を選んでください。",
             thinkingPick: "このモデルの /models が返した思考レベル:",
             thinkingManual: "API が受け付ける思考/推論の値をそのまま送信:",
             footerPick: "返信下にトークン/ツール統計を表示:",
@@ -335,6 +348,7 @@ function menuKeyboard(state) {
     kb.text(`${msg.catFooter}: ${onOffLabel(lang, state.data.showReplyFooter !== false)}`, "cfg:cat:footer").row();
     kb.text(`${msg.catUpdate}: ${onOffLabel(lang, state.data.updateCheckEnabled !== false)}`, "cfg:cat:update").row();
     kb.text(`${msg.catNsfw}: ${nsfwLevelLabel(lang, getNsfwLevel(cfg))}`, "cfg:cat:nsfw").row();
+    kb.text(`${msg.catApproval}: ${approvalLevelLabel(lang, getApprovalLevel(cfg))}`, "cfg:cat:approval").row();
     kb.text(msg.done, "cfg:done");
     return kb;
 }
@@ -381,6 +395,17 @@ function nsfwKeyboard(state) {
     kb.text(`${cur === "strict" ? "✓ " : ""}${msg.nsfwStrict}`, "cfg:nsfw:strict").row();
     kb.text(`${cur === "moderate" ? "✓ " : ""}${msg.nsfwModerate}`, "cfg:nsfw:moderate").row();
     kb.text(`${cur === "explicit" ? "✓ " : ""}${msg.nsfwExplicit}`, "cfg:nsfw:explicit").row();
+    kb.text(msg.backMenu, "cfg:menu");
+    return kb;
+}
+function approvalKeyboard(state) {
+    const lang = uiLang(state);
+    const msg = texts(lang);
+    const cur = normalizeApprovalLevel(state.data.approvalLevel);
+    const kb = new InlineKeyboard();
+    for (const level of APPROVAL_LEVELS) {
+        kb.text(`${cur === level ? "✓ " : ""}${approvalLevelLabel(lang, level)}`, `cfg:approval:${level}`).row();
+    }
     kb.text(msg.backMenu, "cfg:menu");
     return kb;
 }
@@ -878,6 +903,28 @@ export async function handleConfigWizardCallback(ctx, bot) {
         state.step = "nsfw_pick";
         saveState(state);
         await replaceStep(bot, chatId, state, texts(uiLang(state)).nsfwPick, nsfwKeyboard(state));
+        return;
+    }
+    if (data === "cfg:cat:approval") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.step = "approval_pick";
+        saveState(state);
+        await replaceStep(bot, chatId, state, texts(uiLang(state)).approvalPick, approvalKeyboard(state));
+        return;
+    }
+    if (data.startsWith("cfg:approval:")) {
+        const level = data.slice("cfg:approval:".length);
+        if (!APPROVAL_LEVELS.includes(level)) {
+            await ctx.answerCallbackQuery();
+            return;
+        }
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.data.approvalLevel = level;
+        await applyConfig({ approvalLevel: level });
+        saveState(state);
+        await returnToMenu(bot, chatId, state);
         return;
     }
     if (data.startsWith("cfg:think:")) {

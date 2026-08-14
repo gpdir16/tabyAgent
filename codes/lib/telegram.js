@@ -10,6 +10,7 @@ import { isConfigReady, isWizardActive, openConfigWizard, handleConfigWizardText
 import { sendTelegramReply } from "./telegram-stats.js";
 import { t, formatAgentError } from "./i18n.js";
 import { cancelQueuedAgentWork, scheduleWork } from "./agent-queue.js";
+import { hasPendingAsk, resolvePendingAskByButton, resolvePendingAskByText } from "./agent/user-ask.js";
 import { beginAgentSession, endAgentSession, enqueueAgentMessage, isAgentSessionRunning, requestAgentStop } from "./agent/session.js";
 import { saveIncomingTelegramFile, formatFileUserMessage } from "./telegram-downloads.js";
 import { isVisionImageAttachment } from "./llm/vision.js";
@@ -443,6 +444,24 @@ export async function startTelegramBot() {
         await handleConfigWizardCallback(ctx, bot);
     });
 
+    bot.callbackQuery(/^ask:/, async (ctx) => {
+        const chatId = String(ctx.chat?.id);
+        const lang = loadUserConfig().language || "en";
+        const parts = String(ctx.callbackQuery?.data || "").split(":");
+        const askId = parts[1];
+        const idx = Number(parts[2]);
+        if (!askId || !Number.isInteger(idx)) {
+            await ctx.answerCallbackQuery({ text: t("user_ask_expired", lang) });
+            return;
+        }
+        const answered = resolvePendingAskByButton(chatId, askId, idx);
+        if (answered === null) {
+            await ctx.answerCallbackQuery({ text: t("user_ask_expired", lang) });
+            return;
+        }
+        await ctx.answerCallbackQuery({ text: `✅ ${answered.slice(0, 60)}` });
+    });
+
     bot.on(["message:document", "message:photo", "message:video", "message:audio", "message:voice"], async (ctx) => {
         const chatId = String(ctx.chat.id);
 
@@ -498,6 +517,11 @@ export async function startTelegramBot() {
         const lang = loadUserConfig().language || "en";
 
         if (!(await requireApprovedAccess(ctx, { claimFirst: true }))) {
+            return;
+        }
+
+        // 대기 중인 user_ask가 있으면 이 텍스트를 답변으로 처리하고 에이전트 큐로 보내지 않는다.
+        if (hasPendingAsk(chatId) && resolvePendingAskByText(chatId, trimmed)) {
             return;
         }
 

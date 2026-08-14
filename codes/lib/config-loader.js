@@ -59,6 +59,7 @@ export function loadUserConfig() {
         showReplyFooter: true,
         updateCheckEnabled: true,
         nsfwLevel: "moderate",
+        approvalLevel: "model",
     });
 }
 

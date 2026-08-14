@@ -55,6 +55,62 @@ export function getNsfwLevel(config = loadUserConfig()) {
     return normalizeNsfwLevel(config.nsfwLevel);
 }
 
+// 영구적/되돌릴 수 없는 행위(결제, 계정·데이터 삭제, 외부 발송)에 대한 승인 정책.
+// user = 항상 사용자에게 물어봄 / model = 모델이 판단 / always = 승인 없이 자율 실행
+export const APPROVAL_LEVELS = ["user", "model", "always"];
+export const DEFAULT_APPROVAL_LEVEL = "model";
+
+export function normalizeApprovalLevel(value) {
+    if (typeof value !== "string") return DEFAULT_APPROVAL_LEVEL;
+    const v = value.trim().toLowerCase();
+    if (v === "off" || v === "never" || v === "auto-allow") return "always";
+    if (v === "always-ask") return "user";
+    return APPROVAL_LEVELS.includes(v) ? v : DEFAULT_APPROVAL_LEVEL;
+}
+
+export function getApprovalLevel(config = loadUserConfig()) {
+    return normalizeApprovalLevel(config.approvalLevel);
+}
+
+export function approvalLevelLabel(lang, level) {
+    const labels = {
+        en: { user: "User decides & approves", model: "Model decides & approves", always: "Always allow" },
+        ko: { user: "사용자가 판단하여 승인", model: "모델이 판단하여 승인", always: "항상 허용" },
+        ja: { user: "ユーザーが判断して承認", model: "モデルが判断して承認", always: "常に許可" },
+    };
+    return (labels[lang] || labels.en)[normalizeApprovalLevel(level)] || labels.en[DEFAULT_APPROVAL_LEVEL];
+}
+
+export function approvalPolicyLabel(level) {
+    return {
+        user: "ask the user every time",
+        model: "model decides",
+        always: "always allowed",
+    }[normalizeApprovalLevel(level)];
+}
+
+export function buildApprovalPolicyText(level) {
+    const lvl = normalizeApprovalLevel(level);
+    if (lvl === "user") {
+        return [
+            '- Before ANY permanent or hard-to-undo action — sending email/messages to third parties, payments or purchases, deleting an account or remote data — you MUST call `user_ask` with a clear question and short options (e.g. ["승인", "취소"]) and wait for the answer. Never skip the question, whatever the task.',
+            "- Local reversible work (files, browser, terminal, `telegram_send_file`) stays autonomous — do not ask for it.",
+        ].join("\n");
+    }
+    if (lvl === "always") {
+        return [
+            "- Permanent or irreversible actions (payments or purchases, account or remote data deletion, external sends) need NO approval — act autonomously and do not call `user_ask` for them.",
+            "- `user_ask` remains available only for choices or preferences the user must make; use it sparingly.",
+        ].join("\n");
+    }
+    // model (기본값): 유저가 직접 시킨 행위는 묻지 않고, 모델이 스스로 하려는 영구적 행위만 묻는다.
+    return [
+        "- If the user explicitly asked you to carry out the action, do it — do NOT call `user_ask` to re-confirm what they already requested.",
+        "- If an action is your OWN initiative (the user did not ask for it; you only think it would be good) and it is permanent or has external side effects — email/messages to third parties, payments or purchases, deleting an account or remote data — call `user_ask`, wait for the answer, then proceed.",
+        "- Local reversible work (files, browser, terminal, `telegram_send_file`) stays autonomous — do not ask for it.",
+    ].join("\n");
+}
+
 export function nsfwLevelLabel(lang, level) {
     const labels = {
         en: { strict: "Not allowed", moderate: "Indirect mentions only", explicit: "Fully allowed" },
@@ -114,5 +170,6 @@ export function seedWizardDataFromConfig(config = loadUserConfig()) {
         showReplyFooter: isReplyFooterEnabled(config),
         updateCheckEnabled: config.updateCheckEnabled !== false,
         nsfwLevel: getNsfwLevel(config),
+        approvalLevel: getApprovalLevel(config),
     };
 }

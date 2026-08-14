@@ -49,6 +49,31 @@ const MESSAGES = {
         ko: "작업은 마쳤지만 텍스트 응답을 여러 번 시도해도 생성하지 못했습니다. 다시 요청하거나 결과 요약을 요청해 주세요.",
         ja: "作業は完了しましたが、テキスト応答を複数回試しても生成できませんでした。再度依頼するか、結果の要約を求めてください。",
     },
+    user_ask_hint_button: {
+        en: "Tap a button below, or type your own answer.",
+        ko: "아래 버튼을 누르거나, 메시지로 직접 답해 주세요.",
+        ja: "下のボタンを押すか、メッセージで直接回答してください。",
+    },
+    user_ask_hint_text: {
+        en: "Type your answer as a message.",
+        ko: "메시지로 직접 답해 주세요.",
+        ja: "メッセージで直接回答してください。",
+    },
+    user_ask_timeout: {
+        en: "No answer within the time limit — the question was cancelled.",
+        ko: "시간 내에 답변이 없어 질문이 취소되었습니다.",
+        ja: "制限時間内に回答がなく、質問はキャンセルされました。",
+    },
+    user_ask_expired: {
+        en: "This question is no longer active.",
+        ko: "이 질문은 더 이상 유효하지 않습니다.",
+        ja: "この質問はもう有効ではありません。",
+    },
+    user_ask_cancelled: {
+        en: "Cancelled.",
+        ko: "취소됨.",
+        ja: "キャンセルされました。",
+    },
     agent_error: {
         en: "Something went wrong while processing your message.",
         ko: "메시지 처리 중 오류가 발생했습니다.",
