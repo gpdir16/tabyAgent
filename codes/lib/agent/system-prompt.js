@@ -3,7 +3,6 @@ import { memoryFilePath, mcpConfigPath, skillsDirPath } from "../path-labels.js"
 import { isDockerRuntime } from "../runtime.js";
 
 const PLACEHOLDER_RE = /\{\{([A-Z][A-Z0-9_]*)\}\}/g;
-const CACHE_BOUNDARY_RE = /^---\s*CACHE_BOUNDARY.*$/m;
 
 export function renderSystemPrompt(template, vars) {
     return template.replace(PLACEHOLDER_RE, (match, key) => {
@@ -14,28 +13,6 @@ export function renderSystemPrompt(template, vars) {
         const value = vars[key];
         return value == null ? "" : String(value);
     });
-}
-
-export function splitCacheBoundary(template) {
-    const match = template.match(CACHE_BOUNDARY_RE);
-    if (!match || match.index === undefined) {
-        return { stable: template, volatile: "" };
-    }
-    return {
-        stable: template.slice(0, match.index).trimEnd(),
-        volatile: template.slice(match.index + match[0].length).trimStart(),
-    };
-}
-
-export function buildSystemPromptParts(template, vars) {
-    const { stable, volatile } = splitCacheBoundary(template);
-    const stableRendered = renderSystemPrompt(stable, vars);
-    const volatileRendered = renderSystemPrompt(volatile, vars);
-    return {
-        stable: stableRendered,
-        volatile: volatileRendered,
-        full: `${stableRendered}\n\n${volatileRendered}`.trim(),
-    };
 }
 
 function localeForLanguage(lang) {

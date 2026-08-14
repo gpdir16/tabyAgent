@@ -13,7 +13,7 @@ import {
     buildEnvironmentPromptVars,
     buildFilesystemPromptBlock,
     buildRuntimeInfoLine,
-    buildSystemPromptParts,
+    renderSystemPrompt,
 } from "./system-prompt.js";
 import { formatPastSessionsForPrompt, turnToMessages, cloneStoredMessage } from "./chat-history.js";
 const SYSTEM_PATH = path.join(CODES_DIR, "lib", "prompts", "system.txt");
@@ -81,7 +81,7 @@ export function buildSystemMessageContent(lang, { truncateMemory = false, maxMem
         NSFW_LEVEL_LABEL: nsfwPolicyLabel(getNsfwLevel(loadUserConfig())),
         NSFW_POLICY: buildNsfwPolicyText(getNsfwLevel(loadUserConfig())),
     };
-    return buildSystemPromptParts(template, vars).full;
+    return renderSystemPrompt(template, vars).trim();
 }
 
 export function buildInitialMessages(
