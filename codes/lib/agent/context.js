@@ -3,7 +3,7 @@ import path from "node:path";
 import { getEncoding } from "js-tiktoken";
 import { sanitizeTextForLlm } from "../llm/sanitize-messages.js";
 import { CODES_DIR } from "../paths.js";
-import { readMemoryFile } from "../memory-file.js";
+import { readMemoryFile, formatMemoryFilesListForPrompt } from "../memory-file.js";
 import { loadAgentConfig, loadUserConfig } from "../config-loader.js";
 import { getNsfwLevel, buildNsfwPolicyText, nsfwPolicyLabel } from "../user-settings.js";
 import { buildUserMessageContent, estimateContentTokens } from "../llm/vision.js";
@@ -75,6 +75,7 @@ export function buildSystemMessageContent(lang, { truncateMemory = false, maxMem
         ...buildEnvironmentPromptVars(),
         FILESYSTEM_BLOCK: buildFilesystemPromptBlock(),
         SKILLS_LIST: formatSkillsListForPrompt(),
+        MEMORY_FILES_LIST: formatMemoryFilesListForPrompt(),
         RUNTIME_INFO: buildRuntimeInfoLine(rt),
         MEMORY: loadMemoryForPrompt({ truncateMemory, maxMemoryChars }),
         PAST_SESSIONS_LIST: pastSessions,

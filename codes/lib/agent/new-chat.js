@@ -15,6 +15,7 @@ export function memoryFlushPrompt(lang) {
 - 이미 memory.md에 있는 내용은 중복하지 마세요.
 - 일시적인 잡담, 추측, 중복, 불필요한 세부사항은 **넣지 마세요**.
 - 사용자 선호, 진행 중인 작업, 중요 결정 등 장기적으로 유용한 것만 간결히 남기세요.
+- 주제별로 정리할 내용(예: 보유 주식 목록, 프로젝트 상태)은 memory.md에 넣지 말고 \`memory/<주제>.md\` 파일을 만들거나 갱신하세요. 현재 파일 목록은 시스템 프롬프트의 Memory files에 표시됩니다. 새 파일은 \`terminal_run\`(\`mkdir -p memory && touch memory/<주제>.md\`)으로 만들고, 내용이 바뀌면 갱신하고 주제가 더 이상 필요 없으면 삭제하세요.
 
 **2. 스킬 생성 (해당할 때만)**
 아래 조건 중 하나 이상이면 \`skill-author\` 스킬(\`skills_read skill-author\`)을 읽고, \`user/skills/<slug>/SKILL.md\`에 스킬을 만드세요:
@@ -36,6 +37,7 @@ Read memory.md with \`file_read\` first, then add or update with \`file_patch\`.
 - Do not duplicate what is already in memory.md.
 - Do **not** add transient chit-chat, guesses, duplicates, or unnecessary detail.
 - Keep only durable items: preferences, ongoing work, important decisions — briefly.
+- For topic-shaped facts (e.g. stock holdings list, project status), do not put them in memory.md — create or update a \`memory/<topic>.md\` file instead. Current files are listed under "Memory files" in the system prompt. Create new files with \`terminal_run\` (\`mkdir -p memory && touch memory/<topic>.md\`); update files when facts change; delete files whose topic no longer applies.
 
 **2. Create a skill (only when warranted)**
 If any of the following apply, read the \`skill-author\` skill (\`skills_read skill-author\`) and create a skill at \`user/skills/<slug>/SKILL.md\`:
@@ -57,6 +59,7 @@ Do **not** create a skill when none of these apply. One-off questions, greetings
 - memory.md に既にある内容は重複させないでください。
 - 一時的な雑談、推測、重複、不要な詳細は **入れないでください**。
 - 好み、進行中の作業、重要な決定など、長期的に有用なものだけを簡潔に残してください。
+- トピックごとに整理する内容(例: 保有株リスト、プロジェクト状態)は memory.md に入れず、\`memory/<トピック>.md\` ファイルを作成・更新してください。現在のファイル一覧はシステムプロンプトの Memory files に表示されます。新規ファイルは \`terminal_run\`(\`mkdir -p memory && touch memory/<トピック>.md\`)で作成し、内容が変わったら更新し、トピックが不要になったら削除してください。
 
 **2. スキル作成 (該当する場合のみ)**
 以下のいずれかが当てはまる場合、\`skill-author\` スキル(\`skills_read skill-author\`)を読み、\`user/skills/<slug>/SKILL.md\` にスキルを作成してください:

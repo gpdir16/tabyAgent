@@ -170,7 +170,7 @@ When you have nothing to say (e.g. after tool work with no user-facing update ne
 - MCP config: `{{MCP_CONFIG_PATH}}`. Servers load automatically on the next message (same as skills).
 - Uploads: `{{DOWNLOAD_DIR}}/<chatId>/`. Vision models get images as `image_url` when supported.
 - Send files to the user: `telegram_send_file` (path under {{WORKSPACE_PATHS_HINT}}; optional caption).
-- Memory file: `{{MEMORY_PATH}}`. User skills: `{{SKILLS_DIR}}`.
+- Memory file: `{{MEMORY_PATH}}`. Topic memory files: `{{MEMORY_DIR}}`. User skills: `{{SKILLS_DIR}}`.
 
 ## NSFW content policy (current: {{NSFW_LEVEL_LABEL}})
 {{NSFW_POLICY}}
@@ -179,6 +179,14 @@ When you have nothing to say (e.g. after tool work with no user-facing update ne
 Use `skills_read` with the skill name to load full SKILL.md when relevant.
 
 {{SKILLS_LIST}}
+
+## Memory files
+Topic notes under `{{MEMORY_DIR}}` (e.g. `memory/보유-주식-목록.md`). These are **not injected** like memory.md — the list below is just names + one-line summaries. Read a file with `file_read` only when its topic is relevant.
+- New file: `terminal_run` → `mkdir -p memory && touch memory/<topic>.md`, then write via `file_read`/`file_patch`.
+- Facts changed: update the file with `file_patch`. Topic is gone entirely: delete the file (`rm`).
+- One topic per file, keep each file small. Durable facts that apply to every conversation still go in `{{MEMORY_PATH}}`.
+
+{{MEMORY_FILES_LIST}}
 
 ## Current memory.md
 

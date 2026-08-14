@@ -1,5 +1,5 @@
 import { CODES_DIR, DOWNLOAD_DIR, USER_DIR, WORKSPACE_DIR, isWorkspaceEnabled } from "../paths.js";
-import { memoryFilePath, mcpConfigPath, skillsDirPath } from "../path-labels.js";
+import { memoryFilePath, memoryDirPath, mcpConfigPath, skillsDirPath } from "../path-labels.js";
 import { isDockerRuntime } from "../runtime.js";
 
 const PLACEHOLDER_RE = /\{\{([A-Z][A-Z0-9_]*)\}\}/g;
@@ -29,6 +29,7 @@ export function buildEnvironmentPromptVars() {
         MCP_CONFIG_PATH: mcpConfigPath(),
         DOWNLOAD_DIR,
         MEMORY_PATH: memoryFilePath(),
+        MEMORY_DIR: memoryDirPath(),
         SKILLS_DIR: skillsDirPath(),
         WORKSPACE_PATHS_HINT: pathHint,
         AUTONOMY_LINE: docker
@@ -49,7 +50,7 @@ export function buildFilesystemPromptBlock() {
             "",
             `| Path | Role |`,
             `|------|------|`,
-            `| \`${USER_DIR}\` | **Main home (default).** Docker volume: \`config.json\`, \`memory.md\`, \`skills/\`, \`mcp.json\`, \`cron.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. Exists **inside the container** — not a path on the user's PC. |`,
+            `| \`${USER_DIR}\` | **Main home (default).** Docker volume: \`config.json\`, \`memory.md\`, \`memory/\`, \`skills/\`, \`mcp.json\`, \`cron.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. Exists **inside the container** — not a path on the user's PC. |`,
             `| \`${CODES_DIR}\` | Shipped agent source and built-in skills (image; avoid editing). |`,
             `| \`/tmp\` | Ephemeral scratch inside the container. |`,
         ];
@@ -84,7 +85,7 @@ export function buildFilesystemPromptBlock() {
         "",
         `| Path | Role |`,
         `|------|------|`,
-        `| \`${USER_DIR}\` | **Main home (default).** \`config.json\`, \`memory.md\`, \`skills/\`, \`mcp.json\`, \`cron.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. |`,
+        `| \`${USER_DIR}\` | **Main home (default).** \`config.json\`, \`memory.md\`, \`memory/\`, \`skills/\`, \`mcp.json\`, \`cron.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. |`,
         `| \`${CODES_DIR}\` | Shipped agent source and built-in skills (avoid editing). |`,
         `| \`/tmp\` | Ephemeral scratch. |`,
     ];
