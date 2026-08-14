@@ -27,6 +27,7 @@ Standard **5-field cron** (minute hour day month weekday), server timezone:
 
 - Jobs run **only when the agent is idle**. If the user is mid-turn, the job waits in queue until that finishes.
 - On fire, the agent receives the job `prompt` and may reply in the configured chat.
+- If nothing needs the user (a check that passed, a skip), reply with only `__SILENT__`. Telegram stays quiet.
 - After adding/removing jobs, the scheduler reloads automatically.
 
 ## Tips

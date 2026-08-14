@@ -156,9 +156,10 @@ async function runCronJobForUser(bot, job) {
         const header = t("cron_auto_header", lang);
         const userText = `${header}\n\n${job.prompt}`;
         const result = await runAgent(userText, { chatId: job.chatId, bot });
+        saveChatTurn(job.chatId, result);
+        if (isSilentReply(result)) return;
         const body = result.text?.trim() || t("cron_no_output", lang);
         await sendTelegramReply(bot, job.chatId, `${header}\n\n${body}`, result.stats);
-        saveChatTurn(job.chatId, result);
     } catch (err) {
         console.error("Cron job error:", err?.stack || err);
     }

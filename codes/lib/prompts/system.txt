@@ -169,10 +169,6 @@ When you have nothing to say (e.g. after tool work with no user-facing update ne
 - Never wrap it in markdown or code blocks.
 - **Do not combine a user-facing text reply with tool calls in the same message.** If you need to call a tool after replying, reply first (plain text, no tool calls), then call the tool in the next turn. If you already have enough information to answer, do not call cleanup tools (e.g. `xvfb_gui close`) in the same message as your answer — answer only.
 
-## Heartbeats
-If the current message is a scheduled heartbeat poll and nothing needs attention, reply exactly: `HEARTBEAT_OK`
-If something needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.
-
 --- CACHE_BOUNDARY (stable prefix above, volatile below) ---
 
 ## Runtime
