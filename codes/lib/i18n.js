@@ -100,9 +100,9 @@ const MESSAGES = {
         ja: "新しい会話を開始しました。",
     },
     start_ready: {
-        en: "Ready. Send a message.\nSettings: /config · New chat: /new · Stop: /stop · Reload MCP: /reload",
-        ko: "준비됐어요. 메시지를 보내세요.\n설정: /config · 새 대화: /new · 중지: /stop · MCP 다시 불러오기: /reload",
-        ja: "準備完了。メッセージを送ってください。\n設定: /config · 新しい会話: /new · 停止: /stop · MCP再読み込み: /reload",
+        en: "Ready. Send a message.\nSettings: /config · New chat: /new · Stop: /stop",
+        ko: "준비됐어요. 메시지를 보내세요.\n설정: /config · 새 대화: /new · 중지: /stop",
+        ja: "準備完了。メッセージを送ってください。\n設定: /config · 新しい会話: /new · 停止: /stop",
     },
     stop_requested: {
         en: "Stopping the current task…",

@@ -6,15 +6,14 @@ import { cronToolDefinitions, executeCronTool } from "../tools/cron-tool.js";
 import { sendFileToolDefinitions, executeSendFileTool } from "../tools/send-file-tool.js";
 import { vizToolDefinitions, executeVizTool } from "../tools/visualization.js";
 import { xvfbGuiToolDefinitions, executeXvfbGuiTool } from "../tools/xvfb-gui.js";
-import { getMcpToolDefinitions, executeMcpTool } from "../tools/mcp.js";
-import { connectMcpServers, disconnectMcpServers } from "../mcp/servers.js";
+import { getDynamicMcpToolDefinitions, invokeMcpTool, syncMcpServers, disconnectMcpServers } from "../mcp/servers.js";
 import { stopCronScheduler } from "../cron/scheduler.js";
 import { stopUpdateScheduler } from "../update/scheduler.js";
 import { sanitizeTextForLlm } from "../llm/sanitize-messages.js";
 import { isDockerRuntime } from "../runtime.js";
 
 export async function initTools() {
-    await connectMcpServers();
+    await syncMcpServers();
 }
 
 export async function shutdownTools() {
@@ -23,7 +22,8 @@ export async function shutdownTools() {
     await disconnectMcpServers();
 }
 
-export function getAllToolDefinitions() {
+export async function getAllToolDefinitions() {
+    await syncMcpServers();
     return [
         ...fileToolDefinitions,
         ...configToolDefinitions,
@@ -33,7 +33,7 @@ export function getAllToolDefinitions() {
         ...sendFileToolDefinitions,
         ...vizToolDefinitions,
         ...(isDockerRuntime() ? xvfbGuiToolDefinitions : []),
-        ...getMcpToolDefinitions(),
+        ...getDynamicMcpToolDefinitions(),
     ];
 }
 
@@ -47,7 +47,7 @@ export async function executeTool(name, args, ctx = {}) {
         if (name === "terminal_run") return await executeTerminalTool(name, args, ctx);
         if (name === "telegram_send_file") return await executeSendFileTool(name, args, ctx);
         if (name === "viz_create") return await executeVizTool(name, args);
-        if (name === "mcp_reload" || name.startsWith("mcp__")) return await executeMcpTool(name, args);
+        if (name.startsWith("mcp__")) return await invokeMcpTool(name, args);
         if (name === "xvfb_gui") return await executeXvfbGuiTool(name, args, ctx);
         return { error: `Unknown tool: ${name}` };
     } catch (err) {

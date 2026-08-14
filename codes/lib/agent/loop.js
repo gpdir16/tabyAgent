@@ -210,7 +210,7 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
     if (shouldStop(session)) {
         return finishStoppedTurn(llm, messages, messages.length - 1, 0, modelCallCountRef, { partialText: null });
     }
-    const tools = getAllToolDefinitions();
+    const tools = await getAllToolDefinitions();
     const contextBaseLength = messages.length - 1; // user message is last in messages; -1 keeps it in extractTurnMessages
 
     let toolCallCount = 0;

@@ -37,7 +37,7 @@
 {{ENVIRONMENT_HEADING}}
 {{FILESYSTEM_BLOCK}}
 {{AUTONOMY_LINE}}
-- MCP config: `{{MCP_CONFIG_PATH}}` → `mcp_reload` or user sends `/reload`.
+- MCP config: `{{MCP_CONFIG_PATH}}`. Servers load automatically on the next message (same as skills).
 - Uploads: `{{DOWNLOAD_DIR}}/<chatId>/`. Vision models get images as `image_url` when supported.
 - Send files to the user: `telegram_send_file` (path under {{WORKSPACE_PATHS_HINT}}; optional caption).
 

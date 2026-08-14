@@ -65,12 +65,8 @@ export function cronListDescription() {
     return `List scheduled cron jobs from \`${cronConfigPath()}\`.`;
 }
 
-export function mcpReloadDescription() {
-    return `Reload all MCP servers from \`${mcpConfigPath()}\` (disconnect and reconnect). Same effect as the user sending /reload in Telegram. Call after you edit mcp.json.`;
-}
-
 export function mcpConfigEditHint(serverName) {
-    return `MCP server not connected: ${serverName}. Edit \`${mcpConfigPath()}\` then call mcp_reload or ask the user to send /reload.`;
+    return `MCP server not connected: ${serverName}. Edit \`${mcpConfigPath()}\`; it loads on the next message.`;
 }
 
 export function buildSkillContentVars() {

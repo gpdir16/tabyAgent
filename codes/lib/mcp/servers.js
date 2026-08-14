@@ -29,6 +29,17 @@ function mcpToolToOpenAI(serverName, tool) {
     };
 }
 
+async function closeEntry(name) {
+    const entry = servers.get(name);
+    if (!entry) return;
+    try {
+        await entry.client.close();
+    } catch {
+        // ignore
+    }
+    servers.delete(name);
+}
+
 async function connectServer(server) {
     const transport = new StdioClientTransport({
         command: server.command,
@@ -41,41 +52,27 @@ async function connectServer(server) {
     servers.set(server.name, {
         client,
         tools: tools.map((t) => mcpToolToOpenAI(server.name, t)),
+        configKey: JSON.stringify(server),
     });
-    return tools.length;
 }
 
-export async function connectMcpServers() {
-    const config = loadMcpConfig();
-    const report = { connected: [], failed: [] };
+export async function syncMcpServers() {
+    const wanted = loadMcpConfig().servers || [];
+    const wantedNames = new Set(wanted.map((s) => s.name));
 
-    for (const server of config.servers || []) {
-        try {
-            const toolCount = await connectServer(server);
-            report.connected.push({ name: server.name, tools: toolCount });
-        } catch (err) {
-            report.failed.push({ name: server.name, error: err.message || String(err) });
-        }
+    for (const name of [...servers.keys()]) {
+        if (!wantedNames.has(name)) await closeEntry(name);
     }
 
-    return report;
-}
-
-export async function reloadMcpServers() {
-    await disconnectMcpServers();
-    const config = loadMcpConfig();
-    const report = { connected: [], failed: [] };
-
-    for (const server of config.servers || []) {
+    for (const server of wanted) {
+        if (servers.get(server.name)?.configKey === JSON.stringify(server)) continue;
+        await closeEntry(server.name);
         try {
-            const toolCount = await connectServer(server);
-            report.connected.push({ name: server.name, tools: toolCount });
+            await connectServer(server);
         } catch (err) {
-            report.failed.push({ name: server.name, error: err.message || String(err) });
+            console.error(`tabyAgent: MCP ${server.name} failed:`, err.message || err);
         }
     }
-
-    return report;
 }
 
 export function getDynamicMcpToolDefinitions() {
