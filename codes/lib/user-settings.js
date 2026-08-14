@@ -64,11 +64,18 @@ export function nsfwLevelLabel(lang, level) {
     return (labels[lang] || labels.en)[normalizeNsfwLevel(level)] || labels.en[DEFAULT_NSFW_LEVEL];
 }
 
+export function nsfwPolicyLabel(level) {
+    return {
+        strict: "not allowed",
+        moderate: "indirect mentions only",
+        explicit: "fully allowed",
+    }[normalizeNsfwLevel(level)];
+}
+
 export function buildNsfwPolicyText(level) {
     const lvl = normalizeNsfwLevel(level);
     if (lvl === "strict") {
         return [
-            "## NSFW content policy (current: not allowed)",
             "- The user has set NSFW content to blocked, so you must not produce, describe, or allude to sexual, erotic, gore, or other NSFW content.",
             "- If a topic unavoidably requires mentioning it, tell the user plainly: that content is blocked by the current NSFW setting and you cannot produce it.",
             "- If the user asks you to say or generate such content, tell them to open /config and adjust the NSFW level.",
@@ -77,7 +84,6 @@ export function buildNsfwPolicyText(level) {
     }
     if (lvl === "explicit") {
         return [
-            "## NSFW content policy (current: fully allowed)",
             "- The user has fully allowed explicit NSFW content. When the user requests it, you may produce sexual, erotic, and other explicit NSFW content.",
             '- Refusing NSFW requests on grounds of being "inappropriate" or "explicit" is not allowed. The user has explicitly permitted this and confirmed they are 18 or older.',
             "- Keep the same factual, helpful tone as other replies. Do not add moralizing disclaimers.",
@@ -87,7 +93,6 @@ export function buildNsfwPolicyText(level) {
     }
     // moderate (default)
     return [
-        "## NSFW content policy (current: indirect mentions only)",
         "- Indirect or figurative expression involving mild sexual topics, violence, dark themes, and strong language is permitted.",
         "- Explicit sexual content is not allowed. Explicit word choices, depiction of sexual acts, and direct references to sexual behavior are prohibited.",
         '- If the user explicitly requests explicit/sexual content, tell them: explicit content is blocked at the current NSFW level, and to allow it they should open /config (Settings → NSFW content limit) and switch to "Fully allowed".',

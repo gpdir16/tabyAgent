@@ -53,30 +53,21 @@ export function collectAvailableSkills() {
 
 export function formatSkillsListForPrompt() {
     const skills = collectAvailableSkills();
-    if (!skills.length) {
-        return "(no skills installed)\n\nUse `skills_read` with a skill name to load full SKILL.md when needed.";
-    }
+    if (!skills.length) return "- (no skills installed)";
 
-    const lines = ["Use `skills_read` with the skill name to load full SKILL.md when relevant.", ""];
-    const builtIn = skills.filter((s) => s.source === "system");
-    const user = skills.filter((s) => s.source === "user");
-
+    const builtIn = skills.filter((s) => s.source === "system").sort((a, b) => a.name.localeCompare(b.name));
+    const user = skills.filter((s) => s.source === "user").sort((a, b) => a.name.localeCompare(b.name));
+    const lines = [];
     if (builtIn.length) {
         lines.push("### Built-in");
-        for (const s of builtIn) {
-            lines.push(`- **${s.name}** — ${s.summary}`);
-        }
-        lines.push("");
+        for (const s of builtIn) lines.push(`- **${s.name}** — ${s.summary}`);
     }
     if (user.length) {
+        if (lines.length) lines.push("");
         lines.push("### User-installed");
-        for (const s of user) {
-            lines.push(`- **${s.name}** — ${s.summary}`);
-        }
-        lines.push("");
+        for (const s of user) lines.push(`- **${s.name}** — ${s.summary}`);
     }
-
-    return lines.join("\n").trimEnd();
+    return lines.join("\n");
 }
 
 export function resolveSkillPath(name, source) {

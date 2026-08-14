@@ -21,11 +21,9 @@ export function splitCacheBoundary(template) {
     if (!match || match.index === undefined) {
         return { stable: template, volatile: "" };
     }
-    const boundaryIdx = match.index;
-    const afterBoundary = boundaryIdx + match[0].length;
     return {
-        stable: template.slice(0, boundaryIdx).trimEnd(),
-        volatile: template.slice(afterBoundary).trimStart(),
+        stable: template.slice(0, match.index).trimEnd(),
+        volatile: template.slice(match.index + match[0].length).trimStart(),
     };
 }
 
@@ -51,11 +49,6 @@ export function buildEnvironmentPromptVars() {
     const pathHint = isWorkspaceEnabled() ? `\`${USER_DIR}\`, \`/tmp\`, or \`${WORKSPACE_DIR}\`` : `\`${USER_DIR}\` or \`/tmp\``;
 
     return {
-        RUNTIME_INTRO: docker
-            ? "You are tabyAgent, a helpful personal assistant on Telegram, running in a Docker container."
-            : "You are tabyAgent, a helpful personal assistant on Telegram, running directly on the user's machine.",
-        ENVIRONMENT_HEADING: docker ? "## Environment (Docker)" : "## Environment (local)",
-        USER_DIR,
         MCP_CONFIG_PATH: mcpConfigPath(),
         DOWNLOAD_DIR,
         MEMORY_PATH: memoryFilePath(),
@@ -64,8 +57,6 @@ export function buildEnvironmentPromptVars() {
         AUTONOMY_LINE: docker
             ? "- **Full container autonomy:** you may `terminal_run` from other directories (`/app`, `/tmp`, `/root`, …), install packages when needed (`apk`, `npm`, `pip`, etc.), and inspect the system."
             : "- **Full host autonomy:** you may `terminal_run` from other directories on the host, install packages when needed (`brew`, `npm`, `pip`, etc.), and inspect the system.",
-        AUTONOMY_SCOPE: docker ? "whole container" : "host environment",
-        PACKAGE_MANAGERS: docker ? "`apk`, `npm`, `pip`" : "`brew`, `npm`, `pip`",
     };
 }
 

@@ -306,25 +306,22 @@ export function listArchivedSessionFiles(chatId) {
         .sort((a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || "")));
 }
 
+const PAST_SESSIONS_PROMPT_LIMIT = 4;
+
 export function formatPastSessionsForPrompt(chatId) {
-    if (!chatId) return "";
-    const archived = listArchivedSessionFiles(chatId);
-    if (!archived.length) return "";
+    if (!chatId) return "- (none archived)";
+    const archived = listArchivedSessionFiles(chatId).slice(0, PAST_SESSIONS_PROMPT_LIMIT);
+    if (!archived.length) return "- (none archived)";
 
-    const root = chatTempRoot(chatId);
-    const lines = archived.map((s) => {
-        const data = readJson(s.absolutePath, {});
-        const turnCount = Array.isArray(data.turns) ? data.turns.length : 0;
-        const rel = path.relative(USER_DIR, s.absolutePath).split(path.sep).join("/");
-        const parts = [`session ${s.id}`, `${turnCount} turns`];
-        if (s.archiveReason === "context_compression") parts.push("archived before context compression");
-        if (s.closedAt) parts.push(`closed ${s.closedAt}`);
-        return `- \`${rel}\` — ${parts.join(", ")}. Read with \`file_read\` when you need older transcript details.`;
-    });
-
-    return [
-        "Past Telegram thread sessions for this chat (newest archived first). The active session is loaded automatically; these files are **full on-disk history** kept when context was compressed or the user ran `/new`.",
-        `Directory: \`${path.relative(USER_DIR, root).split(path.sep).join("/")}/\` (also \`manifest.json\` lists every session).`,
-        ...lines,
-    ].join("\n");
+    return archived
+        .map((s) => {
+            const data = readJson(s.absolutePath, {});
+            const turnCount = Array.isArray(data.turns) ? data.turns.length : 0;
+            const rel = path.relative(USER_DIR, s.absolutePath).split(path.sep).join("/");
+            const parts = [`session ${s.id}`, `${turnCount} turns`];
+            if (s.archiveReason === "context_compression") parts.push("archived before context compression");
+            if (s.closedAt) parts.push(`closed ${s.closedAt}`);
+            return `- \`${rel}\` — ${parts.join(", ")}`;
+        })
+        .join("\n");
 }

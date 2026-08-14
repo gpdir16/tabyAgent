@@ -5,7 +5,7 @@ import { sanitizeTextForLlm } from "../llm/sanitize-messages.js";
 import { CODES_DIR } from "../paths.js";
 import { readMemoryFile } from "../memory-file.js";
 import { loadAgentConfig, loadUserConfig } from "../config-loader.js";
-import { getNsfwLevel, buildNsfwPolicyText } from "../user-settings.js";
+import { getNsfwLevel, buildNsfwPolicyText, nsfwPolicyLabel } from "../user-settings.js";
 import { buildUserMessageContent, estimateContentTokens } from "../llm/vision.js";
 import { formatSkillsListForPrompt } from "../skills-catalog.js";
 import {
@@ -77,7 +77,8 @@ export function buildSystemMessageContent(lang, { truncateMemory = false, maxMem
         SKILLS_LIST: formatSkillsListForPrompt(),
         RUNTIME_INFO: buildRuntimeInfoLine(rt),
         MEMORY: loadMemoryForPrompt({ truncateMemory, maxMemoryChars }),
-        PAST_SESSIONS_BLOCK: pastSessions ? `\n${pastSessions}\n` : "",
+        PAST_SESSIONS_LIST: pastSessions,
+        NSFW_LEVEL_LABEL: nsfwPolicyLabel(getNsfwLevel(loadUserConfig())),
         NSFW_POLICY: buildNsfwPolicyText(getNsfwLevel(loadUserConfig())),
     };
     return buildSystemPromptParts(template, vars).full;
