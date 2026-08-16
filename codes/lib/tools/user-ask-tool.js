@@ -47,6 +47,8 @@ export async function executeUserAskTool(_name, args, ctx) {
     const askPromise = askUser({
         bot: ctx.bot,
         chatId: ctx.chatId,
+        sessionKey: ctx.sessionKey || ctx.chatId,
+        threadId: ctx.threadId,
         question,
         options,
         timeoutMs: timeoutSec * 1000,
@@ -57,7 +59,7 @@ export async function executeUserAskTool(_name, args, ctx) {
 
     return new Promise((resolve) => {
         const onAbort = () => {
-            cancelPendingAsk(ctx.chatId, "aborted");
+            cancelPendingAsk(ctx.sessionKey || ctx.chatId, "aborted");
             resolve({ error: "aborted" });
         };
         if (signal.aborted) {

@@ -50,7 +50,7 @@ export function buildFilesystemPromptBlock() {
             "",
             `| Path | Role |`,
             `|------|------|`,
-            `| \`${USER_DIR}\` | **Main home (default).** Docker volume: \`config.json\`, \`memory.md\`, \`memory/\`, \`skills/\`, \`mcp.json\`, \`cron.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. Exists **inside the container** — not a path on the user's PC. |`,
+            `| \`${USER_DIR}\` | **Main home (default).** Docker volume: \`config.json\`, \`memory.md\`, \`memory/\`, \`agents/\`, \`skills/\`, \`mcp.json\`, \`cron.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. Exists **inside the container** — not a path on the user's PC. |`,
             `| \`${CODES_DIR}\` | Shipped agent source and built-in skills (image; avoid editing). |`,
             `| \`/tmp\` | Ephemeral scratch inside the container. |`,
         ];
@@ -85,7 +85,7 @@ export function buildFilesystemPromptBlock() {
         "",
         `| Path | Role |`,
         `|------|------|`,
-        `| \`${USER_DIR}\` | **Main home (default).** \`config.json\`, \`memory.md\`, \`memory/\`, \`skills/\`, \`mcp.json\`, \`cron.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. |`,
+        `| \`${USER_DIR}\` | **Main home (default).** \`config.json\`, \`memory.md\`, \`memory/\`, \`agents/\`, \`skills/\`, \`mcp.json\`, \`cron.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. |`,
         `| \`${CODES_DIR}\` | Shipped agent source and built-in skills (avoid editing). |`,
         `| \`/tmp\` | Ephemeral scratch. |`,
     ];
@@ -137,6 +137,7 @@ export function buildRuntimeInfoLine(info = {}) {
     const parts = [];
     if (safe.model) parts.push(`Model: ${safe.model}`);
     if (safe.sessionKey) parts.push(`Session: ${safe.sessionKey}`);
+    if (safe.agentId) parts.push(`Agent: ${safe.agentId}`);
     if (safe.channel) parts.push(`Channel: ${safe.channel}`);
     if (!parts.length) return "";
     return `- ${parts.join(" · ")}`;

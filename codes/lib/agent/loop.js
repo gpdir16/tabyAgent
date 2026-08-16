@@ -179,7 +179,23 @@ export async function runAgent(userMessage, options = {}) {
     }
 }
 
-async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPhase, visionAttachment = null, session = null, history = null } = {}) {
+async function runAgentTurn(
+    userMessage,
+    {
+        chatId,
+        sessionKey = null,
+        threadId = null,
+        agentId = null,
+        bot,
+        onTextDelta,
+        onStatusPhase,
+        visionAttachment = null,
+        session = null,
+        history = null,
+        persistHistory = true,
+        consultDepth = 0,
+    } = {},
+) {
     clearFileReadCache();
     const llm = await createLlmClient();
     const agentConfig = loadAgentConfig();
@@ -189,21 +205,24 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
     const maxSameToolRepeat = agentConfig.maxSameToolRepeat ?? 2;
     const maxEmptyReplyRetries = agentConfig.maxEmptyReplyRetries ?? 8;
     const modelCallCountRef = { value: 0 };
+    const resolvedSessionKey = sessionKey || chatId;
+    const resolvedAgentId = agentId || "main";
 
     const runtimeInfo = {
         model: llm.provider.model,
-        sessionKey: chatId,
+        sessionKey: resolvedSessionKey,
         channel: "telegram",
+        agentId: resolvedAgentId,
     };
 
     setStatus("generating");
     const contextResult = await ensureWithinContextLimit(llm, userMessage, llm.modelMeta, {
-        chatId,
+        chatId: persistHistory === false ? null : resolvedSessionKey,
         onStatusPhase: setStatus,
         visionAttachment,
         session,
         runtimeInfo,
-        history,
+        history: persistHistory === false ? (history ?? []) : history,
     });
     let messages = contextResult.messages;
 
@@ -382,12 +401,17 @@ async function runAgentTurn(userMessage, { chatId, bot, onTextDelta, onStatusPha
 
             const result = await executeTool(tc.function.name, args, {
                 chatId,
+                sessionKey: resolvedSessionKey,
+                threadId,
+                agentId: resolvedAgentId,
+                consultDepth,
                 bot,
                 messages,
                 model: llm.provider.model,
                 modelMeta: llm.modelMeta,
                 fileSnapshots,
                 signal: session?.signal,
+                onStatusPhase: setStatus,
             });
 
             if (shouldStop(session)) {

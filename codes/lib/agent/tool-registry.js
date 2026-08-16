@@ -7,6 +7,8 @@ import { sendFileToolDefinitions, executeSendFileTool } from "../tools/send-file
 import { userAskToolDefinitions, executeUserAskTool } from "../tools/user-ask-tool.js";
 import { vizToolDefinitions, executeVizTool } from "../tools/visualization.js";
 import { xvfbGuiToolDefinitions, executeXvfbGuiTool } from "../tools/xvfb-gui.js";
+import { consultAgentToolDefinitions, executeConsultAgent } from "../tools/consult-agent.js";
+import { listAgents } from "../agents-store.js";
 import { getDynamicMcpToolDefinitions, invokeMcpTool, syncMcpServers, disconnectMcpServers } from "../mcp/servers.js";
 import { stopCronScheduler } from "../cron/scheduler.js";
 import { stopUpdateScheduler } from "../update/scheduler.js";
@@ -33,6 +35,7 @@ export async function getAllToolDefinitions() {
         ...terminalToolDefinitions,
         ...sendFileToolDefinitions,
         ...userAskToolDefinitions,
+        ...(listAgents().length ? consultAgentToolDefinitions : []),
         ...vizToolDefinitions,
         ...(isDockerRuntime() ? xvfbGuiToolDefinitions : []),
         ...getDynamicMcpToolDefinitions(),
@@ -51,6 +54,7 @@ export async function executeTool(name, args, ctx = {}) {
         }
         if (name === "telegram_send_file") return await executeSendFileTool(name, args, ctx);
         if (name === "user_ask") return await executeUserAskTool(name, args, ctx);
+        if (name === "consult_agent") return await executeConsultAgent(name, args, ctx);
         if (name === "viz_create") return await executeVizTool(name, args);
         if (name.startsWith("mcp__")) return await invokeMcpTool(name, args);
         if (name === "xvfb_gui") return await executeXvfbGuiTool(name, args, ctx);

@@ -31,14 +31,14 @@ export function buildReplyMarkdown(bodyText, stats) {
     return `${body}\n\n> ${footer}`;
 }
 
-export async function sendTelegramReply(bot, chatId, bodyText, stats) {
+export async function sendTelegramReply(bot, chatId, bodyText, stats, extra = {}) {
     const markdown = buildReplyMarkdown(bodyText, stats);
 
-    const res = await sendRichMessageSafe(bot, chatId, markdown);
+    const res = await sendRichMessageSafe(bot, chatId, markdown, extra);
     if (res.ok) return;
 
     // Final fallback to plain text if rich messages fail entirely.
     console.warn("sendRichMessage failed, falling back to plain text:", res.error);
     const plain = String(bodyText || "").trim() || "…";
-    await sendMessageSafe(bot, chatId, plain);
+    await sendMessageSafe(bot, chatId, plain, extra);
 }

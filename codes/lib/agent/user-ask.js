@@ -2,6 +2,7 @@ import { InlineKeyboard } from "grammy";
 import { loadUserConfig } from "../config-loader.js";
 import { sendMessageSafe, editMessageTextSafe } from "../telegram-api.js";
 import { t } from "../i18n.js";
+import { telegramThreadOpts } from "../agent-route.js";
 
 // chatId -> { key, id, bot, lang, question, options, messageId, resolve, timer, settled }
 const pendingAsks = new Map();
@@ -15,13 +16,13 @@ function hintFor(lang, hasOptions) {
     return hasOptions ? t("user_ask_hint_button", lang) : t("user_ask_hint_text", lang);
 }
 
-export function hasPendingAsk(chatId) {
-    return pendingAsks.has(String(chatId));
+export function hasPendingAsk(sessionKey) {
+    return pendingAsks.has(String(sessionKey));
 }
 
 // 테스트 및 핸들러에서 사용하는 대기 중 ask의 id 조회
-export function pendingAskIdFor(chatId) {
-    return pendingAsks.get(String(chatId))?.id ?? null;
+export function pendingAskIdFor(sessionKey) {
+    return pendingAsks.get(String(sessionKey))?.id ?? null;
 }
 
 function settle(entry, result) {
@@ -34,14 +35,14 @@ function settle(entry, result) {
 
 async function finishAskMessage(entry, text) {
     try {
-        await editMessageTextSafe(entry.bot, entry.key, entry.messageId, trimLabel(text, 3500));
+        await editMessageTextSafe(entry.bot, entry.chatId || entry.key, entry.messageId, trimLabel(text, 3500));
     } catch {
         // 편집 실패는 무시 (메시지 삭제, 봇 재시작 등)
     }
 }
 
-export function resolvePendingAskByButton(chatId, askId, optionIndex) {
-    const entry = pendingAsks.get(String(chatId));
+export function resolvePendingAskByButton(sessionKey, askId, optionIndex) {
+    const entry = pendingAsks.get(String(sessionKey));
     if (!entry || entry.id !== askId) return null;
     const option = entry.options[optionIndex];
     if (option === undefined) return null;
@@ -50,8 +51,8 @@ export function resolvePendingAskByButton(chatId, askId, optionIndex) {
     return option;
 }
 
-export function resolvePendingAskByText(chatId, text) {
-    const entry = pendingAsks.get(String(chatId));
+export function resolvePendingAskByText(sessionKey, text) {
+    const entry = pendingAsks.get(String(sessionKey));
     if (!entry) return false;
     const answer = String(text || "")
         .trim()
@@ -62,16 +63,16 @@ export function resolvePendingAskByText(chatId, text) {
     return true;
 }
 
-export function cancelPendingAsk(chatId, reason = "aborted") {
-    const entry = pendingAsks.get(String(chatId));
+export function cancelPendingAsk(sessionKey, reason = "aborted") {
+    const entry = pendingAsks.get(String(sessionKey));
     if (!entry) return false;
     settle(entry, { error: reason });
     void finishAskMessage(entry, `${entry.question}\n\n✖️ ${t("user_ask_cancelled", entry.lang)}`);
     return true;
 }
 
-export async function askUser({ bot, chatId, question, options = [], timeoutMs = 120_000 }) {
-    const key = String(chatId);
+export async function askUser({ bot, chatId, sessionKey, threadId, question, options = [], timeoutMs = 120_000 }) {
+    const key = String(sessionKey || chatId);
     if (pendingAsks.has(key)) {
         return { error: "Another user_ask is already pending for this chat." };
     }
@@ -94,13 +95,18 @@ export async function askUser({ bot, chatId, question, options = [], timeoutMs =
         }
     }
 
-    const sent = await sendMessageSafe(bot, key, trimLabel(body, 4000), kb ? { reply_markup: kb } : {});
+    const extra = {
+        ...telegramThreadOpts(threadId),
+        ...(kb ? { reply_markup: kb } : {}),
+    };
+    const sent = await sendMessageSafe(bot, chatId, trimLabel(body, 4000), extra);
     const messageId = sent.messageIds?.[0];
     if (!messageId) return { error: "Failed to send the question message." };
 
     return new Promise((resolve) => {
         const entry = {
             key,
+            chatId: String(chatId),
             id,
             bot,
             lang,

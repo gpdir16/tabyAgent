@@ -12,12 +12,16 @@ const INTERNAL_USER_HINTS = new Set([
     STOP_BY_USER_HINT,
 ]);
 
-function safeChatId(chatId) {
-    return String(chatId).replace(/[^0-9-]/g, "");
+function safeSessionKey(sessionKey) {
+    return (
+        String(sessionKey || "")
+            .replace(/:/g, "-")
+            .replace(/[^0-9A-Za-z_-]/g, "") || "unknown"
+    );
 }
 
-function chatTempRoot(chatId) {
-    return path.join(USER_DIR, "temp", `chat-${safeChatId(chatId)}`);
+function chatTempRoot(sessionKey) {
+    return path.join(USER_DIR, "temp", `chat-${safeSessionKey(sessionKey)}`);
 }
 
 function manifestPath(chatId) {

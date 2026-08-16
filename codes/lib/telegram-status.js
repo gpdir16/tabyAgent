@@ -58,10 +58,11 @@ function formatElapsedSeconds(totalSeconds, lang = "en") {
 }
 
 export class TelegramStatusMessage {
-    constructor(bot, chatId, lang = "en") {
+    constructor(bot, chatId, lang = "en", extra = {}) {
         this.bot = bot;
         this.chatId = chatId;
         this.lang = lang;
+        this.extra = extra;
         this.phase = "generating";
         this.detail = null;
         this.startedAt = Date.now();
@@ -90,7 +91,7 @@ export class TelegramStatusMessage {
     }
 
     async start() {
-        const res = await sendMessageSafe(this.bot, this.chatId, this.bodyText());
+        const res = await sendMessageSafe(this.bot, this.chatId, this.bodyText(), this.extra);
         if (!res.ok || !res.messageIds.length) {
             this.available = false;
             return false;
@@ -148,7 +149,7 @@ export class TelegramStatusMessage {
         const elapsed = formatElapsedSeconds((Date.now() - this.startedAt) / 1000, this.lang);
         const label = statusText("error", this.lang);
         const body = `${label} · ${elapsed}\n\n${text}`;
-        const res = await sendMessageSafe(this.bot, this.chatId, body);
+        const res = await sendMessageSafe(this.bot, this.chatId, body, this.extra);
         return res.ok;
     }
 }

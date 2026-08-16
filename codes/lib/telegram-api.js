@@ -95,10 +95,31 @@ export async function deleteMessageSafe(bot, chatId, messageId) {
     return res.ok;
 }
 
-export async function sendChatActionSafe(bot, chatId, action = "typing") {
+function isThreadSendError(error) {
+    const s = String(error || "").toLowerCase();
+    return s.includes("not a forum") || s.includes("thread not found") || s.includes("message thread not found");
+}
+
+function withoutThreadId(opts) {
+    const extra = { ...opts };
+    delete extra.message_thread_id;
+    return extra;
+}
+
+async function dropThreadModeAfterSendError(error) {
+    if (!isThreadSendError(error)) return;
+    const { markTopicsDisabled } = await import("./telegram-topics.js");
+    markTopicsDisabled();
+}
+
+export async function sendChatActionSafe(bot, chatId, action = "typing", extra = {}) {
     const api = bot?.api || bot;
     if (!api || !chatId) return false;
-    const res = await safeTelegramApiFast(() => api.sendChatAction(chatId, action));
+    let res = await safeTelegramApiFast(() => api.sendChatAction(chatId, action, extra));
+    if (!res.ok && extra?.message_thread_id) {
+        await dropThreadModeAfterSendError(res.error);
+        res = await safeTelegramApiFast(() => api.sendChatAction(chatId, action, withoutThreadId(extra)));
+    }
     return res.ok;
 }
 
@@ -140,14 +161,20 @@ export async function sendRichMessageSafe(bot, chatId, markdown, opts = {}) {
     for (const chunk of splitRichChunks(markdown)) {
         if (!chunk.trim()) continue;
 
-        const res = await safeTelegramApi(() => api.sendRichMessage(chatId, { markdown: chunk }, extra));
+        let sendExtra = extra;
+        let res = await safeTelegramApi(() => api.sendRichMessage(chatId, { markdown: chunk }, sendExtra));
+        if (!res.ok && sendExtra.message_thread_id && isThreadSendError(res.error)) {
+            await dropThreadModeAfterSendError(res.error);
+            sendExtra = withoutThreadId(sendExtra);
+            res = await safeTelegramApi(() => api.sendRichMessage(chatId, { markdown: chunk }, sendExtra));
+        }
 
         if (res.ok) {
             if (res.result?.message_id) messageIds.push(res.result.message_id);
         } else {
             console.warn("sendRichMessage failed, falling back to sendMessage:", res.error);
             // Fallback to plain sendMessage (no parse mode) if rich messages fail.
-            const plainRes = await safeTelegramApi(() => api.sendMessage(chatId, chunk, extra));
+            const plainRes = await safeTelegramApi(() => api.sendMessage(chatId, chunk, sendExtra));
             if (plainRes.ok) {
                 if (plainRes.result?.message_id) messageIds.push(plainRes.result.message_id);
             } else {
@@ -164,7 +191,7 @@ export async function sendMessageSafe(bot, chatId, text, opts = {}) {
     if (!api || !chatId) return { ok: false, messageIds: [] };
 
     const parseMode = opts.parse_mode || opts.parseMode;
-    const extra = { ...opts };
+    let extra = { ...opts };
     delete extra.parse_mode;
     delete extra.parseMode;
     if (!extra.link_preview_options) {
@@ -187,6 +214,12 @@ export async function sendMessageSafe(bot, chatId, text, opts = {}) {
             res = await safeTelegramApi(() => api.sendMessage(chatId, chunk, extra));
         }
 
+        if (!res.ok && extra.message_thread_id && isThreadSendError(res.error)) {
+            await dropThreadModeAfterSendError(res.error);
+            extra = withoutThreadId(extra);
+            res = await safeTelegramApi(() => api.sendMessage(chatId, chunk, extra));
+        }
+
         if (res.ok) {
             if (res.result?.message_id) messageIds.push(res.result.message_id);
         } else {
@@ -197,16 +230,40 @@ export async function sendMessageSafe(bot, chatId, text, opts = {}) {
     return { ok: allOk, messageIds };
 }
 
+export async function createForumTopicSafe(bot, chatId, name, extra = {}) {
+    const api = bot?.api || bot;
+    if (!api || !chatId || !name) return { ok: false, error: "missing chat or name" };
+    return safeTelegramApi(() => api.createForumTopic(chatId, name, extra));
+}
+
+export async function deleteForumTopicSafe(bot, chatId, threadId) {
+    const api = bot?.api || bot;
+    if (!api || !chatId || !threadId) return { ok: false, error: "missing chat or thread" };
+    return safeTelegramApi(() => api.deleteForumTopic(chatId, threadId));
+}
+
+export async function editForumTopicSafe(bot, chatId, threadId, extra = {}) {
+    const api = bot?.api || bot;
+    if (!api || !chatId || !threadId) return { ok: false, error: "missing chat or thread" };
+    return safeTelegramApi(() => api.editForumTopic(chatId, threadId, extra));
+}
+
 export async function sendPhotoSafe(bot, chatId, input, opts = {}) {
     const api = bot?.api || bot;
     if (!api || !chatId) return { ok: false, kind: null };
 
-    let res = await safeTelegramApi(() => api.sendPhoto(chatId, input, opts));
+    let sendOpts = opts;
+    let res = await safeTelegramApi(() => api.sendPhoto(chatId, input, sendOpts));
+    if (!res.ok && sendOpts?.message_thread_id && isThreadSendError(res.error)) {
+        await dropThreadModeAfterSendError(res.error);
+        sendOpts = withoutThreadId(sendOpts);
+        res = await safeTelegramApi(() => api.sendPhoto(chatId, input, sendOpts));
+    }
     if (res.ok) return { ok: true, kind: "photo", result: res.result };
 
     const desc = String(res.error || "");
     if (desc.includes("PHOTO_INVALID")) {
-        res = await safeTelegramApi(() => api.sendDocument(chatId, input, opts));
+        res = await safeTelegramApi(() => api.sendDocument(chatId, input, sendOpts));
         if (res.ok) return { ok: true, kind: "document", fallback: true, result: res.result };
     }
 

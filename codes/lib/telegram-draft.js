@@ -5,10 +5,11 @@ const MAX_DRAFT_LEN = 32_768;
 const MIN_UPDATE_MS = 300;
 
 export class TelegramDraftStream {
-    constructor(bot, chatId, draftId) {
+    constructor(bot, chatId, draftId, extra = {}) {
         this.bot = bot;
         this.chatId = chatId;
         this.draftId = draftId;
+        this.extra = extra;
         this.lastSent = "";
         this.lastSentAt = 0;
         this.available = true;
@@ -27,7 +28,7 @@ export class TelegramDraftStream {
         }
 
         // Prefer rich message draft (Bot API 10.1+) so markdown renders live.
-        const res = await safeTelegramApiFast(() => this.bot.api.sendRichMessageDraft(this.chatId, this.draftId, { markdown: text }));
+        const res = await safeTelegramApiFast(() => this.bot.api.sendRichMessageDraft(this.chatId, this.draftId, { markdown: text }, this.extra));
 
         if (res.ok) {
             this.lastSent = text;
@@ -36,7 +37,7 @@ export class TelegramDraftStream {
         }
 
         // Fallback to plain text draft.
-        const plainRes = await safeTelegramApiFast(() => this.bot.api.sendMessageDraft(this.chatId, this.draftId, text));
+        const plainRes = await safeTelegramApiFast(() => this.bot.api.sendMessageDraft(this.chatId, this.draftId, text, this.extra));
         if (plainRes.ok) {
             this.lastSent = text;
             this.lastSentAt = now;
@@ -55,7 +56,7 @@ export class TelegramDraftStream {
         const text = this.lastSent.trim();
         if (!text) return false;
 
-        await sendTelegramReply(this.bot, this.chatId, text, stats);
+        await sendTelegramReply(this.bot, this.chatId, text, stats, this.extra);
         return true;
     }
 

@@ -3,7 +3,14 @@ import path from "node:path";
 import { getEncoding } from "js-tiktoken";
 import { sanitizeTextForLlm } from "../llm/sanitize-messages.js";
 import { CODES_DIR } from "../paths.js";
-import { readMemoryFile, formatMemoryFilesListForPrompt } from "../memory-file.js";
+import {
+    readMemoryFile,
+    formatMemoryFilesListForPrompt,
+    readAgentMemoryFile,
+    formatAgentMemoryFilesListForPrompt,
+    agentMemoryFilePath,
+} from "../memory-file.js";
+import { DEFAULT_AGENT_ID, formatPeerAgentsForPrompt, getAgent } from "../agents-store.js";
 import { loadAgentConfig, loadUserConfig } from "../config-loader.js";
 import {
     getNsfwLevel,
@@ -73,6 +80,36 @@ function loadMemoryForPrompt({ truncateMemory = false, maxMemoryChars = 120000 }
     return memory;
 }
 
+function loadScopedMemory(raw, { truncateMemory = false, maxMemoryChars = 120000 } = {}) {
+    let memory = raw || "";
+    if (truncateMemory && memory.length > maxMemoryChars) {
+        memory = `${memory.slice(0, maxMemoryChars)}\n\n...[memory truncated]...`;
+    }
+    return memory;
+}
+
+function defaultIdentityText() {
+    return "You are the default **tabyAgent** (id: `main`). Handle general work. Consult a listed specialist when one fits better.";
+}
+
+function agentIdentityText(agentId) {
+    if (!agentId || agentId === DEFAULT_AGENT_ID) return defaultIdentityText();
+    const agent = getAgent(agentId);
+    if (!agent) return defaultIdentityText();
+    const job = agent.persona?.trim() || "Do the work the user assigned to this agent.";
+    return `You are **${agent.name}** (id: \`${agent.id}\`).\nYour job this turn: ${job}\nStay in this role. Shared tabyAgent rules still apply. Private memory: \`${agentMemoryFilePath(agent.id)}\``;
+}
+
+function agentMemoryText(agentId, opts) {
+    if (!agentId || agentId === DEFAULT_AGENT_ID) return "- (none — use shared memory.md)";
+    const body = loadScopedMemory(readAgentMemoryFile(agentId), opts).trim() || "(empty)";
+    return `${body}\n\n### Agent memory files\n${formatAgentMemoryFilesListForPrompt(agentId)}`;
+}
+
+function peerAgentsText(agentId) {
+    return formatPeerAgentsForPrompt(agentId || DEFAULT_AGENT_ID) || "- (none)";
+}
+
 export function buildSystemMessageContent(lang, { truncateMemory = false, maxMemoryChars = 120000, runtimeInfo = {} } = {}) {
     const template = loadSystemPromptTemplate();
     const rt = runtimeInfo || {};
@@ -85,6 +122,9 @@ export function buildSystemMessageContent(lang, { truncateMemory = false, maxMem
         MEMORY_FILES_LIST: formatMemoryFilesListForPrompt(),
         RUNTIME_INFO: buildRuntimeInfoLine(rt),
         MEMORY: loadMemoryForPrompt({ truncateMemory, maxMemoryChars }),
+        AGENT_IDENTITY: agentIdentityText(rt.agentId),
+        AGENT_MEMORY: agentMemoryText(rt.agentId, { truncateMemory, maxMemoryChars }),
+        PEER_AGENTS: peerAgentsText(rt.agentId),
         PAST_SESSIONS_LIST: pastSessions,
         NSFW_LEVEL_LABEL: nsfwPolicyLabel(getNsfwLevel(loadUserConfig())),
         NSFW_POLICY: buildNsfwPolicyText(getNsfwLevel(loadUserConfig())),

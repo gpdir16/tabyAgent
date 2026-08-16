@@ -1,6 +1,7 @@
 import { sendTelegramFile } from "../telegram-send.js";
 import { resolveAgentPath } from "../paths.js";
 import { sendFileDescription } from "../path-labels.js";
+import { telegramThreadOpts } from "../agent-route.js";
 
 export const sendFileToolDefinitions = [
     {
@@ -28,5 +29,8 @@ export async function executeSendFileTool(_name, args, ctx) {
     }
     const filePath = resolveAgentPath(raw);
     if (!filePath) return { error: "path is required" };
-    return sendTelegramFile(ctx.bot, ctx.chatId, filePath, { caption: args?.caption });
+    return sendTelegramFile(ctx.bot, ctx.chatId, filePath, {
+        caption: args?.caption,
+        ...telegramThreadOpts(ctx.threadId),
+    });
 }
