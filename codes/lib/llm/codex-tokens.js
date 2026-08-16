@@ -77,6 +77,14 @@ export function hasCodexAuth() {
     return Boolean(loadCodexTokens());
 }
 
+export function clearCodexTokens() {
+    try {
+        fs.unlinkSync(AUTH_FILE);
+    } catch {
+        // ignore
+    }
+}
+
 export async function refreshCodexToken(refreshToken) {
     const res = await fetch(`${ISSUER}/oauth/token`, {
         method: "POST",

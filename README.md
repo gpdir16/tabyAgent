@@ -11,7 +11,7 @@ Memory, skills, self-improvement, scheduled tasks, web browsing, and GUI app usa
 ## What it can do
 
 - **Daily chat**: Send messages and get replies directly in Telegram. Text, images, and files are supported.
-- **Connect inference providers**: Works with OpenAI, OpenRouter, Synthetic, Ollama (local and Cloud), ZenMux, Codex OAuth, or your own API endpoint.
+- **Connect inference providers**: Works with OpenAI, OpenRouter, Synthetic, Ollama (local and Cloud), ZenMux, Codex OAuth, Grok OAuth, or your own API endpoint.
 - **Skills, MCP**: Add the capabilities and tools you want directly to the agent.
 - **Scheduled tasks**: Recurring jobs can run automatically, report when needed, or be skipped when not necessary.
 - **Runs anywhere**: Use Docker or local Node.js. Native support is available on macOS and Linux; Windows can work through Docker, but it is not guaranteed.

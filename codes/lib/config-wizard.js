@@ -9,7 +9,9 @@ import { getApproveCliHint } from "./runtime.js";
 import { fetchProviderModels, providerFromWizardState, partitionModelsForPicker, buildVendorPickerItems, MODELS_PER_PAGE } from "./llm/models.js";
 import { deleteMessageSafe, sendMessageSafe } from "./telegram-api.js";
 import { restartUpdateScheduler } from "./update/scheduler.js";
-import { hasCodexAuth, startDeviceFlow, pollDeviceFlow } from "./llm/codex-tokens.js";
+import { clearCodexTokens, startDeviceFlow, pollDeviceFlow } from "./llm/codex-tokens.js";
+import { clearGrokTokens, startGrokDeviceFlow, pollGrokDeviceFlow } from "./llm/grok-tokens.js";
+import { fetchGrokModels } from "./llm/grok-client.js";
 import {
     getThinkingLevel,
     isReplyFooterEnabled,
@@ -29,6 +31,9 @@ import {
 
 const STATE_PATH = path.join(USER_DIR, "temp", "onboarding.json");
 
+// AbortController는 JSON state에 저장되지 않으므로 모듈에 유지
+let grokLoginAbort = null;
+
 const PROVIDERS = {
     openai: { id: "default", label: "OpenAI" },
     openrouter: { id: "openrouter", label: "OpenRouter" },
@@ -38,6 +43,7 @@ const PROVIDERS = {
     zenmux: { id: "zenmux", label: "ZenMux" },
     upstage: { id: "upstage", label: "Upstage" },
     codex: { id: "codex", label: "Codex OAuth (ChatGPT Plus/Pro)", apiKeyOptional: true },
+    grok: { id: "grok", label: "Grok OAuth", apiKeyOptional: true },
     custom: { id: "default", custom: true, label: "Custom URL" },
 };
 
@@ -47,6 +53,15 @@ const CODEX_MODELS = [
     { id: "gpt-5.6-luna", label: "gpt-5.6-luna" },
     { id: "gpt-5.5", label: "gpt-5.5" },
     { id: "gpt-5.3-codex-spark", label: "gpt-5.3-codex-spark (Pro)" },
+];
+
+const GROK_MODELS = [
+    { id: "grok-4.6", label: "grok-4.6" },
+    { id: "grok-4.5", label: "grok-4.5" },
+    { id: "grok-4.3", label: "grok-4.3" },
+    { id: "grok-build", label: "grok-build" },
+    { id: "grok-4.20-0309-reasoning", label: "grok-4.20-0309-reasoning" },
+    { id: "grok-4.20-0309-non-reasoning", label: "grok-4.20-0309-non-reasoning" },
 ];
 
 function emptyState(chatId, { mode = "onboarding" } = {}) {
@@ -200,6 +215,13 @@ function texts(lang) {
             codexLoginFailed: "❌ Login failed: {error}\n\nTap retry to try again.",
             codexLoginRetry: "Retry login",
             codexLoginCancel: "Cancel",
+            grokLoginTitle: "Grok (xAI OAuth)",
+            grokLoginPending:
+                "Waiting for authorization… Open the link below, enter the code, then approve.\n\n🔗 {url}\n\nCode: {code}\n\nThis will auto-complete when you approve.",
+            grokLoginSuccess: "✅ Grok login successful!",
+            grokLoginFailed: "❌ Login failed: {error}\n\nTap retry to try again.",
+            grokLoginRetry: "Retry login",
+            grokLoginCancel: "Cancel",
             menuTitle: "tabyAgent settings",
             catLanguage: "Language",
             catThinking: "Thinking level",
@@ -248,6 +270,13 @@ function texts(lang) {
             codexLoginFailed: "❌ 로그인 실패: {error}\n\n다시 시도하려면 버튼을 누르세요.",
             codexLoginRetry: "다시 시도",
             codexLoginCancel: "취소",
+            grokLoginTitle: "Grok (xAI OAuth)",
+            grokLoginPending:
+                "인증 대기 중… 아래 링크를 열고 코드를 입력한 뒤 승인하세요.\n\n🔗 {url}\n\n코드: {code}\n\n승인하면 자동으로 완료됩니다.",
+            grokLoginSuccess: "✅ Grok 로그인 성공!",
+            grokLoginFailed: "❌ 로그인 실패: {error}\n\n다시 시도하려면 버튼을 누르세요.",
+            grokLoginRetry: "다시 시도",
+            grokLoginCancel: "취소",
             menuTitle: "tabyAgent 설정",
             catLanguage: "언어",
             catThinking: "사고 수준",
@@ -295,6 +324,13 @@ function texts(lang) {
             codexLoginFailed: "❌ ログイン失敗: {error}\n\n再試行ボタンを押してください。",
             codexLoginRetry: "再試行",
             codexLoginCancel: "キャンセル",
+            grokLoginTitle: "Grok (xAI OAuth)",
+            grokLoginPending:
+                "認証待機中… 以下のリンクを開き、コードを入力して承認してください。\n\n🔗 {url}\n\nコード: {code}\n\n承認すると自動的に完了します。",
+            grokLoginSuccess: "✅ Grok ログイン成功！",
+            grokLoginFailed: "❌ ログイン失敗: {error}\n\n再試行ボタンを押してください。",
+            grokLoginRetry: "再試行",
+            grokLoginCancel: "キャンセル",
             menuTitle: "tabyAgent 設定",
             catLanguage: "言語",
             catThinking: "思考レベル",
@@ -475,6 +511,8 @@ function providerKeyboard(lang, state = null) {
         .text("Upstage", "cfg:prov:upstage")
         .row()
         .text("Codex OAuth (ChatGPT Plus/Pro)", "cfg:prov:codex")
+        .row()
+        .text("Grok OAuth", "cfg:prov:grok")
         .row()
         .text("Custom API URL", "cfg:prov:custom")
         .row();
@@ -708,6 +746,32 @@ async function sendModelStep(bot, chatId, state) {
         return;
     }
 
+    if (state.data.providerId === "grok") {
+        let models = GROK_MODELS.map((m) => ({
+            id: m.id,
+            label: m.label,
+            contextWindow: 500000,
+            supportsVision: true,
+        }));
+        try {
+            const live = await fetchGrokModels();
+            if (live.length) models = live;
+        } catch (err) {
+            console.warn("fetchGrokModels failed, using built-in list:", err.message || err);
+        }
+        const partition = partitionModelsForPicker(models);
+        state.data.availableModels = models;
+        state.data.modelPartition = {
+            flat: partition.flat,
+            prefixes: partition.prefixes,
+            byPrefix: Object.fromEntries(partition.byPrefix),
+        };
+        state.data.modelPage = 0;
+        saveState(state);
+        await showVendorStep(bot, chatId, state);
+        return;
+    }
+
     try {
         const provider = providerFromWizardState(state);
         const models = await fetchProviderModels(provider, { useCache: false });
@@ -739,12 +803,7 @@ async function startCodexLogin(bot, chatId, state) {
     const lang = uiLang(state);
     const msg = texts(lang);
 
-    // Already logged in — skip to model selection
-    if (hasCodexAuth()) {
-        saveState(state);
-        await sendModelStep(bot, chatId, state);
-        return;
-    }
+    clearCodexTokens();
 
     // Abort any previous attempt
     if (state.data.codexAbort) state.data.codexAbort.abort();
@@ -788,6 +847,61 @@ async function startCodexLogin(bot, chatId, state) {
             if (err.message === "Login cancelled." || abort.signal.aborted) return;
             const kb = new InlineKeyboard().text(msg.codexLoginRetry, "cfg:codex:retry").row().text(msg.codexLoginCancel, "cfg:codex:cancel");
             await replaceStep(bot, chatId, state, msg.codexLoginFailed.replace("{error}", err.message), kb);
+        });
+}
+
+async function startGrokLogin(bot, chatId, state) {
+    const lang = uiLang(state);
+    const msg = texts(lang);
+
+    clearGrokTokens();
+
+    if (grokLoginAbort) grokLoginAbort.abort();
+    const abort = new AbortController();
+    grokLoginAbort = abort;
+    state.step = "grok_login";
+    saveState(state);
+
+    let flow;
+    try {
+        flow = await startGrokDeviceFlow();
+    } catch (err) {
+        if (grokLoginAbort === abort) grokLoginAbort = null;
+        const kb = new InlineKeyboard().text(msg.grokLoginRetry, "cfg:grok:retry").row().text(msg.grokLoginCancel, "cfg:grok:cancel");
+        await replaceStep(bot, chatId, state, msg.grokLoginFailed.replace("{error}", err.message), kb);
+        return;
+    }
+
+    state.data.grokFlow = { deviceCode: flow.deviceCode, userCode: flow.userCode, intervalMs: flow.intervalMs, expiresAt: flow.expiresAt };
+    saveState(state);
+
+    const text = msg.grokLoginPending.replace("{url}", flow.deviceUrl).replace("{code}", flow.userCode);
+    const kb = new InlineKeyboard().text(msg.grokLoginCancel, "cfg:grok:cancel");
+    await replaceStep(bot, chatId, state, text, kb);
+
+    pollGrokDeviceFlow({
+        deviceCode: flow.deviceCode,
+        intervalMs: flow.intervalMs,
+        expiresAt: flow.expiresAt,
+        signal: abort.signal,
+    })
+        .then(async () => {
+            if (grokLoginAbort !== abort) return;
+            grokLoginAbort = null;
+            delete state.data.grokFlow;
+            saveState(state);
+            await clearActivePrompt(bot, chatId, state);
+            await sendMessageSafe(bot, chatId, msg.grokLoginSuccess);
+            await sendModelStep(bot, chatId, state);
+        })
+        .catch(async (err) => {
+            if (grokLoginAbort !== abort) return;
+            grokLoginAbort = null;
+            delete state.data.grokFlow;
+            saveState(state);
+            if (err.message === "Login cancelled." || abort.signal.aborted) return;
+            const failKb = new InlineKeyboard().text(msg.grokLoginRetry, "cfg:grok:retry").row().text(msg.grokLoginCancel, "cfg:grok:cancel");
+            await replaceStep(bot, chatId, state, msg.grokLoginFailed.replace("{error}", err.message), failKb);
         });
 }
 
@@ -1034,6 +1148,8 @@ export async function handleConfigWizardCallback(ctx, bot) {
             await replaceStep(bot, chatId, state, texts(lang).baseURL);
         } else if (providerKey === "codex") {
             await startCodexLogin(bot, chatId, state);
+        } else if (providerKey === "grok") {
+            await startGrokLogin(bot, chatId, state);
         } else if (provider.apiKeyOptional) {
             saveState(state);
             await sendModelStep(bot, chatId, state);
@@ -1058,6 +1174,25 @@ export async function handleConfigWizardCallback(ctx, bot) {
         if (state.data.codexAbort) state.data.codexAbort.abort();
         delete state.data.codexAbort;
         delete state.data.codexFlow;
+        saveState(state);
+        const lang = uiLang(state);
+        await replaceStep(bot, chatId, state, texts(lang).provider, providerKeyboard(lang, state));
+        return;
+    }
+
+    if (data === "cfg:grok:retry") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await startGrokLogin(bot, chatId, state);
+        return;
+    }
+
+    if (data === "cfg:grok:cancel") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        if (grokLoginAbort) grokLoginAbort.abort();
+        grokLoginAbort = null;
+        delete state.data.grokFlow;
         saveState(state);
         const lang = uiLang(state);
         await replaceStep(bot, chatId, state, texts(lang).provider, providerKeyboard(lang, state));
@@ -1237,6 +1372,10 @@ export async function handleConfigWizardText(ctx, bot) {
             return;
         }
         case "codex_login": {
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            return;
+        }
+        case "grok_login": {
             await deleteMessageSafe(bot, chatId, userMessageId);
             return;
         }

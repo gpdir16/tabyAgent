@@ -35,6 +35,7 @@ export function providerKeyFromId(providerId, config = loadUserConfig()) {
     if (providerId === "zenmux") return "zenmux";
     if (providerId === "upstage") return "upstage";
     if (providerId === "codex") return "codex";
+    if (providerId === "grok") return "grok";
     // provider.id === "default" — distinguish OpenAI from a custom baseURL override
     const override = (config?.provider?.baseURL || "").trim().replace(/\/$/, "");
     if (override && override !== "https://api.openai.com/v1") return "custom";

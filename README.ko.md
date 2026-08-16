@@ -11,7 +11,7 @@ OpenClaw/Hermes보다 더 자율적이며, 더 끈기있고, 더 쉬운 대안�
 ## 할 수 있는 것
 
 - **일상적인 채팅**: 메시지를 보내면 텔레그램에서 바로 답변을 받습니다. 텍스트, 이미지, 파일 모두 지원합니다.
-- **추론 제공자 연결**: OpenAI, OpenRouter, Synthetic, Ollama(로컬 & Cloud), ZenMux, Codex OAuth 등 또는 직접 구축한 API 엔드포인트와 연동합니다.
+- **추론 제공자 연결**: OpenAI, OpenRouter, Synthetic, Ollama(로컬 & Cloud), ZenMux, Codex OAuth, Grok OAuth 등 또는 직접 구축한 API 엔드포인트와 연동합니다.
 - **Skills, MCP**: 에이전트에게 원하는 다양한 기능과 도구를 직접 추가할 수 있습니다.
 - **예약 작업**: 정기적으로 실행이 필요한 작업이 있다면 반복해서 실행되며 완료 후에는 보고하거나, 필요하지 않다면 건너뜁니다.
 - **어디서든 실행**: Docker 컨테이너 또는 로컬 Node.js로 실행할 수 있습니다. 네이티브 지원은 macOS와 Linux이며, Windows는 Docker를 통해 작동 가능하지만 보장되지는 않습니다.
