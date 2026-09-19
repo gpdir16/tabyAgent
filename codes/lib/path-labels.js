@@ -84,7 +84,8 @@ export function buildSkillContentVars() {
         MCP_CONFIG_PATH: mcpConfigPath(),
         CRON_PATH: cronConfigPath(),
         DOWNLOAD_DIR: downloadDirPath(),
-        BROWSER_USE_DIR: path.join(CODES_DIR, "skills", "browser-use"),
+        CAMOFOX_DIR: path.join(CODES_DIR, "skills", "camofox"),
+        CAMOFOX_DATA_DIR: path.join(USER_DIR, "camofox"),
     };
 }
 
