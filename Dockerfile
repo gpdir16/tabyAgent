@@ -95,7 +95,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 ENV DISPLAY=:99
 ENV CAMOFOX_HEADLESS=false
 # camofox의 유휴 정리는 API 액세스 기준 — 화면 조작(xdotool)은 API를 타지 않아
-# 쓰는 중에도 30분 만에 세션 만료/서버 종료가 일어난다. 봇 브라우저가 닫히지 않게 7일로.
+# 쓰는 중에도 30분 만에 세션 만료/서버 종료가 일어난다. 봇 브라우저가 닫히지 않게 사실상 무기한(100년)으로.
 ENV CAMOFOX_IDLE_TIMEOUT_MS=3153600000000
 ENV CAMOFOX_IDLE_EXIT_TIMEOUT_MS=3153600000000
 ENV CAMOFOX_SESSION_TIMEOUT=3153600000000
