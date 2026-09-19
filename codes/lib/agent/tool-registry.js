@@ -9,19 +9,26 @@ import { userAskToolDefinitions, executeUserAskTool } from "../tools/user-ask-to
 import { vizToolDefinitions, executeVizTool } from "../tools/visualization.js";
 import { xvfbGuiToolDefinitions, executeXvfbGuiTool } from "../tools/xvfb-gui.js";
 import { consultAgentToolDefinitions, executeConsultAgent } from "../tools/consult-agent.js";
+import { sessionSearchToolDefinitions, executeSessionSearchTool } from "../tools/session-search.js";
 import { listAgents } from "../agents-store.js";
 import { getDynamicMcpToolDefinitions, invokeMcpTool, syncMcpServers, disconnectMcpServers } from "../mcp/servers.js";
 import { stopUpdateScheduler } from "../update/scheduler.js";
+import { stopDreamingScheduler } from "../dreaming/scheduler.js";
+import { stopProactiveScheduler } from "../proactive.js";
 import { sanitizeTextForLlm } from "../llm/sanitize-messages.js";
 import { isDockerRuntime } from "../runtime.js";
 
 export async function initTools() {
-    await syncMcpServers();
+    // MCP 연결은 백그라운드로 — 죽은 서버 하나가 봇 부팅을 막지 않게 한다.
+    // 첫 턴의 getAllToolDefinitions이 같은 진행 중 sync를 await한다.
+    void syncMcpServers();
 }
 
 export async function shutdownTools() {
     stopTodoScheduler();
     stopUpdateScheduler();
+    stopDreamingScheduler();
+    stopProactiveScheduler();
     await disconnectMcpServers();
 }
 
@@ -35,6 +42,7 @@ export async function getAllToolDefinitions() {
         ...terminalToolDefinitions,
         ...sendFileToolDefinitions,
         ...userAskToolDefinitions,
+        ...sessionSearchToolDefinitions,
         ...(listAgents().length ? consultAgentToolDefinitions : []),
         ...vizToolDefinitions,
         ...(isDockerRuntime() ? xvfbGuiToolDefinitions : []),
@@ -52,11 +60,12 @@ export async function executeTool(name, args, ctx = {}) {
         if (name === "terminal_run" || name === "bg_status" || name === "bg_list" || name === "bg_kill") {
             return await executeTerminalTool(name, args, ctx);
         }
-        if (name === "telegram_send_file") return await executeSendFileTool(name, args, ctx);
+        if (name === "telegram_send_file" || name === "send_file") return await executeSendFileTool(name, args, ctx);
         if (name === "user_ask") return await executeUserAskTool(name, args, ctx);
         if (name === "consult_agent") return await executeConsultAgent(name, args, ctx);
+        if (name === "session_search") return await executeSessionSearchTool(name, args);
         if (name === "viz_create") return await executeVizTool(name, args);
-        if (name.startsWith("mcp__")) return await invokeMcpTool(name, args);
+        if (name.startsWith("mcp__")) return await invokeMcpTool(name, args, ctx);
         if (name === "xvfb_gui") return await executeXvfbGuiTool(name, args, ctx);
         return { error: `Unknown tool: ${name}` };
     } catch (err) {

@@ -1,5 +1,10 @@
 export const STOP_BY_USER_HINT = "The user sent /stop. Stop immediately. Do not call more tools. Reply briefly with progress and what remains.";
 
+export const EMPTY_REPLY_HINT =
+    "Your previous assistant reply was empty. Reply to the user in plain text now. Summarize what you accomplished and answer their request.";
+
+export const QUIET_EMPTY_HINT = "If the user does not need a message, reply with ONLY __SILENT__. Do not narrate an empty check.";
+
 const sessions = new Map();
 
 export class AgentSession {
@@ -33,11 +38,15 @@ export class AgentSession {
     }
 }
 
-export function beginAgentSession(chatId) {
+export function beginAgentSession(chatId, { automated = null } = {}) {
     const key = String(chatId);
     const existing = sessions.get(key);
-    if (existing?.running) return existing;
+    if (existing?.running) {
+        if (automated != null) existing.automated = automated;
+        return existing;
+    }
     const session = new AgentSession(key);
+    session.automated = automated === true;
     sessions.set(key, session);
     return session;
 }
@@ -55,6 +64,10 @@ export function isAgentSessionRunning(chatId) {
     return Boolean(getActiveAgentSession(chatId));
 }
 
+export function listRunningSessionKeys() {
+    return [...sessions.keys()].filter((id) => sessions.get(id)?.running);
+}
+
 export function requestAgentStop(chatId) {
     const session = getActiveAgentSession(chatId);
     if (!session) return false;
@@ -65,6 +78,7 @@ export function requestAgentStop(chatId) {
 export function enqueueAgentMessage(chatId, text) {
     const session = getActiveAgentSession(chatId);
     if (!session) return false;
+    if (session.automated) return false;
     session.addPendingMessage(text);
     return true;
 }

@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { TEMPLATES_USER_DIR, USER_DIR } from "./paths.js";
-import { DEFAULT_AGENT_ID, agentMemoryDir, agentMemoryPath, ensureAgentMemory } from "./agents-store.js";
+import { writeFileAtomic } from "./atomic-file.js";
+import { agentMemoryDir, agentMemoryPath, ensureAgentMemory } from "./agents-store.js";
 
 const MEMORY_PATH = path.join(USER_DIR, "memory.md");
-const MEMORY_DIR = path.join(USER_DIR, "memory");
 const MEMORY_TEMPLATE_PATH = path.join(TEMPLATES_USER_DIR, "memory.md");
 
 function defaultMemoryContent() {
@@ -16,8 +16,7 @@ function defaultMemoryContent() {
 
 function ensureMemoryFile() {
     if (!fs.existsSync(MEMORY_PATH)) {
-        fs.mkdirSync(USER_DIR, { recursive: true });
-        fs.writeFileSync(MEMORY_PATH, defaultMemoryContent(), "utf8");
+        writeFileAtomic(MEMORY_PATH, defaultMemoryContent());
     }
 }
 
@@ -25,6 +24,14 @@ export function readMemoryFile() {
     ensureMemoryFile();
     return fs.readFileSync(MEMORY_PATH, "utf8");
 }
+
+function readMemoryFileSummary(filePath) {
+    const text = fs.readFileSync(filePath, "utf8");
+    const firstLine = text.split("\n").find((l) => l.trim()) || "";
+    return firstLine.replace(/^#+\s*/, "").trim();
+}
+
+const MEMORY_DIR = path.join(USER_DIR, "memory");
 
 function listMemoryFiles() {
     if (!fs.existsSync(MEMORY_DIR)) return [];
@@ -34,13 +41,7 @@ function listMemoryFiles() {
         .sort();
 }
 
-function readMemoryFileSummary(filePath) {
-    const text = fs.readFileSync(filePath, "utf8");
-    const firstLine = text.split("\n").find((l) => l.trim()) || "";
-    return firstLine.replace(/^#+\s*/, "").trim();
-}
-
-// 시스템 프롬프트에 주입되는 주제별 메모 파일 목록 (파일명 + 첫 줄 요약만).
+// 시스템 프롬프트에 주입되는 공유 주제별 메모 파일 목록 (파일명 + 첫 줄 요약만).
 export function formatMemoryFilesListForPrompt() {
     const items = listMemoryFiles().map((name) => {
         const summary = readMemoryFileSummary(path.join(MEMORY_DIR, name));
@@ -52,13 +53,13 @@ export function formatMemoryFilesListForPrompt() {
 }
 
 export function readAgentMemoryFile(agentId) {
-    if (!agentId || agentId === DEFAULT_AGENT_ID) return "";
+    if (!agentId) return "";
     const file = ensureAgentMemory(agentId);
     return fs.readFileSync(file, "utf8");
 }
 
 export function formatAgentMemoryFilesListForPrompt(agentId) {
-    if (!agentId || agentId === DEFAULT_AGENT_ID) return "";
+    if (!agentId) return "";
     const dir = agentMemoryDir(agentId);
     if (!fs.existsSync(dir)) return "- (none yet — create files under this agent's memory/ folder)";
     const items = fs
@@ -75,6 +76,11 @@ export function formatAgentMemoryFilesListForPrompt(agentId) {
 }
 
 export function agentMemoryFilePath(agentId) {
-    if (!agentId || agentId === DEFAULT_AGENT_ID) return "";
+    if (!agentId) return "";
     return agentMemoryPath(agentId);
+}
+
+export function agentMemoryDirPath(agentId) {
+    if (!agentId) return "";
+    return agentMemoryDir(agentId);
 }

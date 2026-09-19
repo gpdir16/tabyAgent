@@ -81,7 +81,6 @@ export function buildSkillContentVars() {
         SKILLS_DIR: skillsDirPath(),
         SYSTEM_SKILLS_DIR: SKILLS_SYSTEM_DIR,
         MEMORY_PATH: memoryFilePath(),
-        MEMORY_DIR: memoryDirPath(),
         MCP_CONFIG_PATH: mcpConfigPath(),
         SCHEDULING_PATH: todosConfigPath(),
         DOWNLOAD_DIR: downloadDirPath(),

@@ -3,6 +3,7 @@ import { runAgent } from "./loop.js";
 import { clearChatHistory, loadChatHistory } from "./chat-history.js";
 import { t } from "../i18n.js";
 import { memoryFilePath } from "../path-labels.js";
+import { agentIdForSessionKey } from "./chat-history.js";
 
 export function memoryFlushPrompt(lang) {
     const memoryPath = memoryFilePath();
@@ -75,14 +76,14 @@ Do **not** create a skill when none of these apply. One-off questions, greetings
     return prompts[lang] || prompts.en;
 }
 
-export async function handleNewChat(bot, chatId) {
+export async function handleNewChat(bot, sessionKey) {
     const lang = loadUserConfig().language || "en";
 
     // Snapshot the conversation BEFORE clearing, then rotate to a fresh session immediately.
-    const priorHistory = loadChatHistory(chatId);
+    const priorHistory = loadChatHistory(sessionKey);
 
     try {
-        clearChatHistory(chatId);
+        clearChatHistory(sessionKey);
     } catch (err) {
         console.error("Clear chat history failed:", err?.stack || err);
     }
@@ -91,14 +92,14 @@ export async function handleNewChat(bot, chatId) {
     // Uses the snapshot so it works on the archived conversation regardless of
     // what the user does in the new session. No chatId passed to runAgent —
     // tools stay read-only on disk history; no session/abort, silent and unstoppable.
-    void runSelfImprovement(bot, lang, priorHistory).catch((err) => {
+    void runSelfImprovement(bot, lang, priorHistory, sessionKey).catch((err) => {
         console.error("Background self-improvement failed:", err?.stack || err);
     });
 
     return t("new_chat_ok", lang);
 }
 
-async function runSelfImprovement(bot, lang, history) {
+async function runSelfImprovement(bot, lang, history, sessionKey) {
     // Skip when there was nothing to review.
     if (!history?.length) return;
 
@@ -106,6 +107,8 @@ async function runSelfImprovement(bot, lang, history) {
         const result = await runAgent(memoryFlushPrompt(lang), {
             bot,
             history,
+            agentId: agentIdForSessionKey(sessionKey),
+            sessionKey: `new-chat:flush:${sessionKey}`,
         });
         if (result?.error && result.error !== "stopped_by_user") {
             console.error("Self-improvement ended with:", result.error, result.errorDetail || "");

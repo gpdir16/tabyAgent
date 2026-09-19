@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { USER_DIR } from "./paths.js";
+import { writeFileAtomic, writeJsonAtomic } from "./atomic-file.js";
 
 export const DEFAULT_AGENT_ID = "main";
 export const DEFAULT_AGENT_NAME = "tabyAgent";
@@ -27,26 +29,52 @@ function readJson(filePath, fallback) {
 }
 
 function writeJson(filePath, data) {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+    writeJsonAtomic(filePath, data);
+}
+
+function newUuid() {
+    return crypto.randomUUID();
 }
 
 function normalizeThreadId(value) {
     const n = Number(value);
-    return Number.isFinite(n) && n > 1 ? n : null;
+    return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+let agentsCache = null;
+
+function statMtime() {
+    try {
+        return fs.statSync(AGENTS_PATH).mtimeMs;
+    } catch {
+        return -1;
+    }
 }
 
 export function loadAgentsStore() {
+    const mtime = statMtime();
+    if (agentsCache && mtime !== -1 && agentsCache.mtime === mtime) return agentsCache.store;
     const raw = readJson(AGENTS_PATH, { agents: [] });
-    const agents = Array.isArray(raw?.agents) ? raw.agents.filter((a) => a && typeof a.id === "string" && a.id !== DEFAULT_AGENT_ID) : [];
-    return { agents, mainThreadId: normalizeThreadId(raw?.mainThreadId) };
+    const agents = Array.isArray(raw?.agents) ? raw.agents.filter((a) => a && typeof a.id === "string") : [];
+    let mutated = false;
+    for (const a of agents) {
+        if (!a.uuid) {
+            a.uuid = newUuid();
+            mutated = true;
+        }
+    }
+    const store = { agents, mainThreadId: normalizeThreadId(raw?.mainThreadId) };
+    if (mutated) writeJson(AGENTS_PATH, { agents, ...(store.mainThreadId ? { mainThreadId: store.mainThreadId } : {}) });
+    agentsCache = { mtime: mutated ? statMtime() : mtime, store };
+    return agentsCache.store;
 }
 
 export function saveAgentsStore(store) {
-    const payload = { agents: store.agents || [] };
     const mainThreadId = normalizeThreadId(store.mainThreadId);
+    const payload = { agents: store.agents || [] };
     if (mainThreadId) payload.mainThreadId = mainThreadId;
     writeJson(AGENTS_PATH, payload);
+    agentsCache = { mtime: statMtime(), store: { agents: payload.agents, mainThreadId } };
 }
 
 export function getMainThreadId() {
@@ -64,15 +92,27 @@ export function listAgents() {
     return loadAgentsStore().agents;
 }
 
+export function firstAgent() {
+    return listAgents()[0] || null;
+}
+
+export function firstAgentId() {
+    return firstAgent()?.id || DEFAULT_AGENT_ID;
+}
+
 export function getAgent(id) {
     if (!id || id === DEFAULT_AGENT_ID) return null;
     return listAgents().find((a) => a.id === id) || null;
 }
 
+export function getAgentByUuid(uuid) {
+    if (!uuid) return null;
+    return listAgents().find((a) => a.uuid === uuid) || null;
+}
+
 export function findAgentByThread(threadId) {
     const n = Number(threadId);
-    if (!Number.isFinite(n) || n <= 1) return null;
-    if (getMainThreadId() === n) return null;
+    if (!Number.isInteger(n) || n <= 0) return null;
     return listAgents().find((a) => Number(a.threadId) === n) || null;
 }
 
@@ -81,21 +121,36 @@ export function findAgentByNameOrId(query) {
         .trim()
         .toLowerCase();
     if (!q) return null;
-    if (q === DEFAULT_AGENT_ID || q === DEFAULT_AGENT_NAME.toLowerCase()) return null;
     return listAgents().find((a) => a.id.toLowerCase() === q || String(a.name || "").toLowerCase() === q) || null;
+}
+
+// 메인 에이전트는 스토어에 없는 가상 에이전트다. "main"/"tabyagent"를 받으면
+// 실행용 유사 객체를 돌려주고, 그 외에는 실제 토픽 에이전트를 찾는다.
+export function findAgentOrDefault(query) {
+    const q = String(query || "")
+        .trim()
+        .toLowerCase();
+    if (!q) return null;
+    if (q === DEFAULT_AGENT_ID || q === DEFAULT_AGENT_NAME.toLowerCase() || q === "default") {
+        return { id: DEFAULT_AGENT_ID, name: DEFAULT_AGENT_NAME };
+    }
+    return getAgent(q) || findAgentByNameOrId(q);
+}
+
+export function mainAgentRef() {
+    return { id: DEFAULT_AGENT_ID, name: DEFAULT_AGENT_NAME };
 }
 
 export function slugifyAgentId(name, existingIds = []) {
     const ascii = String(name || "")
         .normalize("NFKD")
-        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[̀-ͯ]/g, "")
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "")
         .slice(0, MAX_ID);
 
     let base = ascii || "agent";
-    if (base === DEFAULT_AGENT_ID) base = "agent";
 
     const used = new Set(existingIds);
     if (!used.has(base)) return base;
@@ -128,6 +183,13 @@ export function topicIconColor(id) {
     return TOPIC_COLORS[hash % TOPIC_COLORS.length];
 }
 
+const AVATAR_COLORS = ["#0a84ff", "#5e5ce6", "#bf5af2", "#ff375f", "#ff9f0a", "#32d74b", "#64d2ff"];
+export function agentColor(id) {
+    let hash = 0;
+    for (const ch of String(id)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+    return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+}
+
 export function agentHomeDir(id) {
     return path.join(AGENTS_ROOT, id);
 }
@@ -143,8 +205,7 @@ export function agentMemoryDir(id) {
 export function ensureAgentMemory(id) {
     const file = agentMemoryPath(id);
     if (!fs.existsSync(file)) {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, `# ${id} memory\n\n`, "utf8");
+        writeFileAtomic(file, `# ${id} memory\n\n`);
     }
     return file;
 }
@@ -167,6 +228,7 @@ export function addAgent({ name, persona, threadId }) {
     );
     const agent = {
         id,
+        uuid: newUuid(),
         name: named.name,
         persona: person.persona,
         threadId: Number(threadId),
