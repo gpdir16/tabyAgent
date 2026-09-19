@@ -2,7 +2,8 @@ import { fileToolDefinitions, executeFileRead, executeFilePatch } from "../tools
 import { configToolDefinitions, executeConfigTool } from "../tools/config-tool.js";
 import { skillsToolDefinitions, executeSkillsTool } from "../tools/skills.js";
 import { terminalToolDefinitions, executeTerminalTool } from "../tools/terminal.js";
-import { cronToolDefinitions, executeCronTool } from "../tools/cron-tool.js";
+import { todoToolDefinitions, executeTodoTool } from "../tools/todo-tool.js";
+import { stopTodoScheduler } from "../todos/scheduler.js";
 import { sendFileToolDefinitions, executeSendFileTool } from "../tools/send-file-tool.js";
 import { userAskToolDefinitions, executeUserAskTool } from "../tools/user-ask-tool.js";
 import { vizToolDefinitions, executeVizTool } from "../tools/visualization.js";
@@ -10,7 +11,6 @@ import { xvfbGuiToolDefinitions, executeXvfbGuiTool } from "../tools/xvfb-gui.js
 import { consultAgentToolDefinitions, executeConsultAgent } from "../tools/consult-agent.js";
 import { listAgents } from "../agents-store.js";
 import { getDynamicMcpToolDefinitions, invokeMcpTool, syncMcpServers, disconnectMcpServers } from "../mcp/servers.js";
-import { stopCronScheduler } from "../cron/scheduler.js";
 import { stopUpdateScheduler } from "../update/scheduler.js";
 import { sanitizeTextForLlm } from "../llm/sanitize-messages.js";
 import { isDockerRuntime } from "../runtime.js";
@@ -20,7 +20,7 @@ export async function initTools() {
 }
 
 export async function shutdownTools() {
-    stopCronScheduler();
+    stopTodoScheduler();
     stopUpdateScheduler();
     await disconnectMcpServers();
 }
@@ -31,7 +31,7 @@ export async function getAllToolDefinitions() {
         ...fileToolDefinitions,
         ...configToolDefinitions,
         ...skillsToolDefinitions,
-        ...cronToolDefinitions,
+        ...todoToolDefinitions,
         ...terminalToolDefinitions,
         ...sendFileToolDefinitions,
         ...userAskToolDefinitions,
@@ -48,7 +48,7 @@ export async function executeTool(name, args, ctx = {}) {
         if (name === "file_patch") return await executeFilePatch(args, ctx);
         if (name === "config_set") return await executeConfigTool(name, args);
         if (name.startsWith("skills_")) return await executeSkillsTool(name, args);
-        if (name.startsWith("cron_")) return await executeCronTool(name, args);
+        if (name.startsWith("todo_")) return await executeTodoTool(name, args, ctx);
         if (name === "terminal_run" || name === "bg_status" || name === "bg_list" || name === "bg_kill") {
             return await executeTerminalTool(name, args, ctx);
         }

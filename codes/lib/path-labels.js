@@ -22,6 +22,11 @@ export function downloadDirPath() {
     return DOWNLOAD_DIR;
 }
 
+export function todosConfigPath() {
+    return path.join(USER_DIR, "todos.json");
+}
+
+// 마이그레이션 전용 — 새 코드는 todosConfigPath()를 사용한다.
 export function cronConfigPath() {
     return path.join(USER_DIR, "cron.json");
 }
@@ -65,10 +70,6 @@ export function sendFileDescription() {
     return `Send a file to Telegram. Default \`${USER_DIR}\`.${workspaceSuffix()}`;
 }
 
-export function cronListDescription() {
-    return `List scheduled cron jobs from \`${cronConfigPath()}\`.`;
-}
-
 export function mcpConfigEditHint(serverName) {
     return `MCP server not connected: ${serverName}. Edit \`${mcpConfigPath()}\`; it loads on the next message.`;
 }
@@ -82,7 +83,7 @@ export function buildSkillContentVars() {
         MEMORY_PATH: memoryFilePath(),
         MEMORY_DIR: memoryDirPath(),
         MCP_CONFIG_PATH: mcpConfigPath(),
-        CRON_PATH: cronConfigPath(),
+        SCHEDULING_PATH: todosConfigPath(),
         DOWNLOAD_DIR: downloadDirPath(),
         CAMOFOX_DIR: path.join(CODES_DIR, "skills", "camofox"),
         CAMOFOX_DATA_DIR: path.join(USER_DIR, "camofox"),
@@ -99,7 +100,8 @@ function skillContentVars() {
 const LEGACY_SKILL_PATHS = [
     ["/app/user/memory.md", (v) => v.MEMORY_PATH],
     ["/app/user/mcp.json", (v) => v.MCP_CONFIG_PATH],
-    ["/app/user/cron.json", (v) => v.CRON_PATH],
+    ["/app/user/cron.json", (v) => v.SCHEDULING_PATH],
+    ["/app/user/scheduling.json", (v) => v.SCHEDULING_PATH],
     ["/app/user/skills", (v) => v.SKILLS_DIR],
     ["/app/user/download", (v) => v.DOWNLOAD_DIR],
     ["/app/codes/skills", (v) => path.join(v.CODES_DIR, "skills")],

@@ -3,8 +3,9 @@ import { loadUserConfig } from "../config-loader.js";
 import { sendMessageSafe, editMessageTextSafe } from "../telegram-api.js";
 import { t } from "../i18n.js";
 import { telegramThreadOpts } from "../agent-route.js";
+import { clearTodoWaiting, markTodoWaiting } from "../todos/store.js";
 
-// chatId -> { key, id, bot, lang, question, options, messageId, resolve, timer, settled }
+// sessionKey -> { key, id, bot, lang, question, options, messageId, resolve, timer, settled, todoId }
 const pendingAsks = new Map();
 
 function trimLabel(label, max = 60) {
@@ -26,11 +27,13 @@ export function pendingAskIdFor(sessionKey) {
 }
 
 function settle(entry, result) {
-    if (entry.settled) return;
+    if (entry.settled) return false;
     entry.settled = true;
     clearTimeout(entry.timer);
     pendingAsks.delete(entry.key);
+    if (entry.todoId) clearTodoWaiting(entry.todoId, entry.id);
     entry.resolve(result);
+    return true;
 }
 
 async function finishAskMessage(entry, text) {
@@ -71,7 +74,7 @@ export function cancelPendingAsk(sessionKey, reason = "aborted") {
     return true;
 }
 
-export async function askUser({ bot, chatId, sessionKey, threadId, question, options = [], timeoutMs = 120_000 }) {
+export async function askUser({ bot, chatId, sessionKey, threadId, question, options = [], timeoutMs = 120_000, todoId = null }) {
     const key = String(sessionKey || chatId);
     if (pendingAsks.has(key)) {
         return { error: "Another user_ask is already pending for this chat." };
@@ -116,11 +119,14 @@ export async function askUser({ bot, chatId, sessionKey, threadId, question, opt
             resolve,
             timer: null,
             settled: false,
+            todoId: todoId || null,
         };
         entry.timer = setTimeout(() => {
             settle(entry, { error: "timeout" });
             void finishAskMessage(entry, `${entry.question}\n\n⏱️ ${t("user_ask_timeout", lang)}`);
         }, timeoutMs);
         pendingAsks.set(key, entry);
+        // 스케줄된 실행이 물어보고 멈춰 있으면 /todos에 '답변 필요'로 표시한다.
+        if (entry.todoId) markTodoWaiting(entry.todoId, { askId: entry.id, question: entry.question, convId: key });
     });
 }

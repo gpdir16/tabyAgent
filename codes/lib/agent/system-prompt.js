@@ -50,7 +50,7 @@ export function buildFilesystemPromptBlock() {
             "",
             `| Path | Role |`,
             `|------|------|`,
-            `| \`${USER_DIR}\` | **Main home (default).** Docker volume: \`config.json\`, \`memory.md\`, \`memory/\`, \`agents/\`, \`skills/\`, \`mcp.json\`, \`cron.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. Exists **inside the container** — not a path on the user's PC. |`,
+            `| \`${USER_DIR}\` | **Main home (default).** Docker volume: \`config.json\`, \`memory.md\`, \`memory/\`, \`agents/\`, \`skills/\`, \`mcp.json\`, \`todos.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. Exists **inside the container** — not a path on the user's PC. |`,
             `| \`${CODES_DIR}\` | Shipped agent source and built-in skills (image; avoid editing). |`,
             `| \`/tmp\` | Ephemeral scratch inside the container. |`,
         ];
@@ -65,7 +65,7 @@ export function buildFilesystemPromptBlock() {
                 "**Routing:**",
                 `- **Default:** everything → \`${USER_DIR}\` (same as when no mount exists).`,
                 `- **\`${WORKSPACE_DIR}\` only when:** user explicitly asks to work on their **local/PC/mounted** project or files that must appear on their computer.`,
-                `- Bot settings, memory, skills, MCP, cron, uploads → always \`${USER_DIR}\`.`,
+                `- Bot settings, memory, skills, MCP, todos, uploads → always \`${USER_DIR}\`.`,
                 `- Do **not** tell the user to open \`${USER_DIR}\` on their PC — container-only. For PC-visible files, use \`${WORKSPACE_DIR}\`.`,
             );
         } else {
@@ -85,7 +85,7 @@ export function buildFilesystemPromptBlock() {
         "",
         `| Path | Role |`,
         `|------|------|`,
-        `| \`${USER_DIR}\` | **Main home (default).** \`config.json\`, \`memory.md\`, \`memory/\`, \`agents/\`, \`skills/\`, \`mcp.json\`, \`cron.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. |`,
+        `| \`${USER_DIR}\` | **Main home (default).** \`config.json\`, \`memory.md\`, \`memory/\`, \`agents/\`, \`skills/\`, \`mcp.json\`, \`todos.json\`, \`download/\`, chat temp, and **most work**. Default \`terminal_run\` cwd. Relative \`file_*\` paths resolve here. |`,
         `| \`${CODES_DIR}\` | Shipped agent source and built-in skills (avoid editing). |`,
         `| \`/tmp\` | Ephemeral scratch. |`,
     ];
@@ -100,7 +100,7 @@ export function buildFilesystemPromptBlock() {
             "**Routing:**",
             `- **Default:** everything → \`${USER_DIR}\`.`,
             `- **\`${WORKSPACE_DIR}\` only when:** user explicitly asks to work on a **project folder** outside the agent home.`,
-            `- Bot settings, memory, skills, MCP, cron, uploads → always \`${USER_DIR}\`.`,
+            `- Bot settings, memory, skills, MCP, todos, uploads → always \`${USER_DIR}\`.`,
         );
     } else {
         lines.push("", `**No extra project folder** is configured. All durable user files live under \`${USER_DIR}\`.`);

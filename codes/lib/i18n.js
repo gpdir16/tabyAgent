@@ -149,15 +149,145 @@ const MESSAGES = {
         ko: "중지했습니다.",
         ja: "停止しました。",
     },
-    cron_auto_header: {
-        en: "ℹ️ Automatically executed scheduled task",
-        ko: "ℹ️ 반복 작업으로 자동 실행된 작업",
-        ja: "ℹ️ 定期タスクにより自動実行された作業",
-    },
-    cron_no_output: {
+    schedule_no_output: {
         en: "(no output)",
         ko: "(출력 없음)",
         ja: "(出力なし)",
+    },
+    todo_reminder: {
+        en: "⏰ Reminder: {title}",
+        ko: "⏰ 리마인더: {title}",
+        ja: "⏰ リマインダー: {title}",
+    },
+    todo_list_header: {
+        en: "📋 Your todos",
+        ko: "📋 할 일 목록",
+        ja: "📋 やることリスト",
+    },
+    todo_list_empty: {
+        en: "No open todos.",
+        ko: "남은 할 일이 없습니다.",
+        ja: "未完了のタスクはありません。",
+    },
+    todo_assigned_to: {
+        en: "assigned to {name}",
+        ko: "담당: {name}",
+        ja: "担当: {name}",
+    },
+    todo_offer_line: {
+        en: "{name} offered{reason}",
+        ko: "{name} 제안{reason}",
+        ja: "{name} が立候補{reason}",
+    },
+    todo_suggestions_header: {
+        en: "⏳ Pending suggestions",
+        ko: "⏳ 승인 대기 중인 제안",
+        ja: "⏳ 承認待ちの提案",
+    },
+    todo_usage: {
+        en: "Send /todo <title> to add one.",
+        ko: "/todo <제목> 으로 추가할 수 있습니다.",
+        ja: "/todo <タイトル> で追加できます。",
+    },
+    todo_btn_done: {
+        en: "✅ Done",
+        ko: "✅ 완료",
+        ja: "✅ 完了",
+    },
+    todo_btn_del: {
+        en: "🗑 Delete",
+        ko: "🗑 삭제",
+        ja: "🗑 削除",
+    },
+    todo_btn_run: {
+        en: "▶ Run now",
+        ko: "▶ 지금 실행",
+        ja: "▶ 今すぐ実行",
+    },
+    todo_btn_accept: {
+        en: "🤝 Let {name} do it",
+        ko: "🤝 {name}에게 맡기기",
+        ja: "🤝 {name} に任せる",
+    },
+    todo_btn_approve: {
+        en: "✅ Approve",
+        ko: "✅ 승인",
+        ja: "✅ 承認",
+    },
+    todo_btn_reject: {
+        en: "❌ Reject",
+        ko: "❌ 거절",
+        ja: "❌ 却下",
+    },
+    todo_sug_kind_add: {
+        en: "a new todo",
+        ko: "새 할 일",
+        ja: "新しいタスク",
+    },
+    todo_sug_kind_edit: {
+        en: "an edit",
+        ko: "수정",
+        ja: "変更",
+    },
+    todo_sug_kind_delete: {
+        en: "a deletion",
+        ko: "삭제",
+        ja: "削除",
+    },
+    todo_suggest_card: {
+        en: '💡 {agent} suggests {kind}: "{title}"{reason}',
+        ko: '💡 {agent} 제안 — {kind}: "{title}"{reason}',
+        ja: '💡 {agent} の提案 — {kind}: "{title}"{reason}',
+    },
+    todo_offer_card: {
+        en: '🤝 {agent} offers to handle: "{title}"{reason}',
+        ko: '🤝 {agent} 이(가) 맡겠다고 합니다: "{title}"{reason}',
+        ja: '🤝 {agent} が引き受けます: "{title}"{reason}',
+    },
+    todo_added: {
+        en: "Added: {title}",
+        ko: "추가했습니다: {title}",
+        ja: "追加しました: {title}",
+    },
+    todo_done_ok: {
+        en: "✅ Done: {title}",
+        ko: "✅ 완료: {title}",
+        ja: "✅ 完了: {title}",
+    },
+    todo_deleted: {
+        en: "🗑 Deleted: {title}",
+        ko: "🗑 삭제했습니다: {title}",
+        ja: "🗑 削除しました: {title}",
+    },
+    todo_approved: {
+        en: "✅ Approved: {title}",
+        ko: "✅ 승인했습니다: {title}",
+        ja: "✅ 承認しました: {title}",
+    },
+    todo_rejected: {
+        en: "❌ Suggestion rejected.",
+        ko: "❌ 제안을 거절했습니다.",
+        ja: "❌ 提案を却下しました。",
+    },
+    todo_offer_accepted: {
+        en: "🤝 {name} will handle it now: {title}",
+        ko: "🤝 {name} 이(가) 지금 처리합니다: {title}",
+        ja: "🤝 {name} が今処理します: {title}",
+    },
+    todo_run_queued: {
+        en: "▶ {name} is running it now: {title}",
+        ko: "▶ {name} 이(가) 지금 실행합니다: {title}",
+        ja: "▶ {name} が今実行します: {title}",
+    },
+    todo_run_failed: {
+        en: "Couldn't start it: {error}",
+        ko: "실행하지 못했습니다: {error}",
+        ja: "実行できませんでした: {error}",
+    },
+    todo_expired: {
+        en: "This action is no longer available.",
+        ko: "더 이상 사용할 수 없는 동작입니다.",
+        ja: "この操作はもう使えません。",
     },
     update_notify_title: {
         en: "🆕 A new version is available: {version}",

@@ -214,6 +214,8 @@ export function removeAgent(id) {
     const [removed] = store.agents.splice(idx, 1);
     saveAgentsStore(store);
     moveDirAside(agentHomeDir(id));
+    // 에이전트의 자동화/인계 항목도 같이 정리한다 (순환 import 회피를 위해 지연 로드).
+    import("./todos/store.js").then((m) => m.purgeAgentTodos(id)).catch(() => {});
     return { agent: removed };
 }
 

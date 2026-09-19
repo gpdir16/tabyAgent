@@ -26,7 +26,7 @@ services:
             CAMOFOX_COOKIES_DIR: /app/user/camofox/cookies
             CAMOFOX_DOWNLOADS_DIR: /app/user/camofox/downloads
             CAMOFOX_TRACES_DIR: /app/user/camofox/traces
-        # Persistent state (config, memory, MCP, cron). Defaults: codes/templates/user
+        # Persistent state (config, memory, MCP, todos). Defaults: codes/templates/user
         volumes:
             - tabyagent-user:/app/user
         # Optional host folder: set HOST_WORKSPACE in .env and use docker-compose.workspace.yml

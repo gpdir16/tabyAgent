@@ -2,6 +2,7 @@ import { ensureUserDir } from "./lib/bootstrap.js";
 import { initTools, shutdownTools } from "./lib/agent/tool-registry.js";
 import { startTelegramBot } from "./lib/telegram.js";
 import { bootstrapBotTokenFromEnv, hasBotToken } from "./lib/readiness.js";
+import { runLegacyMigrations } from "./lib/migrate-legacy.js";
 import { isDockerRuntime } from "./lib/runtime.js";
 import { ensureSession, DISPLAY } from "./lib/computer/display.js";
 
@@ -33,6 +34,7 @@ function startSharedDisplay() {
 async function main() {
     ensureUserDir();
     bootstrapBotTokenFromEnv();
+    runLegacyMigrations();
     await initTools();
 
     process.on("SIGINT", shutdown);
