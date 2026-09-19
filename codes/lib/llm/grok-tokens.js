@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { USER_DIR } from "../paths.js";
+import { writeJsonAtomic } from "../atomic-file.js";
 
 const ISSUER = "https://auth.x.ai";
 const DEVICE_CODE_URL = `${ISSUER}/oauth2/device/code`;
@@ -47,10 +48,6 @@ function isFresh(stored, now = Date.now()) {
     return Boolean(stored?.accessToken && stored.expiresAt && now < stored.expiresAt - EXPIRY_MARGIN_MS);
 }
 
-export function grokAuthFilePath() {
-    return AUTH_FILE;
-}
-
 export function loadGrokTokens() {
     if (!fs.existsSync(AUTH_FILE)) return null;
     try {
@@ -69,7 +66,7 @@ export function saveGrokTokens(tokens) {
             id_token: tokens.idToken,
             expires_at: tokens.expiresAt,
         };
-        fs.writeFileSync(AUTH_FILE, JSON.stringify(data, null, 2), "utf8");
+        writeJsonAtomic(AUTH_FILE, data, { mode: 0o600 });
         try {
             fs.chmodSync(AUTH_FILE, 0o600);
         } catch {

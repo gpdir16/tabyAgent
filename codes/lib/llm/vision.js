@@ -1,53 +1,68 @@
 import fs from "node:fs";
 import path from "node:path";
-import { loadAgentConfig } from "../config-loader.js";
 import { sanitizeTextForLlm } from "./sanitize-messages.js";
 
 const IMAGE_MIMES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"]);
 
 export function isVisionImageMime(mimeType) {
-    return IMAGE_MIMES.has(String(mimeType || "").toLowerCase());
-}
-
-export function isVisionImageAttachment(attachment) {
-    return Boolean(attachment?.path && isVisionImageMime(attachment.mimeType));
+    return IMAGE_MIMES.has(
+        String(mimeType || "")
+            .toLowerCase()
+            .split(";")[0]
+            .trim(),
+    );
 }
 
 const EXT_MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" };
 
-function maxImageBytes() {
-    return loadAgentConfig().visionMaxImageBytes ?? 5_000_000;
-}
+// data URI로 인라인되는 이미지는 base64가 바이트의 ~1.4배 — 메모리와 요청 크기
+// 양쪽을 막기 위해 상한을 둔다. 큰 이미지는 경로만 남긴다.
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
-function imageContentFromFile(text, imagePath, mime, { visionEnabled = false } = {}) {
-    const safeText = sanitizeTextForLlm(String(text || ""));
-    if (!visionEnabled || !imagePath) return safeText;
+export function visionImagePart(imagePath, mime) {
     try {
-        if (!fs.existsSync(imagePath)) return `${safeText}\n\n[Image missing: ${imagePath}]`;
+        if (!imagePath || !fs.existsSync(imagePath)) return null;
         const stat = fs.statSync(imagePath);
-        if (stat.size > maxImageBytes()) return `${safeText}\n\n[Image too large: ${stat.size} bytes]`;
+        if (!stat.isFile() || !stat.size) return null;
+        if (stat.size > MAX_IMAGE_BYTES) {
+            return {
+                type: "text",
+                text: `[Image too large to send inline: ${path.basename(imagePath)} (${Math.round(stat.size / 1048576)} MB)]`,
+            };
+        }
+        const useMime =
+            String(mime || "image/png")
+                .toLowerCase()
+                .split(";")[0]
+                .trim() || "image/png";
         const buf = fs.readFileSync(imagePath);
-        const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
-        return [
-            { type: "text", text: safeText },
-            { type: "image_url", image_url: { url: dataUrl, detail: "high" } },
-        ];
-    } catch (err) {
-        return `${safeText}\n\n[Image load failed: ${err.message}]`;
+        return {
+            type: "image_url",
+            image_url: { url: `data:${useMime};base64,${buf.toString("base64")}`, detail: "high" },
+        };
+    } catch {
+        return null;
     }
 }
 
-export function buildUserMessageContent(text, { visionEnabled = false, attachment = null } = {}) {
-    if (!visionEnabled || !isVisionImageAttachment(attachment)) {
-        return sanitizeTextForLlm(String(text || ""));
+function buildVisionParts(text, imageItems, { visionEnabled = false } = {}) {
+    const safeText = sanitizeTextForLlm(String(text || ""));
+    if (!visionEnabled) return safeText;
+    const parts = [];
+    if (safeText) parts.push({ type: "text", text: safeText });
+    for (const item of imageItems) {
+        const part = visionImagePart(item.path, item.mimeType);
+        if (part) parts.push(part);
     }
-
-    return imageContentFromFile(text, attachment.path, attachment.mimeType.toLowerCase(), { visionEnabled });
+    if (!parts.length) return safeText;
+    if (parts.length === 1 && parts[0].type === "text") return parts[0].text;
+    if (!parts.some((p) => p.type === "text")) parts.unshift({ type: "text", text: safeText });
+    return parts;
 }
 
 export function buildToolResultContent(text, imagePath, { visionEnabled = false } = {}) {
     const ext = path.extname(imagePath || "").toLowerCase();
-    return imageContentFromFile(text, imagePath, EXT_MIME[ext] || "image/png", { visionEnabled });
+    return buildVisionParts(text, imagePath ? [{ path: imagePath, mimeType: EXT_MIME[ext] || "image/png" }] : [], { visionEnabled });
 }
 
 export function estimateContentTokens(content) {

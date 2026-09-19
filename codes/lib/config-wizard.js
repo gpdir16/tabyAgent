@@ -12,6 +12,8 @@ import { restartUpdateScheduler } from "./update/scheduler.js";
 import { clearCodexTokens, startDeviceFlow, pollDeviceFlow } from "./llm/codex-tokens.js";
 import { clearGrokTokens, startGrokDeviceFlow, pollGrokDeviceFlow } from "./llm/grok-tokens.js";
 import { fetchGrokModels } from "./llm/grok-client.js";
+import { clearGithubCopilotTokens, startGithubCopilotDeviceFlow, pollGithubCopilotDeviceFlow } from "./llm/github-copilot-tokens.js";
+import { fetchGithubCopilotModels } from "./llm/github-copilot-client.js";
 import {
     getThinkingLevel,
     isReplyFooterEnabled,
@@ -33,6 +35,7 @@ const STATE_PATH = path.join(USER_DIR, "temp", "onboarding.json");
 
 // AbortController는 JSON state에 저장되지 않으므로 모듈에 유지
 let grokLoginAbort = null;
+let copilotLoginAbort = null;
 
 const PROVIDERS = {
     openai: { id: "default", label: "OpenAI" },
@@ -42,8 +45,10 @@ const PROVIDERS = {
     ollamaCloud: { id: "ollama-cloud", label: "Ollama Cloud" },
     zenmux: { id: "zenmux", label: "ZenMux" },
     upstage: { id: "upstage", label: "Upstage" },
+    orcarouter: { id: "orcarouter", label: "OrcaRouter" },
     codex: { id: "codex", label: "Codex OAuth (ChatGPT Plus/Pro)", apiKeyOptional: true },
     grok: { id: "grok", label: "Grok OAuth", apiKeyOptional: true },
+    githubCopilot: { id: "github-copilot", label: "GitHub Copilot OAuth", apiKeyOptional: true },
     custom: { id: "default", custom: true, label: "Custom URL" },
 };
 
@@ -222,6 +227,13 @@ function texts(lang) {
             grokLoginFailed: "❌ Login failed: {error}\n\nTap retry to try again.",
             grokLoginRetry: "Retry login",
             grokLoginCancel: "Cancel",
+            copilotLoginTitle: "GitHub Copilot (OAuth)",
+            copilotLoginPending:
+                "Waiting for authorization… Open the link below, enter the code, then approve.\n\n🔗 {url}\n\nCode: {code}\n\nThis will auto-complete when you approve.",
+            copilotLoginSuccess: "✅ GitHub Copilot login successful!",
+            copilotLoginFailed: "❌ Login failed: {error}\n\nTap retry to try again.",
+            copilotLoginRetry: "Retry login",
+            copilotLoginCancel: "Cancel",
             menuTitle: "tabyAgent settings",
             catLanguage: "Language",
             catThinking: "Thinking level",
@@ -277,6 +289,13 @@ function texts(lang) {
             grokLoginFailed: "❌ 로그인 실패: {error}\n\n다시 시도하려면 버튼을 누르세요.",
             grokLoginRetry: "다시 시도",
             grokLoginCancel: "취소",
+            copilotLoginTitle: "GitHub Copilot (OAuth)",
+            copilotLoginPending:
+                "인증 대기 중… 아래 링크를 열고 코드를 입력한 뒤 승인하세요.\n\n🔗 {url}\n\n코드: {code}\n\n승인하면 자동으로 완료됩니다.",
+            copilotLoginSuccess: "✅ GitHub Copilot 로그인 성공!",
+            copilotLoginFailed: "❌ 로그인 실패: {error}\n\n다시 시도하려면 버튼을 누르세요.",
+            copilotLoginRetry: "다시 시도",
+            copilotLoginCancel: "취소",
             menuTitle: "tabyAgent 설정",
             catLanguage: "언어",
             catThinking: "사고 수준",
@@ -331,6 +350,13 @@ function texts(lang) {
             grokLoginFailed: "❌ ログイン失敗: {error}\n\n再試行ボタンを押してください。",
             grokLoginRetry: "再試行",
             grokLoginCancel: "キャンセル",
+            copilotLoginTitle: "GitHub Copilot (OAuth)",
+            copilotLoginPending:
+                "認証待機中… 下のリンクを開き、コードを入力して承認してください。\n\n🔗 {url}\n\nコード: {code}\n\n承認すると自動で完了します。",
+            copilotLoginSuccess: "✅ GitHub Copilot ログイン成功！",
+            copilotLoginFailed: "❌ ログイン失敗: {error}\n\n再試行ボタンを押してください。",
+            copilotLoginRetry: "再試行",
+            copilotLoginCancel: "キャンセル",
             menuTitle: "tabyAgent 設定",
             catLanguage: "言語",
             catThinking: "思考レベル",
@@ -510,9 +536,13 @@ function providerKeyboard(lang, state = null) {
         .row()
         .text("Upstage", "cfg:prov:upstage")
         .row()
+        .text("OrcaRouter", "cfg:prov:orcarouter")
+        .row()
         .text("Codex OAuth (ChatGPT Plus/Pro)", "cfg:prov:codex")
         .row()
         .text("Grok OAuth", "cfg:prov:grok")
+        .row()
+        .text("GitHub Copilot OAuth", "cfg:prov:githubCopilot")
         .row()
         .text("Custom API URL", "cfg:prov:custom")
         .row();
@@ -772,6 +802,33 @@ async function sendModelStep(bot, chatId, state) {
         return;
     }
 
+    if (state.data.providerId === "github-copilot") {
+        let models = [];
+        try {
+            models = await fetchGithubCopilotModels();
+        } catch (err) {
+            console.warn("fetchGithubCopilotModels failed:", err.message || err);
+        }
+        if (!models.length) {
+            state.step = "model_manual";
+            saveState(state);
+            await replaceStep(bot, chatId, state, texts(lang).modelFetchFailed);
+            return;
+        }
+        models = [{ id: "auto", label: "auto (recommended)", contextWindow: null, supportsVision: true }, ...models];
+        const partition = partitionModelsForPicker(models);
+        state.data.availableModels = models;
+        state.data.modelPartition = {
+            flat: partition.flat,
+            prefixes: partition.prefixes,
+            byPrefix: Object.fromEntries(partition.byPrefix),
+        };
+        state.data.modelPage = 0;
+        saveState(state);
+        await showVendorStep(bot, chatId, state);
+        return;
+    }
+
     try {
         const provider = providerFromWizardState(state);
         const models = await fetchProviderModels(provider, { useCache: false });
@@ -902,6 +959,64 @@ async function startGrokLogin(bot, chatId, state) {
             if (err.message === "Login cancelled." || abort.signal.aborted) return;
             const failKb = new InlineKeyboard().text(msg.grokLoginRetry, "cfg:grok:retry").row().text(msg.grokLoginCancel, "cfg:grok:cancel");
             await replaceStep(bot, chatId, state, msg.grokLoginFailed.replace("{error}", err.message), failKb);
+        });
+}
+
+async function startGithubCopilotLogin(bot, chatId, state) {
+    const lang = uiLang(state);
+    const msg = texts(lang);
+
+    clearGithubCopilotTokens();
+
+    if (copilotLoginAbort) copilotLoginAbort.abort();
+    const abort = new AbortController();
+    copilotLoginAbort = abort;
+    state.step = "copilot_login";
+    saveState(state);
+
+    let flow;
+    try {
+        flow = await startGithubCopilotDeviceFlow();
+    } catch (err) {
+        if (copilotLoginAbort === abort) copilotLoginAbort = null;
+        const kb = new InlineKeyboard().text(msg.copilotLoginRetry, "cfg:copilot:retry").row().text(msg.copilotLoginCancel, "cfg:copilot:cancel");
+        await replaceStep(bot, chatId, state, msg.copilotLoginFailed.replace("{error}", err.message), kb);
+        return;
+    }
+
+    state.data.copilotFlow = { deviceCode: flow.deviceCode, userCode: flow.userCode, intervalMs: flow.intervalMs, expiresAt: flow.expiresAt };
+    saveState(state);
+
+    const text = msg.copilotLoginPending.replace("{url}", flow.deviceUrl).replace("{code}", flow.userCode);
+    const kb = new InlineKeyboard().text(msg.copilotLoginCancel, "cfg:copilot:cancel");
+    await replaceStep(bot, chatId, state, text, kb);
+
+    pollGithubCopilotDeviceFlow({
+        deviceCode: flow.deviceCode,
+        intervalMs: flow.intervalMs,
+        expiresAt: flow.expiresAt,
+        signal: abort.signal,
+    })
+        .then(async () => {
+            if (copilotLoginAbort !== abort) return;
+            copilotLoginAbort = null;
+            delete state.data.copilotFlow;
+            saveState(state);
+            await clearActivePrompt(bot, chatId, state);
+            await sendMessageSafe(bot, chatId, msg.copilotLoginSuccess);
+            await sendModelStep(bot, chatId, state);
+        })
+        .catch(async (err) => {
+            if (copilotLoginAbort !== abort) return;
+            copilotLoginAbort = null;
+            delete state.data.copilotFlow;
+            saveState(state);
+            if (err.message === "Login cancelled." || abort.signal.aborted) return;
+            const failKb = new InlineKeyboard()
+                .text(msg.copilotLoginRetry, "cfg:copilot:retry")
+                .row()
+                .text(msg.copilotLoginCancel, "cfg:copilot:cancel");
+            await replaceStep(bot, chatId, state, msg.copilotLoginFailed.replace("{error}", err.message), failKb);
         });
 }
 
@@ -1150,6 +1265,8 @@ export async function handleConfigWizardCallback(ctx, bot) {
             await startCodexLogin(bot, chatId, state);
         } else if (providerKey === "grok") {
             await startGrokLogin(bot, chatId, state);
+        } else if (providerKey === "githubCopilot") {
+            await startGithubCopilotLogin(bot, chatId, state);
         } else if (provider.apiKeyOptional) {
             saveState(state);
             await sendModelStep(bot, chatId, state);
@@ -1193,6 +1310,25 @@ export async function handleConfigWizardCallback(ctx, bot) {
         if (grokLoginAbort) grokLoginAbort.abort();
         grokLoginAbort = null;
         delete state.data.grokFlow;
+        saveState(state);
+        const lang = uiLang(state);
+        await replaceStep(bot, chatId, state, texts(lang).provider, providerKeyboard(lang, state));
+        return;
+    }
+
+    if (data === "cfg:copilot:retry") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await startGithubCopilotLogin(bot, chatId, state);
+        return;
+    }
+
+    if (data === "cfg:copilot:cancel") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        if (copilotLoginAbort) copilotLoginAbort.abort();
+        copilotLoginAbort = null;
+        delete state.data.copilotFlow;
         saveState(state);
         const lang = uiLang(state);
         await replaceStep(bot, chatId, state, texts(lang).provider, providerKeyboard(lang, state));

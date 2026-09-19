@@ -1,12 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
-import { loadProviderConfig } from "../config-loader.js";
+import { writeFileAtomic } from "../atomic-file.js";
 import { USER_DIR } from "../paths.js";
+import { fetchCodexModels } from "./codex-client.js";
+import { fetchGrokModels } from "./grok-client.js";
+import { fetchGithubCopilotModels } from "./github-copilot-client.js";
+import { loadProviderConfig } from "../config-loader.js";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
-const MODELS_PER_PAGE = 8;
-
-export { MODELS_PER_PAGE };
 
 function buildHeaders(provider) {
     return {
@@ -61,6 +62,15 @@ function cachePath(provider) {
 }
 
 export async function fetchProviderModels(provider, { useCache = true } = {}) {
+    if (provider?.type === "codex-oauth") {
+        return fetchCodexModels();
+    }
+    if (provider?.type === "grok-oauth") {
+        return fetchGrokModels();
+    }
+    if (provider?.type === "github-copilot-oauth") {
+        return fetchGithubCopilotModels();
+    }
     if (!provider?.apiKey?.trim()) {
         throw new Error("API key required to list models");
     }
@@ -90,10 +100,31 @@ export async function fetchProviderModels(provider, { useCache = true } = {}) {
     }
 
     const models = normalizeModelsList(payload);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, `${JSON.stringify({ fetchedAt: Date.now(), models }, null, 2)}\n`, "utf8");
+    writeFileAtomic(filePath, `${JSON.stringify({ fetchedAt: Date.now(), models }, null, 2)}\n`);
     return models;
 }
+
+export function findModelContextWindow(models, modelId) {
+    const found = models?.find((m) => m.id === modelId);
+    return found?.contextWindow || null;
+}
+
+function guessVisionFromModelId(modelId) {
+    const id = String(modelId || "").toLowerCase();
+    if (!id || /embed|whisper|dall-e|dalle|tts|sora|moderat|rerank/i.test(id)) return false;
+    return /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|claude-3|claude-4|claude-sonnet|claude-opus|claude-haiku|gemini|pixtral|llava|qwen.*vl|\/vl|vision|kimi|moonshot|internvl|glm-4v|grok-4/i.test(
+        id,
+    );
+}
+
+export function findModelVisionSupport(models, modelId) {
+    const found = models?.find((m) => m.id === modelId);
+    if (found && typeof found.supportsVision === "boolean") return found.supportsVision;
+    return guessVisionFromModelId(modelId);
+}
+
+const MODELS_PER_PAGE = 8;
+export { MODELS_PER_PAGE };
 
 export function providerFromWizardState(state) {
     const providerFile = loadProviderConfig(state.data.providerId || "default");
@@ -108,25 +139,6 @@ export function providerFromWizardState(state) {
         apiKey,
         extraHeaders: providerFile.extraHeaders || {},
     };
-}
-
-export function findModelContextWindow(models, modelId) {
-    const found = models?.find((m) => m.id === modelId);
-    return found?.contextWindow || null;
-}
-
-function guessVisionFromModelId(modelId) {
-    const id = String(modelId || "").toLowerCase();
-    if (!id || /embed|whisper|dall-e|dalle|tts|sora|moderat|rerank/i.test(id)) return false;
-    return /gpt-4o|gpt-4\.1|gpt-4-turbo|claude-3|claude-sonnet|claude-opus|claude-haiku|gemini|pixtral|llava|qwen.*vl|\/vl|vision|kimi|moonshot|internvl|glm-4v|grok-4/i.test(
-        id,
-    );
-}
-
-export function findModelVisionSupport(models, modelId) {
-    const found = models?.find((m) => m.id === modelId);
-    if (found && typeof found.supportsVision === "boolean") return found.supportsVision;
-    return guessVisionFromModelId(modelId);
 }
 
 export function partitionModelsForPicker(models) {

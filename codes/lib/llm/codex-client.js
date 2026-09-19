@@ -1,5 +1,6 @@
 import { sanitizeMessagesForApi } from "./sanitize-messages.js";
 import { loadCodexTokens, ensureFreshToken } from "./codex-tokens.js";
+import { consumeResponsesStream } from "./responses-stream.js";
 
 const ORIGINATOR = "tabyagent";
 
@@ -124,51 +125,6 @@ function convertToolChoice(tool_choice) {
     return "auto";
 }
 
-/**
- * Parse Responses API output items → Chat Completions format.
- * Returns { choices: [{ message, finish_reason }], usage }
- */
-function parseResponsesOutput(body) {
-    const outputItems = body.output || [];
-    let textContent = "";
-    const toolCalls = [];
-
-    for (const item of outputItems) {
-        if (item.type === "message" && item.role === "assistant") {
-            // content is an array of parts
-            if (Array.isArray(item.content)) {
-                for (const part of item.content) {
-                    if (part.type === "output_text" || part.type === "text") {
-                        textContent += part.text || "";
-                    }
-                }
-            } else if (typeof item.content === "string") {
-                textContent += item.content;
-            }
-        } else if (item.type === "function_call") {
-            toolCalls.push({
-                id: item.call_id,
-                type: "function",
-                function: {
-                    name: item.name,
-                    arguments: item.arguments || "{}",
-                },
-            });
-        }
-    }
-
-    const message = { role: "assistant" };
-    if (textContent) message.content = textContent;
-    if (toolCalls.length) message.tool_calls = toolCalls;
-
-    const finish_reason = toolCalls.length ? "tool_calls" : "stop";
-
-    return {
-        choices: [{ message, finish_reason }],
-        usage: body.usage ?? null,
-    };
-}
-
 function buildHeaders(accessToken, accountId) {
     const headers = {
         Authorization: `Bearer ${accessToken}`,
@@ -239,8 +195,9 @@ export async function codexComplete({
     const baseURL = "https://chatgpt.com/backend-api/codex";
     const payload = buildPayload({ model, messages, tools, tool_choice, thinkingLevel, thinkingParam });
 
-    const includeTools = Boolean(tools?.length) && tool_choice !== "none";
-    const useStream = Boolean(stream && onTextDelta && !includeTools);
+    // 스트리밍 중에도 function_call 이벤트를 조립할 수 있으므로 툴 라운드에서도 스트리밍한다.
+    // 비활성화하면 중간 라운드 텍스트가 프론트엔드에 도달하지 않는다.
+    const useStream = Boolean(stream && onTextDelta);
 
     const requestOptions = { method: "POST", headers, signal };
 
@@ -259,7 +216,7 @@ export async function codexComplete({
                     throw new Error(`Codex API error: ${res.status} ${errBody}`);
                 }
 
-                const result = await consumeStream(res, signal, onTextDelta);
+                const result = await consumeResponsesStream(res, signal, onTextDelta);
                 content = result.content;
                 usage = result.usage;
 
@@ -292,85 +249,6 @@ export async function codexComplete({
     return codexCompleteCollected({ baseURL, headers, payload, signal });
 }
 
-async function consumeStream(res, signal, onTextDelta) {
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let content = "";
-    let usage = null;
-    const toolCalls = [];
-    // Accumulate function call argument deltas by item_id
-    const argBuffers = {};
-
-    for (;;) {
-        if (signal?.aborted) {
-            const err = new Error("Stopped by user.");
-            err.name = "AbortError";
-            throw err;
-        }
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || !trimmed.startsWith("data: ")) continue;
-            const data = trimmed.slice(6);
-            if (data === "[DONE]") continue;
-            try {
-                const evt = JSON.parse(data);
-                if (evt.type === "response.output_text.delta" && evt.delta) {
-                    content += evt.delta;
-                    if (onTextDelta) onTextDelta(evt.delta, content);
-                } else if (evt.type === "response.output_item.added" && evt.item?.type === "function_call") {
-                    const tc = {
-                        id: evt.item.call_id,
-                        type: "function",
-                        function: { name: evt.item.name, arguments: evt.item.arguments || "{}" },
-                    };
-                    toolCalls.push(tc);
-                    argBuffers[evt.item.id] = "";
-                } else if (evt.type === "response.function_call_arguments.delta") {
-                    // Accumulate argument deltas by item_id
-                    if (evt.item_id && argBuffers[evt.item_id] !== undefined) {
-                        argBuffers[evt.item_id] += evt.delta;
-                    }
-                } else if (evt.type === "response.function_call_arguments.done") {
-                    // Final arguments — use accumulated buffer or event item
-                    const finalArgs = evt.item?.arguments || argBuffers[evt.item_id] || "{}";
-                    const tc = toolCalls.find((t) => t.id === evt.item?.call_id);
-                    if (tc) tc.function.arguments = finalArgs;
-                } else if (evt.type === "response.completed" || evt.type === "response.done") {
-                    if (evt.response?.usage || evt.usage) usage = evt.response?.usage || evt.usage;
-                    // Final safety net: overwrite toolCalls from completed response output
-                    const outputItems = evt.response?.output || evt.output || [];
-                    for (const item of outputItems) {
-                        if (item.type === "function_call") {
-                            const tc = toolCalls.find((t) => t.id === item.call_id);
-                            if (tc) {
-                                tc.function.arguments = item.arguments || tc.function.arguments;
-                            } else {
-                                toolCalls.push({
-                                    id: item.call_id,
-                                    type: "function",
-                                    function: { name: item.name, arguments: item.arguments || "{}" },
-                                });
-                            }
-                        }
-                    }
-                }
-            } catch {
-                // skip unparseable
-            }
-        }
-    }
-
-    return { content, usage, toolCalls };
-}
-
 async function codexCompleteCollected({ baseURL, headers, payload, signal }) {
     // Codex backend requires stream=true; collect without onTextDelta
     const res = await fetch(`${baseURL}/responses`, {
@@ -383,8 +261,51 @@ async function codexCompleteCollected({ baseURL, headers, payload, signal }) {
         const errBody = await res.text().catch(() => "");
         throw new Error(`Codex API error: ${res.status} ${errBody}`);
     }
-    const { content, usage, toolCalls } = await consumeStream(res, signal, null);
+    const { content, usage, toolCalls } = await consumeResponsesStream(res, signal, null);
     return buildStreamResult(content, toolCalls, usage);
+}
+
+export async function fetchCodexModels() {
+    const { accessToken, accountId } = await getAuth();
+    const headers = { ...buildHeaders(accessToken, accountId), Accept: "application/json" };
+    const urls = ["https://chatgpt.com/backend-api/codex/models?client_version=1.0.0", "https://chatgpt.com/backend-api/models?client_version=1.0.0"];
+
+    let lastErr = null;
+    for (const url of urls) {
+        try {
+            const res = await fetch(url, { headers });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                lastErr = new Error(payload.error?.message || `Codex models failed: ${res.status}`);
+                continue;
+            }
+            const list = Array.isArray(payload.models) ? payload.models : Array.isArray(payload.data) ? payload.data : [];
+            const out = [];
+            const seen = new Set();
+            for (const raw of list) {
+                const id = String(raw?.slug || raw?.id || "").trim();
+                if (!id || seen.has(id)) continue;
+                const visibility = String(raw?.visibility || "").toLowerCase();
+                if (visibility === "hide" || visibility === "hidden") continue;
+                seen.add(id);
+                const modalities = raw?.input_modalities;
+                out.push({
+                    id,
+                    label: String(raw?.display_name || id).trim(),
+                    contextWindow: Number(raw?.context_window) || null,
+                    supportsVision: Array.isArray(modalities) ? modalities.includes("image") : true,
+                });
+            }
+            if (out.length) {
+                out.sort((a, b) => a.label.localeCompare(b.label, "en"));
+                return out;
+            }
+            lastErr = new Error("Codex models list empty");
+        } catch (err) {
+            lastErr = err;
+        }
+    }
+    throw lastErr || new Error("Failed to fetch Codex models");
 }
 
 function buildStreamResult(content, toolCalls, usage) {
