@@ -16,7 +16,8 @@ bootstrap_tty_installer() {
     if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${1:-}" ]; then
         return 0
     fi
-    if [ ! -r /dev/tty ] 2>/dev/null; then
+    # -r 테스트는 tty가 없는 샌드박스에서도 참이 될 수 있다 — 실제로 열어본다.
+    if ! (exec 3<>/dev/tty) 2>/dev/null; then
         echo "Error: This installer needs an interactive terminal." >&2
         echo "  TELEGRAM_BOT_TOKEN='your-token' curl -fsSL ${INSTALLER_URL_DEFAULT} | bash" >&2
         exit 1
@@ -37,7 +38,7 @@ bootstrap_tty_installer
 REPO_OWNER="gpdir16"
 IMAGE_DEFAULT="ghcr.io/${REPO_OWNER}/tabyagent:latest"
 REPO_URL="https://github.com/${REPO_OWNER}/tabyAgent.git"
-REPO_BRANCH="${TABYAGENT_REPO_BRANCH:-main}"
+REPO_BRANCH="${TABYAGENT_REPO_BRANCH:-}"
 INSTALL_DIR="${TABYAGENT_HOME:-${HOME}/.tabyagent}"
 APP_DIR="${INSTALL_DIR}/app"
 USER_DATA_DIR="${INSTALL_DIR}/user"
@@ -83,6 +84,7 @@ Optional:
   TELEGRAM_BOT_TOKEN='...' curl -fsSL ... | bash
   curl -fsSL ... | bash -s -- '1234567890:ABC...'
   TABYAGENT_MODE=docker|local  (default: docker, or prompt on first install; set explicitly to switch on update)
+  TABYAGENT_REPO_BRANCH=main   (local-mode source branch; persisted for updates)
 Language: TABYAGENT_LANG=ko|en  (default: en, or ko if LANG is Korean)
 EOF
 }
@@ -97,13 +99,18 @@ die() {
 }
 
 can_prompt_user() {
-    [ -r /dev/tty ] 2>/dev/null || [ -t 0 ]
+    # stdin 경로는 프롬프트 출력도 필요하므로 stdin/stdout 둘 다 터미널이어야 한다.
+    [ -t 0 ] && [ -t 1 ] && return 0
+    # -r/-w 테스트는 tty가 없는 샌드박스에서도 참이 될 수 있다 — 실제로 열어본다.
+    (exec 3<>/dev/tty) 2>/dev/null
 }
 
 say_user() {
-    if [ -w /dev/tty ] 2>/dev/null; then
-        printf '%s\n' "$@" >/dev/tty
-    else
+    # $( ) 캡처 안에서 불릴 때 stdout은 파이프다 — mode 같은 반환값을 오염시키지
+    # 않게 /dev/tty로 보내고, tty도 stdout도 터미널이 아니면 조용히 삼킨다.
+    if (exec 3<>/dev/tty) 2>/dev/null; then
+        printf '%s\n' "$@" >/dev/tty 2>/dev/null || true
+    elif [ -t 1 ]; then
         printf '%s\n' "$@"
     fi
 }
@@ -113,12 +120,13 @@ read_user_line() {
     local prompt="${2:-}"
     local line
 
-    if [ -r /dev/tty ] 2>/dev/null; then
-        [ -n "${prompt}" ] && printf '%s' "${prompt}" >/dev/tty
-        IFS= read -r line </dev/tty
+    if (exec 3<>/dev/tty) 2>/dev/null; then
+        if [ -n "${prompt}" ]; then printf '%s' "${prompt}" >/dev/tty 2>/dev/null || true; fi
+        IFS= read -r line </dev/tty 2>/dev/null || return 1
     elif [ -t 0 ]; then
-        [ -n "${prompt}" ] && printf '%s' "${prompt}"
-        IFS= read -r line
+        # stdout이 $( ) 캡처면 -t 1이 거짓 — 캡처 오염 없이 프롬프트를 삼킨다.
+        [ -n "${prompt}" ] && [ -t 1 ] && printf '%s' "${prompt}"
+        IFS= read -r line || return 1
     else
         return 1
     fi
@@ -195,13 +203,19 @@ start_docker_daemon() {
 
 wait_for_docker() {
     local waited=0 max=180
-    if is_ko; then echo "==> Docker가 준비될 때까지 기다리는 중..."; else echo "==> Waiting for Docker..."; fi
+    if is_ko; then printf '==> Docker가 준비될 때까지 기다리는 중'; else printf '==> Waiting for Docker'; fi
     while [ "${waited}" -lt "${max}" ]; do
-        docker_daemon_ok && return 0
+        if docker_daemon_ok; then
+            printf '\n'
+            return 0
+        fi
         sleep 3
         waited=$((waited + 3))
+        printf '.'
+        [ $((waited % 30)) -eq 0 ] && printf ' %ds' "${waited}"
         [ $((waited % 15)) -eq 0 ] && start_docker_daemon
     done
+    printf '\n'
     if is_ko; then
         die "Docker가 준비되지 않았습니다. Docker Desktop을 연 뒤 다시 실행하세요."
     else
@@ -298,7 +312,7 @@ is_installed() {
 read_install_mode() {
     if [ -f "${ENV_FILE}" ]; then
         local mode
-        mode="$(grep '^TABYAGENT_MODE=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2-)"
+        mode="$(env_file_value TABYAGENT_MODE)"
         mode="$(strip_env_scalar "${mode}" | tr '[:upper:]' '[:lower:]')"
         case "${mode}" in
             docker|local) printf '%s' "${mode}"; return 0 ;;
@@ -353,7 +367,10 @@ resolve_install_mode() {
     esac
 
     if [ "${updating}" = true ]; then
-        mode="$(read_install_mode)" || die "$(if is_ko; then echo "설치 정보를 찾을 수 없습니다."; else echo "Install metadata not found."; fi)"
+        # 설치 메타데이터가 깨진 경우 죽지 말고 새 설치처럼 물어본다.
+        if ! mode="$(read_install_mode)"; then
+            mode="$(prompt_install_mode)"
+        fi
         printf '%s' "${mode}"
         return 0
     fi
@@ -438,27 +455,40 @@ ensure_systemd_linger() {
 }
 
 verify_install() {
-    local mode="$1"
+    local mode="$1" waited=0 max=20 running=false
     local index_pattern
-    sleep 2
     index_pattern="$(regex_escape "${APP_DIR}/codes/index.js")"
-    if [ "${mode}" = local ]; then
-        case "$(uname -s)" in
-            Darwin)
-                launchctl print "gui/$(id -u)/${LAUNCHD_LABEL}" >/dev/null 2>&1 && return 0
-                ;;
-            Linux)
-                systemctl --user is-active --quiet tabyagent.service 2>/dev/null && return 0
-                ;;
-        esac
-        if pgrep -f "${index_pattern}" >/dev/null 2>&1; then
+    if is_ko; then printf '==> 실행 상태 확인 중'; else printf '==> Confirming startup'; fi
+    while [ "${waited}" -lt "${max}" ]; do
+        running=false
+        if [ "${mode}" = local ]; then
+            case "$(uname -s)" in
+                Darwin)
+                    if launchctl print "gui/$(id -u)/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
+                        running=true
+                    fi
+                    ;;
+                Linux)
+                    if systemctl --user is-active --quiet tabyagent.service 2>/dev/null; then
+                        running=true
+                    fi
+                    ;;
+            esac
+            if [ "${running}" = false ] && pgrep -f "${index_pattern}" >/dev/null 2>&1; then
+                running=true
+            fi
+        elif docker_daemon_ok && ${DOCKER_SHELL} ps --filter name=tabyagent --format '{{.Names}}' 2>/dev/null | grep -qx tabyagent; then
+            running=true
+        fi
+        if [ "${running}" = true ]; then
+            printf '\n'
             return 0
         fi
-    else
-        if docker_daemon_ok && ${DOCKER_SHELL} ps --filter name=tabyagent --format '{{.Names}}' 2>/dev/null | grep -qx tabyagent; then
-            return 0
-        fi
-    fi
+        sleep 2
+        waited=$((waited + 2))
+        printf '.'
+    done
+    printf '\n'
     if is_ko; then
         echo "⚠ tabyAgent가 아직 실행 중이 아닐 수 있습니다. 로그: ${INSTALL_DIR}/logs/"
         [ -f "${INSTALL_DIR}/logs/stderr.log" ] && tail -n 5 "${INSTALL_DIR}/logs/stderr.log" 2>/dev/null || true
@@ -492,6 +522,15 @@ strip_env_scalar() {
         value="${value%\'}"
     fi
     printf '%s' "${value}"
+}
+
+env_file_value() {
+    # grep은 매치가 없으면 1을 반환한다 — || true가 없으면 pipefail+set -e 때문에
+    # 키가 없을 때 스크립트가 아무 출력 없이 종료된다.
+    # 키가 여러 줄이면 마지막 것을 쓴다 (손편집된 .env 대비).
+    local key="$1"
+    [ -f "${ENV_FILE}" ] || return 0
+    grep "^${key}=" "${ENV_FILE}" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
 
 expand_user_path() {
@@ -736,7 +775,7 @@ write_env() {
     if [ "${mode}" = local ] && [ -f "${APP_DIR}/VERSION" ]; then
         version="$(tr -d '\n' <"${APP_DIR}/VERSION")"
     elif [ "${mode}" = local ] && [ -f "${ENV_FILE}" ]; then
-        version="$(grep '^TABYAGENT_VERSION=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2-)"
+        version="$(env_file_value TABYAGENT_VERSION)"
         version="$(strip_env_scalar "${version}")"
     fi
     {
@@ -773,6 +812,10 @@ write_env() {
                 write_env_quoted WORKSPACE_DIR "${workspace}"
             fi
         fi
+        # 로컬 설치의 소스 브랜치를 기억해 업데이트가 같은 브랜치를 따라가게 한다.
+        if [ -n "${REPO_BRANCH}" ] && [ "${REPO_BRANCH}" != "main" ]; then
+            printf 'TABYAGENT_REPO_BRANCH=%s\n' "${REPO_BRANCH}"
+        fi
     } >"${ENV_FILE}"
     chmod 600 "${ENV_FILE}"
 }
@@ -798,7 +841,8 @@ pull_image() {
     if is_ko; then echo "==> 설치 파일 받는 중..."; else echo "==> Downloading tabyAgent..."; fi
 
     while [ "${attempt}" -le "${max_attempts}" ]; do
-        if ${compose} -f "${COMPOSE_FILE}" pull 2>/dev/null; then
+        # pull 출력(레이어 진행 표시)을 숨기지 않는다 — 다운로드가 오래 걸릴 때 멈춰 보이지 않게.
+        if ${compose} -f "${COMPOSE_FILE}" pull; then
             return 0
         fi
         if [ "${attempt}" -lt "${max_attempts}" ]; then
@@ -861,11 +905,21 @@ download_source_tarball() {
     url="https://github.com/${REPO_OWNER}/tabyAgent/archive/refs/heads/${REPO_BRANCH}.tar.gz"
     tmp="$(mktemp -t tabyagent-src.XXXXXX.tar.gz)"
     if is_ko; then echo "==> 소스 코드 받는 중..."; else echo "==> Downloading source..."; fi
-    curl -fsSL "${url}" -o "${tmp}"
-    rm -rf "${APP_DIR}"
+    # tty에서는 진행 표시줄을 보여준다 — 다운로드가 오래 걸릴 때 멈춰 보이지 않게.
+    if [ -t 2 ]; then
+        curl -fL --progress-bar "${url}" -o "${tmp}"
+    else
+        curl -fsSL "${url}" -o "${tmp}"
+    fi
+    # 압축 해제가 성공한 뒤에만 기존 app을 지운다 — 네트워크/아카이브 실패가
+    # 설치본을 통째로 날리지 않게.
     mkdir -p "${INSTALL_DIR}"
-    tar -xzf "${tmp}" -C "${INSTALL_DIR}"
+    if ! tar -xzf "${tmp}" -C "${INSTALL_DIR}" 2>/dev/null; then
+        rm -f "${tmp}"
+        die "$(if is_ko; then echo "소스 압축 해제에 실패했습니다."; else echo "Failed to extract source archive."; fi)"
+    fi
     rm -f "${tmp}"
+    rm -rf "${APP_DIR}"
     extracted="$(find "${INSTALL_DIR}" -maxdepth 1 -mindepth 1 -type d -name 'tabyAgent-*' | head -1)"
     [ -n "${extracted}" ] || die "$(if is_ko; then echo "소스 압축 해제에 실패했습니다."; else echo "Failed to extract source archive."; fi)"
     mv "${extracted}" "${APP_DIR}"
@@ -874,7 +928,8 @@ download_source_tarball() {
 update_local_source() {
     if [ -d "${APP_DIR}/.git" ] && command -v git >/dev/null 2>&1; then
         if is_ko; then echo "==> 소스 코드 업데이트 중..."; else echo "==> Updating source..."; fi
-        git -C "${APP_DIR}" fetch origin "${REPO_BRANCH}" 2>/dev/null || git -C "${APP_DIR}" fetch origin 2>/dev/null || true
+        # fetch 진행 상황을 숨기지 않는다 — 저장소가 클 때 멈춰 보이지 않게.
+        git -C "${APP_DIR}" fetch origin "${REPO_BRANCH}" || git -C "${APP_DIR}" fetch origin || true
         git -C "${APP_DIR}" reset --hard "origin/${REPO_BRANCH}" 2>/dev/null \
             || git -C "${APP_DIR}" reset --hard "origin/main" 2>/dev/null \
             || git -C "${APP_DIR}" pull --ff-only 2>/dev/null \
@@ -890,7 +945,7 @@ update_local_source() {
     if command -v git >/dev/null 2>&1; then
         if is_ko; then echo "==> 저장소 클론 중..."; else echo "==> Cloning repository..."; fi
         rm -rf "${APP_DIR}"
-        git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${APP_DIR}" 2>/dev/null \
+        git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${APP_DIR}" \
             || git clone --depth 1 "${REPO_URL}" "${APP_DIR}"
         return 0
     fi
@@ -999,11 +1054,20 @@ strip_env_scalar() {
     printf '%s' "${value}"
 }
 
+env_file_value() {
+    # grep은 매치가 없으면 1을 반환한다 — || true가 없으면 pipefail+set -e 때문에
+    # 키가 없을 때 스크립트가 아무 출력 없이 종료된다.
+    # 키가 여러 줄이면 마지막 것을 쓴다 (손편집된 .env 대비).
+    local key="$1"
+    [ -f "${ENV_FILE}" ] || return 0
+    grep "^${key}=" "${ENV_FILE}" 2>/dev/null | tail -1 | cut -d= -f2- || true
+}
+
 read_install_mode() {
     load_env
     if [ -f "${ENV_FILE}" ]; then
         local mode
-        mode="$(grep '^TABYAGENT_MODE=' "${ENV_FILE}" 2>/dev/null | cut -d= -f2-)"
+        mode="$(env_file_value TABYAGENT_MODE)"
         mode="$(strip_env_scalar "${mode}" | tr '[:upper:]' '[:lower:]')"
         case "${mode}" in
             docker|local) printf '%s' "${mode}"; return 0 ;;
@@ -1250,7 +1314,7 @@ confirm_uninstall() {
         [ "${purge}" = true ] && echo "  (--purge: also deletes Docker volume and local user data)"
         printf "Continue? [y/N] "
     fi
-    if [ -r /dev/tty ] 2>/dev/null; then
+    if (exec 3<>/dev/tty) 2>/dev/null; then
         IFS= read -r reply </dev/tty
     elif [ -t 0 ]; then
         IFS= read -r reply
@@ -1597,6 +1661,13 @@ main() {
     if [ -n "${1:-}" ]; then
         token="$(trim_token "$1")"
     fi
+
+    # 업데이트 시 이전 설치의 브랜치를 이어받는다 (환경 변수가 우선).
+    if [ -z "${REPO_BRANCH}" ] && [ -f "${ENV_FILE}" ]; then
+        REPO_BRANCH="$(env_file_value TABYAGENT_REPO_BRANCH)"
+        REPO_BRANCH="$(strip_env_scalar "${REPO_BRANCH}")"
+    fi
+    REPO_BRANCH="${REPO_BRANCH:-main}"
 
     local updating=false
     if is_installed; then
