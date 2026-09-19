@@ -3,6 +3,7 @@
     "description": "AI Agent for Telegram",
     "type": "module",
     "scripts": {
+        "start": "node codes/index.js",
         "format": "prettier --write .",
         "format:check": "prettier --check ."
     },

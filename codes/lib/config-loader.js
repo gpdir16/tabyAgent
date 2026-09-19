@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_DIR, USER_DIR } from "./paths.js";
+import { writeJsonAtomic } from "./atomic-file.js";
 
 function substituteEnv(value) {
     if (typeof value !== "string") return value;
@@ -35,7 +36,6 @@ export function loadAgentConfig() {
         maxToolRounds: 300,
         maxToolRoundsPerTurn: 300,
         maxToolCallsPerTurn: 300,
-        maxSameToolRepeat: 8,
         maxEmptyReplyRetries: 8,
         contextCompressTriggerPercent: 75,
         contextKeepRecentPercent: 20,
@@ -65,7 +65,7 @@ export function loadUserConfig() {
 
 export function saveUserConfig(config) {
     const filePath = path.join(USER_DIR, "config.json");
-    fs.writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    writeJsonAtomic(filePath, config);
 }
 
 export function loadProviderConfig(providerId) {

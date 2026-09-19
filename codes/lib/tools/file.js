@@ -1,13 +1,11 @@
 import fs from "node:fs";
-import path from "node:path";
+import { writeFileAtomic } from "../atomic-file.js";
 import { countMessagesTokens, countTokens, getContextWindow } from "../agent/context.js";
-import { formatAllowedPaths, isAllowedFilePath, resolveAgentPath } from "../paths.js";
+import { resolveAgentPath } from "../paths.js";
 import { filePathParamDescription, filePatchDescription, fileReadDescription } from "../path-labels.js";
 
-function resolveFilePath(rawPath, { write = false } = {}) {
-    const resolved = resolveAgentPath(rawPath);
-    if (!resolved) return null;
-    return isAllowedFilePath(resolved, { write }) ? resolved : null;
+function resolveFilePath(rawPath) {
+    return resolveAgentPath(rawPath);
 }
 
 function getMaxFileReadTokens(messages, modelMeta, model) {
@@ -19,6 +17,10 @@ function getMaxFileReadTokens(messages, modelMeta, model) {
 }
 
 const fileReadCache = new Map();
+
+// file_read는 전체 파일을 메모리에 올리므로 상한을 둔다. 큰 파일은
+// terminal_run(sed/head/tail)으로 페이지 단위 읽기를 안내한다.
+const MAX_READ_BYTES = 8 * 1024 * 1024;
 
 function splitLines(text) {
     if (!text) return [];
@@ -67,24 +69,31 @@ function truncateToTokenBudget(text, maxTokens, model) {
     };
 }
 
+const nullableInteger = (description) => ({
+    description,
+    anyOf: [{ type: "integer" }, { type: "null" }],
+});
+
 export const fileToolDefinitions = [
     {
         type: "function",
         function: {
             name: "file_read",
             description: fileReadDescription(),
+            strict: true,
             parameters: {
                 type: "object",
+                additionalProperties: false,
                 properties: {
                     path: {
                         type: "string",
                         description: filePathParamDescription(),
                     },
-                    startLine: { type: "integer", description: "First line to read (1-based, default 1)" },
-                    endLine: { type: "integer", description: "Last line to read (1-based, inclusive)" },
-                    limit: { type: "integer", description: "Number of lines from startLine (alternative to endLine)" },
+                    startLine: nullableInteger("First line to read (1-based). Null if unused."),
+                    endLine: nullableInteger("Last line to read (1-based, inclusive). Null if unused."),
+                    limit: nullableInteger("Number of lines from startLine. Null if unused."),
                 },
-                required: ["path"],
+                required: ["path", "startLine", "endLine", "limit"],
             },
         },
     },
@@ -93,8 +102,10 @@ export const fileToolDefinitions = [
         function: {
             name: "file_patch",
             description: filePatchDescription(),
+            strict: true,
             parameters: {
                 type: "object",
+                additionalProperties: false,
                 properties: {
                     path: {
                         type: "string",
@@ -116,11 +127,17 @@ function recordFileSnapshot(ctx, resolvedPath, content) {
 }
 
 export async function executeFileRead(args, ctx) {
-    const resolved = resolveFilePath(args?.path, { write: false });
-    if (!resolved) return { error: `path not allowed or missing (readable: ${formatAllowedPaths()})` };
+    const resolved = resolveFilePath(args?.path);
+    if (!resolved) return { error: "path is required" };
     if (!fs.existsSync(resolved)) return { error: "file not found", path: resolved };
     const stat = fs.statSync(resolved);
     if (!stat.isFile()) return { error: "not a file", path: resolved };
+    if (stat.size > MAX_READ_BYTES) {
+        return {
+            error: `file too large for file_read (${(stat.size / 1048576).toFixed(1)} MB > 8 MB). Use terminal_run with 'sed -n "START,ENDp" <path>' or head/tail to page through it.`,
+            path: resolved,
+        };
+    }
 
     const model = ctx.model || "gpt-4o-mini";
     const maxTokens = getMaxFileReadTokens(ctx.messages, ctx.modelMeta, model);
@@ -152,6 +169,17 @@ export async function executeFileRead(args, ctx) {
             content: `[Already read in this turn — content suppressed to save context. Re-read with a different startLine/endLine if you need it again, or use the previous result.]`,
             deduped: true,
         };
+    }
+
+    const head = Buffer.alloc(Math.min(8000, stat.size));
+    const fd = fs.openSync(resolved, "r");
+    try {
+        fs.readSync(fd, head, 0, head.length, 0);
+    } finally {
+        fs.closeSync(fd);
+    }
+    if (head.includes(0)) {
+        return { error: "not a text file", path: resolved };
     }
 
     const content = fs.readFileSync(resolved, "utf8");
@@ -235,8 +263,8 @@ function applyHunk(fileLines, hunk, offset = 0) {
 }
 
 export async function executeFilePatch(args, ctx = {}) {
-    const resolved = resolveFilePath(args?.path, { write: true });
-    if (!resolved) return { error: `path not allowed or missing (writable: ${formatAllowedPaths({ write: true })})` };
+    const resolved = resolveFilePath(args?.path);
+    if (!resolved) return { error: "path is required" };
     if (!fs.existsSync(resolved)) return { error: "file not found", path: resolved };
 
     const stat = fs.statSync(resolved);
@@ -266,7 +294,8 @@ export async function executeFilePatch(args, ctx = {}) {
         offset = applied.offset;
     }
     const newContent = joinLines(resultLines, { trailingNewline: currentContent.endsWith("\n") });
-    fs.writeFileSync(resolved, newContent, "utf8");
+    // 부분 쓰기 상태가 남지 않도록 원자적으로 교체한다.
+    writeFileAtomic(resolved, newContent);
     ctx.fileSnapshots?.set(resolved, newContent);
 
     return {

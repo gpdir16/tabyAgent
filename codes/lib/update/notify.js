@@ -30,7 +30,8 @@ export async function sendUpdateNotification(bot, chatId, update) {
 
     if (!sent.ok) {
         const plain = [t("update_notify_title", lang, { version: update.tagName }), update.installScript, update.releaseUrl].join("\n\n");
-        await sendMessageSafe(bot, chatId, plain);
+        const retry = await sendMessageSafe(bot, chatId, plain);
+        return retry.ok;
     }
 
     return true;

@@ -2,7 +2,17 @@ import { Bot } from "grammy";
 import { loadUserConfig, loadAgentConfig } from "./config-loader.js";
 import { requireApprovedAccess, runOwnerApprove } from "./auth-access.js";
 import { runAgent } from "./agent/loop.js";
-import { appendChatTurn } from "./agent/chat-history.js";
+import {
+    RECOVERY_PROMPT,
+    appendChatTurn,
+    appendPendingUserTurn,
+    checkpointChatTurn,
+    hasRecoverableChatTurn,
+    lastChatTurnMessages,
+    listSessionRoots,
+    markChatTurnInterrupted,
+    prepareChatTurnRecovery,
+} from "./agent/chat-history.js";
 import { handleNewChat } from "./agent/new-chat.js";
 import { TelegramDraftStream } from "./telegram-draft.js";
 import { TelegramStatusMessage } from "./telegram-status.js";
@@ -14,19 +24,30 @@ import { cancelQueuedAgentWork, scheduleWork } from "./agent-queue.js";
 import { hasPendingAsk, resolvePendingAskByButton, resolvePendingAskByText } from "./agent/user-ask.js";
 import { beginAgentSession, endAgentSession, enqueueAgentMessage, isAgentSessionRunning, requestAgentStop } from "./agent/session.js";
 import { saveIncomingTelegramFile, formatFileUserMessage } from "./telegram-downloads.js";
-import { isVisionImageAttachment } from "./llm/vision.js";
+import { isVisionImageMime } from "./llm/vision.js";
 import { ensureModelMeta } from "./llm/model-meta.js";
 import { getMergedProvider } from "./config-loader.js";
-import { setCronJobHandler, startCronScheduler } from "./cron/scheduler.js";
+import { setTodoHandlers, startTodoScheduler } from "./todos/scheduler.js";
+import { addUserTodo, handleTodoCallback, sendTodoList } from "./todos/telegram-ui.js";
+import { setProactiveRunner, CHECKIN_PROMPT, startProactiveScheduler } from "./proactive.js";
+import { startDreamingScheduler } from "./dreaming/scheduler.js";
+import { maybeScheduleSessionReview } from "./dreaming/review.js";
+import { SCHEDULED_TURN_MARKER } from "./tools/todo-tool.js";
+import { markUserActivity } from "./user-activity.js";
 import { startUpdateScheduler } from "./update/scheduler.js";
 import { sendChatActionSafe, safeTelegramApi, sendMessageSafe } from "./telegram-api.js";
 import { memoryFilePath } from "./path-labels.js";
-import { routeFromCtx, telegramThreadOpts } from "./agent-route.js";
+import { routeForAgent, routeForSessionKey, routeFromCtx, telegramThreadOpts } from "./agent-route.js";
 import { refreshTopicsEnabled, getTopicsEnabled, ensureMainTopic } from "./telegram-topics.js";
 import { getOwnerChatId } from "./auth.js";
+import { mainAgentRef } from "./agents-store.js";
 
 function isReplyFailure(result) {
     return (result?.error === "tool_rounds_exceeded" || result?.error === "empty_reply_exhausted") && !result.text?.trim();
+}
+
+function shouldRecover(result) {
+    return isReplyFailure(result) || result?.error === "agent_error" || result?.error === "agent_turn_failed";
 }
 
 function isStoppedByUser(result) {
@@ -62,7 +83,7 @@ async function streamReplyEditFallback(bot, route, fullText, stats) {
     await sendTelegramReply(bot, route.chatId, (fullText || "").trim() || "…", stats, telegramThreadOpts(route.threadId));
 }
 
-async function replyWithStreaming(bot, ctx, route, userText, status, { visionAttachment = null, session = null } = {}) {
+async function replyWithStreaming(bot, ctx, route, userText, status, { attachments = [], session = null, recoveryBase = null } = {}) {
     const agentConfig = loadAgentConfig();
     const rawMode = agentConfig.telegramStreaming ?? "draft";
     const mode = rawMode === "off" || rawMode === "draft" ? rawMode : "off";
@@ -70,6 +91,7 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { visionAtt
         console.warn(`tabyAgent: unknown telegramStreaming "${rawMode}", using "off"`);
     }
     const extra = telegramThreadOpts(route.threadId);
+    const saveExtra = { attachments, baseMessages: recoveryBase };
     const agentOpts = {
         chatId: route.chatId,
         sessionKey: route.sessionKey,
@@ -77,18 +99,20 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { visionAtt
         agentId: route.agentId,
         bot,
         session,
+        attachments,
         onStatusPhase: (phase, detail) => status.setPhase(phase, detail),
+        onCheckpoint: (turnMessages) => checkpointTurn(route.sessionKey, turnMessages, recoveryBase),
     };
 
     if (mode === "off") {
-        const result = await runAgent(userText, { ...agentOpts, visionAttachment });
+        const result = await runAgent(userText, agentOpts);
         if (isStoppedByUser(result)) return result;
         if (isAgentError(result)) return result;
         await status.completeSuccess();
         if (!isSilentReply(result)) {
             await sendTelegramReply(bot, route.chatId, result.text, result.stats, extra);
         }
-        saveChatTurn(route.sessionKey, result);
+        saveChatTurn(route.sessionKey, result, saveExtra);
         return result;
     }
 
@@ -98,7 +122,6 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { visionAtt
 
         const result = await runAgent(userText, {
             ...agentOpts,
-            visionAttachment,
             onTextDelta: (_delta, full) => {
                 void draft.update(full);
             },
@@ -120,7 +143,7 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { visionAtt
         await status.completeSuccess();
 
         if (isSilentReply(result)) {
-            saveChatTurn(route.sessionKey, result);
+            saveChatTurn(route.sessionKey, result, saveExtra);
             return result;
         }
 
@@ -128,17 +151,17 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { visionAtt
             await draft.update(finalText);
             const sent = await draft.finalize(result.stats);
             if (sent) {
-                saveChatTurn(route.sessionKey, result);
+                saveChatTurn(route.sessionKey, result, saveExtra);
                 return result;
             }
         }
 
         await streamReplyEditFallback(bot, route, finalText, result.stats);
-        saveChatTurn(route.sessionKey, result);
+        saveChatTurn(route.sessionKey, result, saveExtra);
         return result;
     }
 
-    const result = await runAgent(userText, { ...agentOpts, visionAttachment });
+    const result = await runAgent(userText, agentOpts);
     if (isStoppedByUser(result) || isAgentError(result)) return result;
     if (!isReplyFailure(result)) {
         await status.completeSuccess();
@@ -146,36 +169,171 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { visionAtt
             await streamReplyEditFallback(bot, route, result.text || "…", result.stats);
         }
     }
-    saveChatTurn(route.sessionKey, result);
+    saveChatTurn(route.sessionKey, result, saveExtra);
     return result;
 }
 
-function saveChatTurn(sessionKey, result) {
-    if (result?.turnMessages?.length) {
-        try {
-            appendChatTurn(sessionKey, result.turnMessages);
-        } catch (err) {
-            console.error("Chat history save failed:", err?.stack || err);
-        }
-    }
-}
-
-async function runCronJobForUser(bot, job) {
+function checkpointTurn(sessionKey, turnMessages, baseMessages = null) {
     try {
-        const lang = loadUserConfig().language || "en";
-        const header = t("cron_auto_header", lang);
-        const userText = `${header}\n\n${job.prompt}`;
-        const result = await runAgent(userText, { chatId: job.chatId, bot });
-        saveChatTurn(job.chatId, result);
-        if (isSilentReply(result)) return;
-        const body = result.text?.trim() || t("cron_no_output", lang);
-        await sendTelegramReply(bot, job.chatId, `${header}\n\n${body}`, result.stats);
+        checkpointChatTurn(sessionKey, turnMessages, { baseMessages });
     } catch (err) {
-        console.error("Cron job error:", err?.stack || err);
+        console.error("Chat checkpoint failed:", err?.stack || err);
     }
 }
 
-async function handleAgentTurn(bot, ctx, route, userText, { visionAttachment = null } = {}) {
+function saveChatTurn(sessionKey, result, { attachments = [], baseMessages = null } = {}) {
+    if (!result?.turnMessages?.length) return;
+    try {
+        const messages = result.turnMessages.map((message) => ({ ...message }));
+        const userMessage = messages.find((message) => message?.role === "user");
+        if (userMessage && Array.isArray(userMessage.content)) {
+            const textPart = userMessage.content.find((part) => part?.type === "text");
+            userMessage.content = textPart?.text || "";
+        }
+        appendChatTurn(sessionKey, messages, {
+            stats: result.stats,
+            attachments,
+            deliveredAttachments: result.deliveredAttachments,
+            baseMessages,
+        });
+    } catch (err) {
+        console.error("Chat history save failed:", err?.stack || err);
+    }
+}
+
+function buildFirePrompt(item) {
+    const when = item.when ? ` (${item.when})` : "";
+    const body = String(item.prompt || "").trim() || `Do the task: ${item.title}`;
+    const isJob = (item.list || "user") !== "user";
+    const editNote =
+        item.lastEdit?.by === "user"
+            ? `\nNote: the user last edited this task at ${item.lastEdit.at}${item.lastEdit.fields?.length ? ` (changed: ${item.lastEdit.fields.join(", ")})` : ""}. The text below is the current version.`
+            : "";
+    return `${SCHEDULED_TURN_MARKER}
+${isJob ? `Scheduled job` : `Agent todo`} "${item.title}"${when}. This is an automatic run${isJob ? "" : " of a subcontracted task"}, not a user message.${editNote}
+
+Task:
+${body}
+
+Follow the task for when to speak. If it does not say to report empty results, stay silent unless there is a real finding or a failure the user must know. Do not narrate negative checks (no "I looked", "nothing new", "the list is empty"). If there is nothing to tell the user, reply with ONLY __SILENT__ — the entire message.`;
+}
+
+async function deliverAutomationReply(bot, route, text, stats = null) {
+    await sendTelegramReply(bot, route.chatId, text, stats, telegramThreadOpts(route.threadId));
+}
+
+// 스케줄된 작업·능동 체크인·부팅 복구가 공유하는 자동 실행 턴.
+// 사용자 메시지가 아니므로 스트리밍/상태 메시지 없이 돌고, 결과는 호출자가 보낸다.
+async function runAutomatedTurn(bot, route, { userText, todoId = null, quietEmpty = true, automated = true, recoveryBase = null } = {}) {
+    const session = beginAgentSession(route.sessionKey, { automated });
+    try {
+        const result = await runAgent(userText, {
+            chatId: route.chatId,
+            sessionKey: route.sessionKey,
+            threadId: route.threadId,
+            agentId: route.agentId,
+            bot,
+            session,
+            quietEmpty,
+            todoId,
+            onCheckpoint: (turnMessages) => checkpointTurn(route.sessionKey, turnMessages, recoveryBase),
+        });
+        saveChatTurn(route.sessionKey, result, { baseMessages: recoveryBase });
+        if (result?.error && !isStoppedByUser(result)) markChatTurnInterrupted(route.sessionKey);
+        maybeScheduleSessionReview({ sessionKey: route.sessionKey, agentId: route.agentId, result });
+        return result;
+    } finally {
+        endAgentSession(route.sessionKey);
+    }
+}
+
+// 재시작 전에 끊긴 사용자 턴을 이어서 완료한다.
+function recoverInterruptedTurns(bot) {
+    for (const { sessionKey } of listSessionRoots()) {
+        if (!hasRecoverableChatTurn(sessionKey)) continue;
+        const route = routeForSessionKey(sessionKey);
+        if (!route) continue;
+        if (!prepareChatTurnRecovery(sessionKey)) continue;
+        const recoveryBase = lastChatTurnMessages(sessionKey);
+        void scheduleWork(
+            "user",
+            async () => {
+                const result = await runAutomatedTurn(bot, route, {
+                    userText: RECOVERY_PROMPT,
+                    quietEmpty: false,
+                    automated: false,
+                    recoveryBase,
+                });
+                if (!result || isSilentReply(result) || result.error) return;
+                const body = result.text?.trim();
+                if (body) await deliverAutomationReply(bot, route, body, result.stats);
+            },
+            { sessionKey, cancellable: true },
+        ).catch((err) => console.error("Interrupted turn recovery failed:", err?.stack || err));
+    }
+}
+
+// todos/능동 체크인을 텔레그램 채팅·토픽 전달에 연결한다 (웹 SSE 대신).
+function setAutomationHandlers(bot) {
+    setTodoHandlers({
+        async runAgent({ agent, item, sessionKey }) {
+            const lang = loadUserConfig().language || "en";
+            const isJob = (item.list || "user") !== "user";
+            const route = routeForSessionKey(sessionKey) || routeForAgent(agent);
+            if (!route) {
+                console.warn(`tabyAgent: todo ${item.id} has no telegram route — skipping`);
+                return { error: "no_route", silent: true };
+            }
+            try {
+                const result = await runAutomatedTurn(bot, route, { userText: buildFirePrompt(item), todoId: item.id });
+                if (!result || isSilentReply(result)) return result;
+                if (result.error) {
+                    if (!isStoppedByUser(result)) {
+                        await deliverAutomationReply(
+                            bot,
+                            route,
+                            `${isJob ? "⏰" : "❌"} ${item.title}: ${result.errorDetail || result.error}`,
+                            result.stats,
+                        );
+                    }
+                    return result;
+                }
+                const body = result.text?.trim() || t("schedule_no_output", lang);
+                await deliverAutomationReply(bot, route, `${isJob ? "⏰" : "✅"} ${item.title}\n\n${body}`, result.stats);
+                return result;
+            } catch (err) {
+                console.error("Todo job error:", err?.stack || err);
+                await deliverAutomationReply(bot, route, `${isJob ? "⏰" : "❌"} ${item.title}: ${err?.message || String(err)}`).catch(() => {});
+                return { error: err?.message || String(err), silent: true };
+            }
+        },
+        async remindUser({ item }) {
+            const route = routeForAgent(mainAgentRef());
+            if (!route) return;
+            await sendTelegramReply(
+                bot,
+                route.chatId,
+                t("todo_reminder", loadUserConfig().language || "en", { title: item.title }),
+                null,
+                telegramThreadOpts(route.threadId),
+            ).catch((err) => console.error("Todo reminder send failed:", err?.stack || err));
+        },
+    });
+
+    setProactiveRunner(async ({ agent, sessionKey }) => {
+        const route = routeForSessionKey(sessionKey) || routeForAgent(agent);
+        if (!route) return { error: "no_route" };
+        const result = await runAutomatedTurn(bot, route, {
+            userText: `${SCHEDULED_TURN_MARKER}\nAutomatic proactive check-in — not a user message.\n\n${CHECKIN_PROMPT}`,
+        });
+        if (!result || isSilentReply(result) || result.error) return result;
+        const body = result.text?.trim();
+        if (body) await deliverAutomationReply(bot, route, body, result.stats);
+        return result;
+    });
+}
+
+async function handleAgentTurn(bot, ctx, route, userText, { attachments = [] } = {}) {
     const lang = loadUserConfig().language || "en";
     if (getTopicsEnabled() === true) {
         await refreshTopicsEnabled(bot);
@@ -189,7 +347,21 @@ async function handleAgentTurn(bot, ctx, route, userText, { visionAttachment = n
         await status.start();
         await sendChatActionSafe(bot, route.chatId, "typing", extra);
 
-        const result = await replyWithStreaming(bot, ctx, route, userText, status, { visionAttachment, session });
+        let result = await replyWithStreaming(bot, ctx, route, userText, status, { attachments, session });
+        let recoveryBase = null;
+
+        // 첫 실행이 실패로 끝났으면(빈 응답/라운드 초과/에러) 중단된 턴을 정리하고 한 번 이어서 완료한다.
+        if (shouldRecover(result)) {
+            markChatTurnInterrupted(route.sessionKey);
+            if (prepareChatTurnRecovery(route.sessionKey)) {
+                recoveryBase = lastChatTurnMessages(route.sessionKey);
+                result = await replyWithStreaming(bot, ctx, route, RECOVERY_PROMPT, status, { session, recoveryBase });
+            }
+        }
+
+        // 최종 결과도 실패면 턴을 interrupted로 남겨 다음 부팅 복구가 잡는다.
+        if (result?.error && !isStoppedByUser(result)) markChatTurnInterrupted(route.sessionKey);
+        maybeScheduleSessionReview({ sessionKey: route.sessionKey, agentId: route.agentId, result });
 
         if (isAgentError(result)) {
             const msg = result.errorDetail ? formatAgentError(new Error(result.errorDetail), lang) : t("tool_rounds_exceeded", lang);
@@ -201,7 +373,7 @@ async function handleAgentTurn(bot, ctx, route, userText, { visionAttachment = n
             await status.completeSuccess();
             const body = result.text?.trim() || t("stopped_by_user", lang);
             await sendTelegramReply(bot, route.chatId, body, result.stats, extra);
-            saveChatTurn(route.sessionKey, result);
+            saveChatTurn(route.sessionKey, result, { baseMessages: recoveryBase });
             return result;
         }
 
@@ -232,8 +404,8 @@ function dispatchAgentWork(ctx, route, workFn) {
     });
 }
 
-function dispatchAgentTurn(bot, ctx, route, userText, { visionAttachment = null } = {}) {
-    dispatchAgentWork(ctx, route, () => handleAgentTurn(bot, ctx, route, userText, { visionAttachment }));
+function dispatchAgentTurn(bot, ctx, route, userText, { attachments = [] } = {}) {
+    dispatchAgentWork(ctx, route, () => handleAgentTurn(bot, ctx, route, userText, { attachments }));
 }
 
 async function registerBotCommands(bot) {
@@ -246,6 +418,7 @@ async function registerBotCommands(bot) {
             { command: "stop", description: "Stop the running task" },
             { command: "config", description: "Open settings" },
             { command: "agents", description: "Manage extra agents" },
+            { command: "todo", description: "Your todo list" },
             { command: "approve", description: "Approve a new device with a 6-digit code" },
             { command: "help", description: "Show help and available commands" },
         ],
@@ -255,6 +428,7 @@ async function registerBotCommands(bot) {
             { command: "stop", description: "진행 중인 작업 중지" },
             { command: "config", description: "설정 열기" },
             { command: "agents", description: "에이전트 관리" },
+            { command: "todo", description: "할 일 목록" },
             { command: "approve", description: "6자리 코드로 새 기기 승인" },
             { command: "help", description: "도움말 및 명령어 보기" },
         ],
@@ -264,6 +438,7 @@ async function registerBotCommands(bot) {
             { command: "stop", description: "実行中の作業を停止" },
             { command: "config", description: "設定を開く" },
             { command: "agents", description: "エージェント管理" },
+            { command: "todo", description: "タスクリスト" },
             { command: "approve", description: "6 桁コードで新端末を承認" },
             { command: "help", description: "ヘルプとコマンド一覧" },
         ],
@@ -288,6 +463,7 @@ function helpMessage(lang) {
             "- `/stop` — 진행 중인 작업 중지",
             "- `/config` — 설정 (언어, 모델, 사고 수준, 푸터, 업데이트 등)",
             "- `/agents` — 에이전트 관리",
+            "- `/todo` — 할 일 목록 (추가: /todo <제목>)",
             "- `/approve <6-digit code>` — 새 기기 승인",
             "",
             "## 기능",
@@ -308,6 +484,7 @@ function helpMessage(lang) {
             "- `/stop` — 実行中の作業を停止",
             "- `/config` — 設定 (言語, モデル, 思考レベル, フッター, 更新確認 等)",
             "- `/agents` — エージェント管理",
+            "- `/todo` — タスクリスト (追加: /todo <タイトル>)",
             "- `/approve <6-digit code>` — 新端末を承認",
             "",
             "## 機能",
@@ -327,6 +504,7 @@ function helpMessage(lang) {
         "- `/stop` — Stop the running task",
         "- `/config` — Settings (change language, model, thinking level, footer, updates, etc.)",
         "- `/agents` — Manage extra agents",
+        "- `/todo` — Todo list (add: /todo <title>)",
         "- `/approve <6-digit code>` — Approve a new device",
         "",
         "## Features",
@@ -357,9 +535,12 @@ export async function startTelegramBot() {
     const ownerChatId = getOwnerChatId();
     if (ownerChatId) await ensureMainTopic(bot, ownerChatId);
 
-    setCronJobHandler((job) => runCronJobForUser(bot, job));
-    startCronScheduler();
+    setAutomationHandlers(bot);
+    startTodoScheduler();
+    startProactiveScheduler();
+    startDreamingScheduler();
     startUpdateScheduler(bot);
+    recoverInterruptedTurns(bot);
 
     bot.command("start", async (ctx) => {
         const route = routeFromCtx(ctx);
@@ -452,6 +633,33 @@ export async function startTelegramBot() {
         await openAgentsWizard(ctx, bot);
     });
 
+    bot.command("todo", async (ctx) => {
+        const route = routeFromCtx(ctx);
+        const lang = loadUserConfig().language || "en";
+
+        if (!isConfigReady()) {
+            await openConfigWizard(ctx, bot);
+            return;
+        }
+
+        if (!(await requireApprovedAccess(ctx))) {
+            return;
+        }
+
+        const title = (ctx.match || "").trim();
+        if (title) {
+            const result = addUserTodo(title);
+            if (result.error) {
+                await sendMessageSafe(ctx.api, route.chatId, `⚠️ ${result.error}`, telegramThreadOpts(route.threadId));
+                return;
+            }
+            await sendMessageSafe(ctx.api, route.chatId, t("todo_added", lang, { title: result.item.title }), telegramThreadOpts(route.threadId));
+            return;
+        }
+
+        await sendTodoList(bot, route.chatId, route.threadId, lang);
+    });
+
     bot.command("approve", async (ctx) => {
         const chatId = String(ctx.chat.id);
         const lang = loadUserConfig().language || "en";
@@ -482,6 +690,10 @@ export async function startTelegramBot() {
 
     bot.callbackQuery(/^ag:/, async (ctx) => {
         await handleAgentsWizardCallback(ctx, bot);
+    });
+
+    bot.callbackQuery(/^todo:/, async (ctx) => {
+        await handleTodoCallback(ctx);
     });
 
     bot.callbackQuery(/^ask:/, async (ctx) => {
@@ -519,6 +731,12 @@ export async function startTelegramBot() {
             if (isAgentSessionRunning(route.sessionKey)) {
                 const saved = await saveIncomingTelegramFile(ctx);
                 const userText = formatFileUserMessage(saved, { visionAttached: false });
+                markUserActivity();
+                try {
+                    appendPendingUserTurn(route.sessionKey, userText, [saved]);
+                } catch (err) {
+                    console.error("Pending user turn save failed:", err?.stack || err);
+                }
                 if (tryEnqueueDuringRun(route.sessionKey, userText)) {
                     return;
                 }
@@ -526,13 +744,19 @@ export async function startTelegramBot() {
 
             dispatchAgentWork(ctx, route, async () => {
                 const saved = await saveIncomingTelegramFile(ctx);
-                let visionAttachment = null;
-                if (isVisionImageAttachment(saved)) {
+                let visionAttached = false;
+                if (isVisionImageMime(saved?.mimeType)) {
                     const meta = await ensureModelMeta(getMergedProvider(loadUserConfig()));
-                    if (meta.supportsVision) visionAttachment = saved;
+                    visionAttached = Boolean(meta.supportsVision);
                 }
-                const userText = formatFileUserMessage(saved, { visionAttached: Boolean(visionAttachment) });
-                return handleAgentTurn(bot, ctx, route, userText, { visionAttachment });
+                const userText = formatFileUserMessage(saved, { visionAttached });
+                markUserActivity();
+                try {
+                    appendPendingUserTurn(route.sessionKey, userText, [saved]);
+                } catch (err) {
+                    console.error("Pending user turn save failed:", err?.stack || err);
+                }
+                return handleAgentTurn(bot, ctx, route, userText, { attachments: [saved] });
             });
         } catch (err) {
             console.error("File message error:", err?.stack || err);
@@ -555,7 +779,7 @@ export async function startTelegramBot() {
         }
 
         const trimmed = text.trim();
-        if (trimmed === "/new" || trimmed === "/stop" || trimmed === "/agents" || trimmed.startsWith("/agents@")) {
+        if (trimmed === "/new" || trimmed === "/stop" || trimmed === "/agents" || trimmed.startsWith("/agents@") || trimmed.startsWith("/todo")) {
             return;
         }
 
@@ -571,6 +795,13 @@ export async function startTelegramBot() {
         }
 
         try {
+            markUserActivity();
+            // 실행 전에 디스크에 기록해 두면 프로세스 크래시가 나도 부팅 복구가 이어 받는다.
+            try {
+                appendPendingUserTurn(route.sessionKey, text);
+            } catch (err) {
+                console.error("Pending user turn save failed:", err?.stack || err);
+            }
             if (tryEnqueueDuringRun(route.sessionKey, text)) {
                 return;
             }

@@ -8,10 +8,13 @@ ENV TABYAGENT_VERSION=${TABYAGENT_VERSION}
 ENV TABYAGENT_MODE=docker
 RUN printf '%s\n' "${TABYAGENT_VERSION}" > /app/VERSION
 LABEL org.opencontainers.image.version="${TABYAGENT_VERSION}"
+LABEL org.opencontainers.image.source="https://github.com/gpdir16/tabyAgent"
+LABEL org.opencontainers.image.licenses="AGPL-3.0"
+LABEL org.opencontainers.image.title="tabyAgent"
 ENV USER_DIR=/app/user
 ENV HOME=/app/user
-ENV WORKSPACE_DIR=/workspace
 ENV APP_ROOT=/app
+ENV WORKSPACE_DIR=/workspace
 ENV CODES_DIR=/app/codes
 ENV CONFIG_DIR=/app/codes/config
 ENV NODE_ENV=production
@@ -26,6 +29,8 @@ ENV CAMOFOX_COOKIES_DIR=/app/user/camofox/cookies
 ENV CAMOFOX_DOWNLOADS_DIR=/app/user/camofox/downloads
 ENV CAMOFOX_TRACES_DIR=/app/user/camofox/traces
 
+# 텔레그램 봇이라 외부 포트는 열지 않는다 — 스크린샷은 ImageMagick import로 가져온다.
+# git/make/g++ 같은 범용 도구는 봇이 필요할 때 root로 apt-get install 할 수 있게 뺀다.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         xvfb \
@@ -67,6 +72,8 @@ RUN apt-get update \
         xterm \
         x11-apps \
         imagemagick \
+        tini \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # camoufox-js postinstall이 브라우저를 $HOME/.cache에 받는다. HOME=/app/user는
@@ -81,7 +88,7 @@ RUN mkdir -p /app/user \
     && rm -rf /tmp/camoufox-* /tmp/node-compile-cache
 
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+RUN npm ci --omit=dev && npm cache clean --force
 
 # 공유 X 디스플레이: camofox(CAMOFOX_HEADLESS=false)와 xvfb_gui 앱이 같은 화면에 뜬다.
 # DISPLAY/CAMOFOX_HEADLESS는 런타임 전용이라 하단에 두어 앞 레이어 캐시를 보존한다.
@@ -96,7 +103,7 @@ ENV CAMOFOX_SESSION_TIMEOUT=3153600000000
 COPY codes ./codes
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh codes/cli.js
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-ENTRYPOINT ["docker-entrypoint.sh"]
+ENTRYPOINT ["tini", "--", "docker-entrypoint.sh"]
 CMD ["start"]

@@ -9,6 +9,7 @@ import { getUserUpdateCheckEnabled } from "../user-settings.js";
 import { isRunningVersionKnown, saveUpdateState, setLastNotifiedVersion } from "./store.js";
 
 let task = null;
+let lastBot = null;
 
 let initialTimer = null;
 
@@ -32,7 +33,11 @@ async function runUpdateCheck(bot) {
 
     if (!update) return;
 
-    await sendUpdateNotification(bot, ownerChatId, update);
+    const delivered = await sendUpdateNotification(bot, ownerChatId, update);
+    if (!delivered) {
+        console.warn(`tabyAgent: update notification for ${update.tagName} could not be delivered — will retry on next check`);
+        return;
+    }
     setLastNotifiedVersion(update.tagName);
     console.log(`tabyAgent: update notification sent (${update.tagName})`);
 }
@@ -50,6 +55,7 @@ function queueUpdateCheck(bot, label) {
 }
 
 export function startUpdateScheduler(bot) {
+    if (bot) lastBot = bot;
     const agentCfg = loadAgentConfig().updateCheck ?? {};
     const userOverride = getUserUpdateCheckEnabled(loadUserConfig());
     const enabled = userOverride === null ? agentCfg.enabled !== false : userOverride;
@@ -82,7 +88,7 @@ export function startUpdateScheduler(bot) {
 
 export function restartUpdateScheduler(bot) {
     stopUpdateScheduler();
-    startUpdateScheduler(bot);
+    startUpdateScheduler(bot ?? lastBot);
 }
 
 export function stopUpdateScheduler() {
