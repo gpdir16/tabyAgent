@@ -11,7 +11,7 @@ function isImagePath(filePath, mimeType) {
     return /\.(png|jpe?g|gif|webp)$/i.test(filePath);
 }
 
-export async function sendTelegramFile(bot, chatId, filePath, { caption = "" } = {}) {
+export async function sendTelegramFile(bot, chatId, filePath, { caption = "", sendOpts = {} } = {}) {
     if (!bot?.api) return { error: "Telegram bot is not available in this context" };
     if (!chatId) return { error: "chatId is required" };
 
@@ -32,7 +32,7 @@ export async function sendTelegramFile(bot, chatId, filePath, { caption = "" } =
         String(caption || "")
             .trim()
             .slice(0, 1024) || undefined;
-    const opts = cap ? { caption: cap } : {};
+    const opts = { ...sendOpts, ...(cap ? { caption: cap } : {}) };
 
     if (isImagePath(resolved)) {
         const sent = await sendPhotoSafe(bot, chatId, input, opts);

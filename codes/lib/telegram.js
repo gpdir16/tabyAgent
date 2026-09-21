@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { Bot } from "grammy";
 import { loadUserConfig, loadAgentConfig } from "./config-loader.js";
 import { requireApprovedAccess, runOwnerApprove } from "./auth-access.js";
@@ -19,6 +21,7 @@ import { TelegramStatusMessage } from "./telegram-status.js";
 import { isConfigReady, isWizardActive, openConfigWizard, handleConfigWizardText, handleConfigWizardCallback } from "./onboarding.js";
 import { isAgentsWizardActive, openAgentsWizard, handleAgentsWizardText, handleAgentsWizardCallback } from "./agents-wizard.js";
 import { sendTelegramReply } from "./telegram-stats.js";
+import { sendTelegramFile } from "./telegram-send.js";
 import { t, formatAgentError } from "./i18n.js";
 import { cancelQueuedAgentWork, scheduleWork } from "./agent-queue.js";
 import { hasPendingAsk, resolvePendingAskByButton, resolvePendingAskByText } from "./agent/user-ask.js";
@@ -38,6 +41,7 @@ import { startUpdateScheduler } from "./update/scheduler.js";
 import { sendChatActionSafe, safeTelegramApi, sendMessageSafe } from "./telegram-api.js";
 import { memoryFilePath } from "./path-labels.js";
 import { routeForAgent, routeForSessionKey, routeFromCtx, telegramThreadOpts } from "./agent-route.js";
+import { USER_DIR } from "./paths.js";
 import { refreshTopicsEnabled, getTopicsEnabled, ensureMainTopic } from "./telegram-topics.js";
 import { getOwnerChatId } from "./auth.js";
 import { mainAgentRef } from "./agents-store.js";
@@ -419,6 +423,7 @@ async function registerBotCommands(bot) {
             { command: "config", description: "Open settings" },
             { command: "agents", description: "Manage extra agents" },
             { command: "todo", description: "Your todo list" },
+            { command: "migrate", description: "Migrate data to tabyBot" },
             { command: "approve", description: "Approve a new device with a 6-digit code" },
             { command: "help", description: "Show help and available commands" },
         ],
@@ -429,6 +434,7 @@ async function registerBotCommands(bot) {
             { command: "config", description: "설정 열기" },
             { command: "agents", description: "에이전트 관리" },
             { command: "todo", description: "할 일 목록" },
+            { command: "migrate", description: "tabyBot으로 데이터 마이그레이션" },
             { command: "approve", description: "6자리 코드로 새 기기 승인" },
             { command: "help", description: "도움말 및 명령어 보기" },
         ],
@@ -439,6 +445,7 @@ async function registerBotCommands(bot) {
             { command: "config", description: "設定を開く" },
             { command: "agents", description: "エージェント管理" },
             { command: "todo", description: "タスクリスト" },
+            { command: "migrate", description: "tabyBotへデータ移行" },
             { command: "approve", description: "6 桁コードで新端末を承認" },
             { command: "help", description: "ヘルプとコマンド一覧" },
         ],
@@ -464,6 +471,7 @@ function helpMessage(lang) {
             "- `/config` — 설정 (언어, 모델, 사고 수준, 푸터, 업데이트 등)",
             "- `/agents` — 에이전트 관리",
             "- `/todo` — 할 일 목록 (추가: /todo <제목>)",
+            "- `/migrate` — tabyBot 마이그레이션 패키지 생성",
             "- `/approve <6-digit code>` — 새 기기 승인",
             "",
             "## 기능",
@@ -485,6 +493,7 @@ function helpMessage(lang) {
             "- `/config` — 設定 (言語, モデル, 思考レベル, フッター, 更新確認 等)",
             "- `/agents` — エージェント管理",
             "- `/todo` — タスクリスト (追加: /todo <タイトル>)",
+            "- `/migrate` — tabyBot移行パッケージを生成",
             "- `/approve <6-digit code>` — 新端末を承認",
             "",
             "## 機能",
@@ -505,6 +514,7 @@ function helpMessage(lang) {
         "- `/config` — Settings (change language, model, thinking level, footer, updates, etc.)",
         "- `/agents` — Manage extra agents",
         "- `/todo` — Todo list (add: /todo <title>)",
+        "- `/migrate` — Build a tabyBot migration package",
         "- `/approve <6-digit code>` — Approve a new device",
         "",
         "## Features",
@@ -660,6 +670,57 @@ export async function startTelegramBot() {
         await sendTodoList(bot, route.chatId, route.threadId, lang);
     });
 
+    bot.command("migrate", async (ctx) => {
+        const route = routeFromCtx(ctx);
+        const lang = loadUserConfig().language || "en";
+
+        if (!isConfigReady()) {
+            await openConfigWizard(ctx, bot);
+            return;
+        }
+        if (!(await requireApprovedAccess(ctx))) {
+            return;
+        }
+
+        await sendMessageSafe(ctx.api, route.chatId, t("migrate_working", lang), telegramThreadOpts(route.threadId));
+        // sendTelegramFile은 write roots(USER_DIR 등) 안의 파일만 보낼 수 있다 — user/temp에 둔다.
+        const out = path.join(USER_DIR, "temp", `tabyagent-to-tabybot-${Date.now()}.txt`);
+        try {
+            const { buildTabyBotTransferTxt } = await import("./migrate-tabybot.js");
+            const r = buildTabyBotTransferTxt(out);
+            const sent = await sendTelegramFile(bot, route.chatId, r.path, {
+                caption: t("migrate_caption", lang),
+                sendOpts: telegramThreadOpts(route.threadId),
+            });
+            if (sent.ok) {
+                fs.rmSync(out, { force: true });
+                if (r.report.excludedDirs?.length) {
+                    await sendMessageSafe(
+                        ctx.api,
+                        route.chatId,
+                        t("migrate_excluded", lang, { dirs: r.report.excludedDirs.join(", ") }),
+                        telegramThreadOpts(route.threadId),
+                    );
+                }
+            } else if (!sent.notified) {
+                await sendMessageSafe(
+                    ctx.api,
+                    route.chatId,
+                    t("migrate_fail", lang, { error: sent.error || "send failed" }),
+                    telegramThreadOpts(route.threadId),
+                );
+            }
+        } catch (err) {
+            console.error("Migrate export error:", err?.stack || err);
+            await sendMessageSafe(
+                ctx.api,
+                route.chatId,
+                t("migrate_fail", lang, { error: err?.message || String(err) }),
+                telegramThreadOpts(route.threadId),
+            );
+        }
+    });
+
     bot.command("approve", async (ctx) => {
         const chatId = String(ctx.chat.id);
         const lang = loadUserConfig().language || "en";
@@ -779,7 +840,15 @@ export async function startTelegramBot() {
         }
 
         const trimmed = text.trim();
-        if (trimmed === "/new" || trimmed === "/stop" || trimmed === "/agents" || trimmed.startsWith("/agents@") || trimmed.startsWith("/todo")) {
+        if (
+            trimmed === "/new" ||
+            trimmed === "/stop" ||
+            trimmed === "/agents" ||
+            trimmed.startsWith("/agents@") ||
+            trimmed.startsWith("/todo") ||
+            trimmed === "/migrate" ||
+            trimmed.startsWith("/migrate@")
+        ) {
             return;
         }
 

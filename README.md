@@ -21,7 +21,8 @@ Memory, skills, self-improvement, scheduled tasks, todos, web browsing, GUI apps
 
 ## Differences
 
-- Differences between tabyAgent and tabyBot: (1) tabyAgent runs on Telegram while [tabyBot](https://github.com/gpdir16/tabyBot) runs in its own web UI. (2) Both share the same core features — pick whichever interface fits you better.
+- Differences between tabyAgent and tabyBot: (1) tabyAgent runs on Telegram while [tabyBot](https://github.com/gpdir16/tabyBot) runs in its own web UI. (2) Both share the same core features — pick whichever interface fits you better. (3) tabyBot is ahead on the latest features, improvements, and convenience, so I recommend starting with tabyBot if you're new. If you already use tabyAgent there's no need to migrate right away, but it's worth planning one.
+- To migrate to tabyBot, send `/migrate` to your bot on Telegram — you'll get a txt file with the converted data and instructions; upload it to tabyBot and the agent will handle the restore.
 
 | Feature            | tabyAgent                      | Grok Bot         | OpenClaw         | Hermes           | ChatGPT (Chat)  |
 | ------------------ | ------------------------------ | ---------------- | ---------------- | ---------------- | --------------- |

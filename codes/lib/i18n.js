@@ -309,6 +309,26 @@ const MESSAGES = {
         ko: "GitHub 릴리스",
         ja: "GitHub リリース",
     },
+    migrate_working: {
+        en: "Building the tabyBot migration package…",
+        ko: "tabyBot 마이그레이션 패키지를 만드는 중…",
+        ja: "tabyBot 移行パッケージを作成中…",
+    },
+    migrate_caption: {
+        en: "tabyBot migration package.\nUpload this file to tabyBot — the agent will handle the restore.\n⚠️ Contains API keys and auth tokens — don't share it, and delete both the file and this message once the migration is done.",
+        ko: "tabyBot 마이그레이션 패키지입니다.\n이 파일을 tabyBot에 업로드하면 에이전트가 잘 복원해줄겁니다.\n⚠️ API 키 및 인증 토큰이 포함되어 있으니 타인에게 공유하지 말고 마이그레이션이 끝나면 파일과 이 메시지를 모두 삭제하세요.",
+        ja: "tabyBot 移行パッケージです。\nこのファイルを tabyBot にアップロードするとエージェントが復元します。\n⚠️ APIキー・認証トークンを含むため共有せず、移行が終わったらファイルとこのメッセージを削除してください。",
+    },
+    migrate_fail: {
+        en: "Failed to build the migration package: {error}",
+        ko: "마이그레이션 패키지 생성 실패: {error}",
+        ja: "移行パッケージの作成に失敗しました: {error}",
+    },
+    migrate_excluded: {
+        en: "Note: {dirs} were left out of the package due to the size limit.",
+        ko: "참고: 용량 제한으로 인해 {dirs} 은 패키지에서 제외했습니다.",
+        ja: "注意: サイズ制限のため {dirs} はパッケージから除外しました。",
+    },
 };
 
 export function statusText(phase, lang = "en") {

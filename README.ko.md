@@ -21,7 +21,8 @@ OpenClaw/Hermes보다 더 자율적이고, 더 끈기 있고, 더 쉬운 대안�
 
 ## 차이점
 
-- tabyAgent와 tabyBot의 차이점: (1) tabyAgent는 텔레그램에서 작동하며 [tabyBot](https://github.com/gpdir16/tabyBot)은 자체 웹 UI에서 작동합니다. (2) 두 프로젝트는 같은 핵심 기능을 공유하므로 더 편한 인터페이스를 선택하면 됩니다.
+- tabyAgent와 tabyBot의 차이점: (1) tabyAgent는 텔레그램에서 작동하며 [tabyBot](https://github.com/gpdir16/tabyBot)은 자체 웹 UI에서 작동합니다. (2) 두 프로젝트는 같은 핵심 기능을 공유하므로 더 편한 인터페이스를 선택하면 됩니다. (3) 최신 기능이나 개선 사항, 편리성은 tabyBot이 더 우위에 있습니다. 그렇기 때문에 저는 처음 사용하는 경우 tabyBot으로 시작하는것을 추천하며, 기존에 tabyAgent를 사용했던 경우에는 바로 이주할 필요는 없지만 마이그레이션 계획을 세우는것을 추천합니다.
+- tabyBot으로 마이그레이션 하려면 텔레그램에서 봇에게 `/migrate`를 보내세요. 변환된 데이터와 지시가 담긴 txt 파일을 받게 되며, 그 파일을 tabyBot에 업로드하면 에이전트가 알잘딱하게 복원해줄겁니다.
 
 | 기능              | tabyAgent                    | Grok Bot          | OpenClaw     | Hermes       | ChatGPT (Chat) |
 | ----------------- | ---------------------------- | ----------------- | ------------ | ------------ | -------------- |
