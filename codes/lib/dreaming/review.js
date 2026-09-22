@@ -2,15 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { skillsDirPath } from "../path-labels.js";
 import { agentIdForSessionKey, activeSessionFilePath, loadChatHistory } from "../agent/chat-history.js";
-import { loadAgentConfig } from "../config-loader.js";
 import { scheduleWork } from "../agent-queue.js";
+import { getReviewConfig } from "../self-improvement.js";
 import { loadDreamingState, saveDreamingState, appendDreamDiary } from "./state.js";
 
 const queued = new Set();
-
-function dreamingConfig() {
-    return loadAgentConfig().dreaming || {};
-}
 
 function buildReviewPrompt({ sessionFile, agentName }) {
     return `You are running a background self-improvement review — the user did not send this message and will never see your reply.
@@ -56,13 +52,15 @@ async function runSessionReview({ sessionKey, agentId }) {
     }
 }
 
-export function maybeScheduleSessionReview({ sessionKey, agentId, result }) {
-    const cfg = dreamingConfig();
-    if (cfg.enabled === false || cfg.reviewEnabled === false) return;
+export function maybeScheduleSessionReview({ sessionKey, agentId, result, automated = false }) {
+    // 백그라운드(자동) 턴은 리뷰/학습 대상에서 제외 — 체크인·잡이 리뷰를 연쇄 발동시키지 않게 한다.
+    if (automated) return;
+    const cfg = getReviewConfig();
+    if (cfg.enabled === false) return;
     if (!result || result.error === "stopped_by_user") return;
     if (String(sessionKey || "").startsWith("dream:")) return;
 
-    const minToolCalls = Number.isFinite(cfg.reviewMinToolCalls) ? cfg.reviewMinToolCalls : 5;
+    const minToolCalls = Number.isFinite(cfg.minToolCalls) ? cfg.minToolCalls : 5;
     if ((result.stats?.toolCallCount || 0) < minToolCalls) return;
 
     const turns = loadChatHistory(sessionKey);

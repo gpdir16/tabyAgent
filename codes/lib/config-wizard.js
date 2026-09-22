@@ -9,6 +9,9 @@ import { getApproveCliHint } from "./runtime.js";
 import { fetchProviderModels, providerFromWizardState, partitionModelsForPicker, buildVendorPickerItems, MODELS_PER_PAGE } from "./llm/models.js";
 import { deleteMessageSafe, sendMessageSafe } from "./telegram-api.js";
 import { restartUpdateScheduler } from "./update/scheduler.js";
+import { startDreamingScheduler } from "./dreaming/scheduler.js";
+import { applySelfImprovementPatch, getDreamingConfig, getProactiveConfig, getReviewConfig } from "./self-improvement.js";
+import { isValidTimeZone } from "./scheduling/time.js";
 import { clearCodexTokens, startDeviceFlow, pollDeviceFlow } from "./llm/codex-tokens.js";
 import { clearGrokTokens, startGrokDeviceFlow, pollGrokDeviceFlow } from "./llm/grok-tokens.js";
 import { fetchGrokModels } from "./llm/grok-client.js";
@@ -189,8 +192,21 @@ async function applyConfig(partial) {
     if (partial.updateCheckEnabled !== undefined) {
         config.updateCheckEnabled = Boolean(partial.updateCheckEnabled);
     }
+    if (partial.timezone !== undefined) {
+        const tz = String(partial.timezone || "").trim();
+        if (tz && isValidTimeZone(tz)) config.timezone = tz;
+        else if (!tz) delete config.timezone;
+    }
+    let selfImprovementChanged = false;
+    if (partial.selfImprovement !== undefined) {
+        const err = applySelfImprovementPatch((config.selfImprovement = config.selfImprovement || {}), partial.selfImprovement);
+        if (!err) selfImprovementChanged = true;
+        else console.warn(`tabyAgent: selfImprovement patch rejected: ${err}`);
+    }
 
     saveUserConfig(config);
+    // proactive는 매 틱 설정을 다시 읽으므로 재시작 불필요. dreaming 크론은 재등록이 필요하다(시간대 포함).
+    if (selfImprovementChanged || partial.timezone !== undefined) startDreamingScheduler();
 }
 
 function texts(lang) {
@@ -256,6 +272,42 @@ function texts(lang) {
             backMenu: "◀ Menu",
             toggleOn: "On",
             toggleOff: "Off",
+            catSelfImprove: "Self-improvement",
+            timezone: "Timezone",
+            tzServerDefault: "Server default (Docker: UTC)",
+            siBack: "◀ Self-improvement",
+            siUsageWarn:
+                "These features consume a lot of AI usage in the background. If you need to save usage, disable Proactive check-in and Session review — the two heaviest.",
+            siProactive: "Proactive check-in",
+            siProactiveDesc:
+                "While you're away, the bot wakes at this interval to check for things worth telling you first — overdue todos, missed routines, threads left hanging.",
+            siDreaming: "Dream sweep",
+            siDreamingDesc: "While you're away, the bot looks back at recent conversations and files lasting facts into memory.",
+            siReview: "Session review",
+            siReviewDesc: "After a work conversation ends, the bot saves reusable tricks as skills. Automated runs are never reviewed.",
+            siEnabled: "Enabled",
+            siInterval: "Wake up every",
+            siEvery1h: "1 hour",
+            siEvery3h: "3 hours",
+            siEvery6h: "6 hours",
+            siEvery12h: "12 hours",
+            siActiveHours: "Only during",
+            siHoursAll: "All day",
+            siHoursFull: "08–23",
+            siHoursDay: "Daytime (09–18)",
+            siHoursEvening: "Evening (18–23)",
+            siIdle: "Wait after your last message",
+            siIdle15: "15 min",
+            siIdle30: "30 min",
+            siIdle60: "1 hour",
+            siSchedule: "Runs",
+            siSched6h: "Every 6 hours",
+            siSchedDaily: "Every day at 4 AM",
+            siSchedWeekly: "Weekly (Sun 4 AM)",
+            siReviewLevel: "Review sessions with",
+            siRevSmall: "Any real work (3+ tools)",
+            siRevMid: "Typical work (5+ tools)",
+            siRevLarge: "Big tasks only (10+ tools)",
         },
         ko: {
             welcome: "tabyAgent 설정 — 언어를 선택하세요:",
@@ -317,6 +369,41 @@ function texts(lang) {
             backMenu: "◀ 메뉴",
             toggleOn: "켜기",
             toggleOff: "끄기",
+            catSelfImprove: "자기 개선",
+            timezone: "시간대",
+            tzServerDefault: "서버 기본값 (도커: UTC)",
+            siBack: "◀ 자기 개선",
+            siUsageWarn:
+                "이 기능들은 백그라운드에서 AI 사용량을 크게 소비합니다. 사용량을 아껴야 하는 경우, 사용량을 가장 많이 소비하는 자동 체크인과 세션 리뷰를 비활성화하세요.",
+            siProactive: "자동 체크인",
+            siProactiveDesc: "조용할 때 정해진 간격으로 봇이 깨어나, 기한 지난 할 일·놓친 루틴·답 없는 대화처럼 먼저 알릴 거리가 있는지 살핍니다.",
+            siDreaming: "드림 스윕",
+            siDreamingDesc: "봇이 쉬는 시간에 최근 대화를 돌아보며, 오래 기억할 내용을 메모리에 정리합니다.",
+            siReview: "세션 리뷰",
+            siReviewDesc: "봇과의 작업 대화가 끝나면 다시 쓸 만한 요령을 스킬로 정리해 둡니다. 자동 작업은 리뷰하지 않습니다.",
+            siEnabled: "사용",
+            siInterval: "깨어나는 간격",
+            siEvery1h: "1시간마다",
+            siEvery3h: "3시간마다",
+            siEvery6h: "6시간마다",
+            siEvery12h: "12시간마다",
+            siActiveHours: "이 시간대에만",
+            siHoursAll: "하루 종일",
+            siHoursFull: "08–23시",
+            siHoursDay: "낮 (09–18시)",
+            siHoursEvening: "저녁 (18–23시)",
+            siIdle: "마지막 대화 후 기다릴 시간",
+            siIdle15: "15분",
+            siIdle30: "30분",
+            siIdle60: "1시간",
+            siSchedule: "실행 시기",
+            siSched6h: "6시간마다",
+            siSchedDaily: "매일 새벽 4시",
+            siSchedWeekly: "매주 일요일 새벽 4시",
+            siReviewLevel: "리뷰할 작업",
+            siRevSmall: "작은 작업부터 (도구 3회+)",
+            siRevMid: "보통 작업부터 (도구 5회+)",
+            siRevLarge: "큰 작업만 (도구 10회+)",
         },
         ja: {
             welcome: "tabyAgent 設定 — 言語を選んでください:",
@@ -379,6 +466,42 @@ function texts(lang) {
             backMenu: "◀ メニュー",
             toggleOn: "オン",
             toggleOff: "オフ",
+            catSelfImprove: "自己改善",
+            timezone: "タイムゾーン",
+            tzServerDefault: "サーバー既定 (Docker: UTC)",
+            siBack: "◀ 自己改善",
+            siUsageWarn:
+                "これらの機能はバックグラウンドでAI使用量を大きく消費します。使用量を抑えたい場合は、最も消費の多い自動チェックインとセッションレビューを無効にしてください。",
+            siProactive: "自動チェックイン",
+            siProactiveDesc:
+                "静かな間にボットが一定間隔で起きて、期限切れのタスク・逃したルーティン・未解決の話題など、先に伝えるべきことがあるか確認します。",
+            siDreaming: "ドリームスイープ",
+            siDreamingDesc: "ボットが休んでいる間に最近の会話を振り返り、長く覚えておくべき内容をメモリに整理します。",
+            siReview: "セッションレビュー",
+            siReviewDesc: "作業の会話が終わると、再利用できるコツをスキルとして整理します。自動タスクはレビューしません。",
+            siEnabled: "有効",
+            siInterval: "起きる間隔",
+            siEvery1h: "1時間ごと",
+            siEvery3h: "3時間ごと",
+            siEvery6h: "6時間ごと",
+            siEvery12h: "12時間ごと",
+            siActiveHours: "この時間帯のみ",
+            siHoursAll: "終日",
+            siHoursFull: "08–23時",
+            siHoursDay: "日中 (09–18時)",
+            siHoursEvening: "夜 (18–23時)",
+            siIdle: "最後の会話から待つ時間",
+            siIdle15: "15分",
+            siIdle30: "30分",
+            siIdle60: "1時間",
+            siSchedule: "実行タイミング",
+            siSched6h: "6時間ごと",
+            siSchedDaily: "毎日 午前4時",
+            siSchedWeekly: "毎週日曜 午前4時",
+            siReviewLevel: "レビューする作業",
+            siRevSmall: "小さな作業から (ツール3回+)",
+            siRevMid: "普通の作業から (ツール5回+)",
+            siRevLarge: "大きな作業のみ (ツール10回+)",
         },
     };
     return t[lang] || t.en;
@@ -411,6 +534,8 @@ function menuKeyboard(state) {
     kb.text(`${msg.catUpdate}: ${onOffLabel(lang, state.data.updateCheckEnabled !== false)}`, "cfg:cat:update").row();
     kb.text(`${msg.catNsfw}: ${nsfwLevelLabel(lang, getNsfwLevel(cfg))}`, "cfg:cat:nsfw").row();
     kb.text(`${msg.catApproval}: ${approvalLevelLabel(lang, getApprovalLevel(cfg))}`, "cfg:cat:approval").row();
+    const siOn = [getProactiveConfig().enabled, getDreamingConfig().enabled, getReviewConfig().enabled].filter(Boolean).length;
+    kb.text(`${msg.catSelfImprove}: ${siOn}/3`, "cfg:cat:si").row();
     kb.text(msg.done, "cfg:done");
     return kb;
 }
@@ -471,6 +596,186 @@ function approvalKeyboard(state) {
     kb.text(msg.backMenu, "cfg:menu");
     return kb;
 }
+
+/* ── 자기 개선(백그라운드 자동화) 설정 — 체크인·드림 스윕·세션 리뷰 ──
+   전부 선택형 — cron 문법이나 숫자 단위를 사용자에게 요구하지 않는다.
+   세부 값(idleMin·maxOpsPerRun·섹션 timezone 등)은 config 파일로만 조정한다. */
+
+const SI_TIMEZONES = [
+    "Asia/Seoul",
+    "Asia/Tokyo",
+    "Asia/Shanghai",
+    "Asia/Singapore",
+    "Europe/London",
+    "Europe/Berlin",
+    "America/New_York",
+    "America/Chicago",
+    "America/Los_Angeles",
+    "Australia/Sydney",
+    "UTC",
+];
+
+function siIntervalLabel(msg, min) {
+    const map = { 60: msg.siEvery1h, 180: msg.siEvery3h, 360: msg.siEvery6h, 720: msg.siEvery12h };
+    return map[min] || `${min}min`;
+}
+
+function siHoursLabel(msg, start, end) {
+    const map = { "0-24": msg.siHoursAll, "8-23": msg.siHoursFull, "9-18": msg.siHoursDay, "18-23": msg.siHoursEvening };
+    return map[`${start}-${end}`] || `${start}–${end}h`;
+}
+
+function siIdleLabel(msg, min) {
+    const map = { 15: msg.siIdle15, 30: msg.siIdle30, 60: msg.siIdle60 };
+    return map[min] || `${min}min`;
+}
+
+function siCronLabel(msg, expr) {
+    const map = { "0 */6 * * *": msg.siSched6h, "0 4 * * *": msg.siSchedDaily, "0 4 * * 0": msg.siSchedWeekly };
+    return map[expr] || expr;
+}
+
+function siReviewLabel(msg, n) {
+    const map = { 3: msg.siRevSmall, 5: msg.siRevMid, 10: msg.siRevLarge };
+    return map[n] || `${n}+`;
+}
+
+function siMenuText(lang) {
+    const msg = texts(lang);
+    return [
+        `⚠️ ${msg.siUsageWarn}`,
+        "",
+        `▸ ${msg.siProactive} — ${msg.siProactiveDesc}`,
+        `▸ ${msg.siDreaming} — ${msg.siDreamingDesc}`,
+        `▸ ${msg.siReview} — ${msg.siReviewDesc}`,
+    ].join("\n");
+}
+
+function siMenuKeyboard(state) {
+    const lang = uiLang(state);
+    const msg = texts(lang);
+    const d = getDreamingConfig();
+    const r = getReviewConfig();
+    const p = getProactiveConfig();
+    const kb = new InlineKeyboard();
+    kb.text(`${msg.siProactive}: ${onOffLabel(lang, p.enabled)}`, "cfg:si:tog:proactive").row();
+    kb.text(`${msg.siInterval}: ${siIntervalLabel(msg, p.intervalMin)}`, "cfg:si:ask:p.interval").row();
+    kb.text(`${msg.siActiveHours}: ${siHoursLabel(msg, p.activeStartHour, p.activeEndHour)}`, "cfg:si:ask:p.hours").row();
+    kb.text(`${msg.siIdle}: ${siIdleLabel(msg, p.idleMin)}`, "cfg:si:ask:p.idle").row();
+    kb.text(`${msg.siDreaming}: ${onOffLabel(lang, d.enabled)}`, "cfg:si:tog:dreaming").row();
+    kb.text(`${msg.siSchedule}: ${siCronLabel(msg, d.cron || "0 4 * * *")}`, "cfg:si:ask:d.cron").row();
+    kb.text(`${msg.siReview}: ${onOffLabel(lang, r.enabled)}`, "cfg:si:tog:review").row();
+    kb.text(`${msg.siReviewLevel}: ${siReviewLabel(msg, r.minToolCalls)}`, "cfg:si:ask:r.level").row();
+    kb.text(`${msg.timezone}: ${loadUserConfig().timezone || msg.tzServerDefault}`, "cfg:si:ask:tz").row();
+    kb.text(msg.backMenu, "cfg:menu");
+    return kb;
+}
+
+const SI_FIELD_LABEL = {
+    "p.interval": "siInterval",
+    "p.hours": "siActiveHours",
+    "p.idle": "siIdle",
+    "d.cron": "siSchedule",
+    "r.level": "siReviewLevel",
+    tz: "timezone",
+};
+
+function siPickerKeyboard(state, field) {
+    const msg = texts(uiLang(state));
+    const p = getProactiveConfig();
+    const d = getDreamingConfig();
+    const r = getReviewConfig();
+    const specs = {
+        "p.interval": {
+            cur: p.intervalMin,
+            opts: [60, 180, 360, 720].map((v) => [v, siIntervalLabel(msg, v)]),
+            custom: `${p.intervalMin}min`,
+        },
+        "p.hours": {
+            cur: `${p.activeStartHour}-${p.activeEndHour}`,
+            opts: [
+                [0, 24],
+                [8, 23],
+                [9, 18],
+                [18, 23],
+            ].map(([s, e]) => [`${s}-${e}`, siHoursLabel(msg, s, e)]),
+            custom: `${p.activeStartHour}–${p.activeEndHour}h`,
+        },
+        "p.idle": {
+            cur: p.idleMin,
+            opts: [15, 30, 60].map((v) => [v, siIdleLabel(msg, v)]),
+            custom: `${p.idleMin}min`,
+        },
+        "d.cron": {
+            cur: d.cron || "0 4 * * *",
+            opts: [
+                ["0 */6 * * *", msg.siSched6h],
+                ["0 4 * * *", msg.siSchedDaily],
+                ["0 4 * * 0", msg.siSchedWeekly],
+            ],
+            custom: d.cron,
+        },
+        "r.level": {
+            cur: r.minToolCalls,
+            opts: [3, 5, 10].map((v) => [v, siReviewLabel(msg, v)]),
+            custom: `${r.minToolCalls}+`,
+        },
+        tz: {
+            cur: loadUserConfig().timezone || "",
+            opts: [["", msg.tzServerDefault], ...SI_TIMEZONES.map((z) => [z, z])],
+            custom: loadUserConfig().timezone,
+        },
+    };
+    const spec = specs[field];
+    if (!spec) return null;
+    const kb = new InlineKeyboard();
+    for (const [v, label] of spec.opts) {
+        kb.text(`${spec.cur === v ? "✓ " : ""}${label}`, `cfg:si:set:${field}:${v}`).row();
+    }
+    // 현재 값이 프리셋에 없으면 그대로 보여주는 임시 옵션을 뒤에 붙인다.
+    if (!spec.opts.some(([v]) => v === spec.cur)) {
+        kb.text(`✓ ${spec.custom}`, `cfg:si:set:${field}:${spec.cur}`).row();
+    }
+    kb.text(msg.siBack, "cfg:si:back");
+    return kb;
+}
+
+function siPatchFor(field, value) {
+    switch (field) {
+        case "p.interval": {
+            const n = Number(value);
+            return Number.isFinite(n) ? { selfImprovement: { proactive: { intervalMin: n } } } : null;
+        }
+        case "p.hours": {
+            const [sh, eh] = value.split("-").map(Number);
+            return Number.isInteger(sh) && Number.isInteger(eh)
+                ? { selfImprovement: { proactive: { activeStartHour: sh, activeEndHour: eh } } }
+                : null;
+        }
+        case "p.idle": {
+            const n = Number(value);
+            return Number.isFinite(n) ? { selfImprovement: { proactive: { idleMin: n } } } : null;
+        }
+        case "d.cron":
+            return { selfImprovement: { dreaming: { cron: value } } };
+        case "r.level": {
+            const n = Number(value);
+            return Number.isFinite(n) ? { selfImprovement: { review: { minToolCalls: n } } } : null;
+        }
+        case "tz":
+            return { timezone: value };
+        default:
+            return null;
+    }
+}
+
+async function showSiMenu(bot, chatId, state) {
+    const lang = uiLang(state);
+    state.step = "si_menu";
+    saveState(state);
+    await replaceStep(bot, chatId, state, siMenuText(lang), siMenuKeyboard(state));
+}
+
 async function showThinkingStep(bot, chatId, state) {
     const lang = uiLang(state);
     const cfg = loadUserConfig();
@@ -1142,6 +1447,46 @@ export async function handleConfigWizardCallback(ctx, bot) {
         await replaceStep(bot, chatId, state, texts(uiLang(state)).approvalPick, approvalKeyboard(state));
         return;
     }
+    if (data === "cfg:cat:si" || data === "cfg:si:back") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await showSiMenu(bot, chatId, state);
+        return;
+    }
+    if (data.startsWith("cfg:si:tog:")) {
+        const section = data.slice("cfg:si:tog:".length);
+        const getters = { proactive: getProactiveConfig, dreaming: getDreamingConfig, review: getReviewConfig };
+        const get = getters[section];
+        await ctx.answerCallbackQuery();
+        if (!get) return;
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await applyConfig({ selfImprovement: { [section]: { enabled: !get().enabled } } });
+        await showSiMenu(bot, chatId, state);
+        return;
+    }
+    if (data.startsWith("cfg:si:ask:")) {
+        const field = data.slice("cfg:si:ask:".length);
+        const kb = siPickerKeyboard(state, field);
+        await ctx.answerCallbackQuery();
+        if (!kb) return;
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.step = "si_pick";
+        saveState(state);
+        const msg = texts(uiLang(state));
+        await replaceStep(bot, chatId, state, msg[SI_FIELD_LABEL[field]] || msg.catSelfImprove, kb);
+        return;
+    }
+    if (data.startsWith("cfg:si:set:")) {
+        const rest = data.slice("cfg:si:set:".length);
+        const sep = rest.indexOf(":");
+        const patch = siPatchFor(sep === -1 ? rest : rest.slice(0, sep), sep === -1 ? "" : rest.slice(sep + 1));
+        await ctx.answerCallbackQuery();
+        if (!patch) return;
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await applyConfig(patch);
+        await showSiMenu(bot, chatId, state);
+        return;
+    }
     if (data.startsWith("cfg:approval:")) {
         const level = data.slice("cfg:approval:".length);
         if (!APPROVAL_LEVELS.includes(level)) {
@@ -1458,6 +1803,12 @@ export async function handleConfigWizardText(ctx, bot) {
         case "menu": {
             await deleteMessageSafe(bot, chatId, userMessageId);
             await showMenuStep(bot, chatId, state);
+            return;
+        }
+        case "si_menu":
+        case "si_pick": {
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            await showSiMenu(bot, chatId, state);
             return;
         }
         case "language": {

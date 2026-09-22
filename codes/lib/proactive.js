@@ -1,6 +1,6 @@
 import { listAgents, mainAgentRef } from "./agents-store.js";
-import { loadAgentConfig } from "./config-loader.js";
 import { scheduleWork } from "./agent-queue.js";
+import { getProactiveConfig } from "./self-improvement.js";
 import { sessionKeyForAgent } from "./agent-route.js";
 import { defaultTimeZone, isValidTimeZone } from "./scheduling/time.js";
 import { isUserIdle, DEFAULT_IDLE_REQUIRED_MS } from "./user-activity.js";
@@ -39,10 +39,10 @@ function localHour(now, timeZone) {
 }
 
 function proactiveConfig() {
-    const cfg = loadAgentConfig().proactive || {};
+    const cfg = getProactiveConfig();
     return {
         enabled: cfg.enabled !== false,
-        intervalMs: Math.max(5, cfg.intervalMin || 60) * 60_000,
+        intervalMs: Math.max(5, cfg.intervalMin || 360) * 60_000,
         startHour: Number.isInteger(cfg.activeStartHour) ? cfg.activeStartHour : 8,
         endHour: Number.isInteger(cfg.activeEndHour) ? cfg.activeEndHour : 23,
         idleMs: Number.isFinite(cfg.idleMin) ? cfg.idleMin * 60_000 : DEFAULT_IDLE_REQUIRED_MS,
@@ -76,11 +76,8 @@ export function proactiveTick(now = new Date()) {
 }
 
 export function startProactiveScheduler() {
-    const cfg = loadAgentConfig().proactive || {};
-    if (cfg.enabled === false) {
-        console.log("tabyAgent: proactive check-in disabled");
-        return;
-    }
+    // 타이머는 비활성이어도 항상 둔다 — enabled 등 설정은 매 틱 다시 읽어
+    // 설정 변경이 재시작 없이 반영된다.
     if (!timer) {
         timer = setInterval(() => {
             try {
@@ -91,7 +88,7 @@ export function startProactiveScheduler() {
         }, TICK_MS);
         timer.unref?.();
     }
-    console.log("tabyAgent: proactive check-in scheduled");
+    console.log(`tabyAgent: proactive check-in ${getProactiveConfig().enabled ? "scheduled" : "disabled"}`);
 }
 
 export function stopProactiveScheduler() {

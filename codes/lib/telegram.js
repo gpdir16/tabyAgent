@@ -10,6 +10,7 @@ import {
     appendPendingUserTurn,
     checkpointChatTurn,
     hasRecoverableChatTurn,
+    isInternalStoredMessage,
     lastChatTurnMessages,
     listSessionRoots,
     markChatTurnInterrupted,
@@ -64,6 +65,32 @@ function isAgentError(result) {
 
 function isSilentReply(result) {
     return Boolean(result?.silent) && !result?.text?.trim();
+}
+
+// 읽기 전용 도구 — 이것들만 쓰고 침묵한 자동 턴은 히스토리에 남기지 않는다.
+const OBSERVATION_TOOLS = new Set(["file_read", "session_search", "todo_list", "skills_read", "bg_status", "bg_list"]);
+
+// 자동 턴 중 "아무 일도 안 한" 턴만 저장을 건너뛴다. 무응답이어도 상태를 바꾼
+// 도구를 썼거나 유저에게 말을 걸었거나 도중에 유저 메시지가 끼어든 턴은
+// 에이전트 연속성을 위해 남긴다 — 도중에 한 말도 유저가 이미 본 발화다.
+// 무의미한 체크인까지 쌓이면 히스토리가 불어나 다음 자동 턴의 입력 비용까지 키운다.
+function isUnremarkableAutoTurn(result) {
+    for (const m of result?.turnMessages || []) {
+        if (m?.role === "user") {
+            if (Array.isArray(m.content)) return false; // 이미지 관측 등 — 도구가 무언가 수행했다
+            const text = typeof m.content === "string" ? m.content : "";
+            if (text && !text.includes(SCHEDULED_TURN_MARKER) && !isInternalStoredMessage(m)) return false;
+        }
+        if (m?.role === "assistant") {
+            for (const tc of m.tool_calls || []) {
+                const name = tc?.function?.name || "";
+                if (name && !OBSERVATION_TOOLS.has(name)) return false;
+            }
+            const text = typeof m.content === "string" ? m.content.trim() : "";
+            if (text && text !== "__SILENT__") return false;
+        }
+    }
+    return true;
 }
 
 function replyFailureMessage(result, lang) {
@@ -240,11 +267,16 @@ async function runAutomatedTurn(bot, route, { userText, todoId = null, quietEmpt
             session,
             quietEmpty,
             todoId,
-            onCheckpoint: (turnMessages) => checkpointTurn(route.sessionKey, turnMessages, recoveryBase),
+            onCheckpoint: automated
+                ? undefined // 자동 턴은 중간 체크포인트를 쓰지 않는다 — 무의미 턴이면 통째로 저장을 건너뛴다.
+                : (turnMessages) => checkpointTurn(route.sessionKey, turnMessages, recoveryBase),
         });
-        saveChatTurn(route.sessionKey, result, { baseMessages: recoveryBase });
-        if (result?.error && !isStoppedByUser(result)) markChatTurnInterrupted(route.sessionKey);
-        maybeScheduleSessionReview({ sessionKey: route.sessionKey, agentId: route.agentId, result });
+        const skipPersist = automated && isUnremarkableAutoTurn(result);
+        if (!skipPersist) {
+            saveChatTurn(route.sessionKey, result, { baseMessages: recoveryBase });
+            if (result?.error && !isStoppedByUser(result)) markChatTurnInterrupted(route.sessionKey);
+        }
+        maybeScheduleSessionReview({ sessionKey: route.sessionKey, agentId: route.agentId, result, automated });
         return result;
     } finally {
         endAgentSession(route.sessionKey);
