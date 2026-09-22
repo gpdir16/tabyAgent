@@ -11,6 +11,9 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { USER_DIR } from "./paths.js";
 import { writeFileAtomic, writeJsonAtomic } from "./atomic-file.js";
+import { loadUserConfig, saveUserConfig } from "./config-loader.js";
+import { t } from "./i18n.js";
+import { sendMessageSafe } from "./telegram-api.js";
 
 const MANIFEST_VERSION = 1;
 const HISTORY_VERSION = 3;
@@ -712,4 +715,39 @@ export function buildTabyBotTransferTxt(destPath, { sourceUserDir = USER_DIR } =
     } finally {
         fs.rmSync(staging, { recursive: true, force: true });
     }
+}
+
+// "무엇이 다른가요?" 버튼이 여는 리드미 비교 섹션 — README.ja.md는 없어 en으로 보낸다.
+function migrateReadmeUrl(lang) {
+    if (lang === "ko") return "https://github.com/gpdir16/tabyAgent/blob/main/README.ko.md#차이점";
+    return "https://github.com/gpdir16/tabyAgent/blob/main/README.md#differences";
+}
+
+// 첫 실행 후 한 번만 tabyBot 이전을 안내한다. 선택 사항이지만 장기적으로 권장.
+// sendOpts는 호출자가 만든다(토픽 스레드 등) — 이 모듈은 텔레그램 라우팅을 모른다.
+export async function maybeSendMigrateNotice(bot, chatId, { lang, sendOpts } = {}) {
+    try {
+        if (!chatId) return;
+        const config = loadUserConfig();
+        if (config.migrateNoticeShown) return;
+        config.migrateNoticeShown = true;
+        // 발송 실패로 재발송되는 것보다 누락이 낫다 — 플래그를 먼저 세운다.
+        saveUserConfig(config);
+        const language = lang || config.language || "en";
+        const opts = {
+            ...(sendOpts || {}),
+            reply_markup: { inline_keyboard: [[{ text: t("migrate_notice_button", language), url: migrateReadmeUrl(language) }]] },
+        };
+        await sendMessageSafe(bot, String(chatId), t("migrate_notice", language), opts);
+    } catch (err) {
+        console.warn("tabyAgent: migrate notice failed:", err?.message || err);
+    }
+}
+
+// /migrate를 이미 쓴 사용자에게는 안내가 필요 없다.
+export function markMigrateNoticeSeen() {
+    const config = loadUserConfig();
+    if (config.migrateNoticeShown) return;
+    config.migrateNoticeShown = true;
+    saveUserConfig(config);
 }

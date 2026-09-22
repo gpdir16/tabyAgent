@@ -12,6 +12,7 @@ import { restartUpdateScheduler } from "./update/scheduler.js";
 import { startDreamingScheduler } from "./dreaming/scheduler.js";
 import { applySelfImprovementPatch, getDreamingConfig, getProactiveConfig, getReviewConfig } from "./self-improvement.js";
 import { isValidTimeZone } from "./scheduling/time.js";
+import { maybeSendMigrateNotice } from "./migrate-tabybot.js";
 import { clearCodexTokens, startDeviceFlow, pollDeviceFlow } from "./llm/codex-tokens.js";
 import { clearGrokTokens, startGrokDeviceFlow, pollGrokDeviceFlow } from "./llm/grok-tokens.js";
 import { fetchGrokModels } from "./llm/grok-client.js";
@@ -1052,6 +1053,8 @@ async function finishWizard(bot, chatId, state, { userMessageId } = {}) {
         }
     }
     await sendMessageSafe(bot, chatId, doneText);
+    // 첫 실행 후 한 번 — tabyBot 이전 안내 (선택 사항이지만 장기적으로 권장).
+    await maybeSendMigrateNotice(bot, chatId, { lang: state.data.language });
 }
 
 async function sendModelStep(bot, chatId, state) {

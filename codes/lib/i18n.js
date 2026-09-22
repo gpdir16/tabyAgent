@@ -329,6 +329,16 @@ const MESSAGES = {
         ko: "참고: 용량 제한으로 인해 {dirs} 은 패키지에서 제외했습니다.",
         ja: "注意: サイズ制限のため {dirs} はパッケージから除外しました。",
     },
+    migrate_notice: {
+        en: "💡 You can now migrate all your agents' data to tabyBot with the /migrate command. tabyBot is the improved version of tabyAgent — it uses a website instead of a Telegram bot as the chat interface. Initial setup can be a bit more involved than tabyAgent, so if you're not experienced with server administration, we recommend setting it up together with another AI.\n✅ Migration is optional — tabyAgent also receives most tabyBot updates. If you're happy with tabyAgent as it is, you don't need to migrate.",
+        ko: "💡 이제 /migrate 명령어로 모든 에이전트의 데이터를 tabyBot으로 마이그레이션할 수 있습니다. tabyBot은 tabyAgent의 더 개선된 버전이며 텔레그램 봇 대신 웹사이트를 대화 창구로 사용합니다. tabyAgent보다 처음 설정하기에 약간 더 복잡할수 있기에 서버 관리 경험이 없는 사용자인 경우 다른 AI와 함께 설정하는것을 추천합니다.\n✅ 마이그레이션은 선택 사항이며 tabyAgent도 tabyBot의 업데이트들을 대부분 적용받습니다. 지금 tabyAgent에 불편함이 없으며 만족하는 경우 마이그레이션하지 않아도 됩니다.",
+        ja: "💡 /migrate コマンドですべてのエージェントのデータを tabyBot へ移行できるようになりました。tabyBot は tabyAgent の改良版で、Telegram ボットの代わりにウェブサイトを会話窓口として使います。初期設定は tabyAgent より少し複雑になることがあるため、サーバー管理の経験がない方は別の AI と一緒に設定することをおすすめします。\n✅ 移行は任意です。tabyAgent も tabyBot のアップデートのほとんどを受け取ります。今の tabyAgent に不満がなく満足している場合は、移行しなくても大丈夫です。",
+    },
+    migrate_notice_button: {
+        en: "What's different?",
+        ko: "무엇이 다른가요?",
+        ja: "何が違いますか？",
+    },
 };
 
 export function statusText(phase, lang = "en") {

@@ -46,6 +46,7 @@ import { USER_DIR } from "./paths.js";
 import { refreshTopicsEnabled, getTopicsEnabled, ensureMainTopic } from "./telegram-topics.js";
 import { getOwnerChatId } from "./auth.js";
 import { mainAgentRef } from "./agents-store.js";
+import { maybeSendMigrateNotice, markMigrateNoticeSeen, buildTabyBotTransferTxt } from "./migrate-tabybot.js";
 
 function isReplyFailure(result) {
     return (result?.error === "tool_rounds_exceeded" || result?.error === "empty_reply_exhausted") && !result.text?.trim();
@@ -576,6 +577,11 @@ export async function startTelegramBot() {
     await refreshTopicsEnabled(bot);
     const ownerChatId = getOwnerChatId();
     if (ownerChatId) await ensureMainTopic(bot, ownerChatId);
+    // 첫 실행 후 한 번 — 업데이트로 들어온 기존 설치도 대상. 신규 설치는 온보딩 완료 시 안내한다.
+    if (ownerChatId && isConfigReady()) {
+        const route = routeForAgent(mainAgentRef());
+        void maybeSendMigrateNotice(bot, ownerChatId, { lang: loadUserConfig().language, sendOpts: telegramThreadOpts(route?.threadId) });
+    }
 
     setAutomationHandlers(bot);
     startTodoScheduler();
@@ -713,12 +719,12 @@ export async function startTelegramBot() {
         if (!(await requireApprovedAccess(ctx))) {
             return;
         }
+        markMigrateNoticeSeen();
 
         await sendMessageSafe(ctx.api, route.chatId, t("migrate_working", lang), telegramThreadOpts(route.threadId));
         // sendTelegramFile은 write roots(USER_DIR 등) 안의 파일만 보낼 수 있다 — user/temp에 둔다.
         const out = path.join(USER_DIR, "temp", `tabyagent-to-tabybot-${Date.now()}.txt`);
         try {
-            const { buildTabyBotTransferTxt } = await import("./migrate-tabybot.js");
             const r = buildTabyBotTransferTxt(out);
             const sent = await sendTelegramFile(bot, route.chatId, r.path, {
                 caption: t("migrate_caption", lang),
