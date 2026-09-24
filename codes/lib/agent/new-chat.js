@@ -19,7 +19,7 @@ export function memoryFlushPrompt(lang) {
 - 주제별로 정리할 내용(예: 보유 주식 목록, 프로젝트 상태)은 memory.md에 넣지 말고 \`memory/<주제>.md\` 파일을 만들거나 갱신하세요. 현재 파일 목록은 시스템 프롬프트의 Memory files에 표시됩니다. 새 파일은 \`terminal_run\`(\`mkdir -p memory && touch memory/<주제>.md\`)으로 만들고, 내용이 바뀌면 갱신하고 주제가 더 이상 필요 없으면 삭제하세요.
 
 **2. 스킬 생성 (해당할 때만)**
-아래 조건 중 하나 이상이면 \`skill-author\` 스킬(\`skills_read skill-author\`)을 읽고, \`user/skills/<slug>/SKILL.md\`에 스킬을 만드세요:
+아래 조건 중 하나 이상이면 \`skill-authoring\` 스킬(\`skills_read skill-authoring\`)을 읽고, \`user/skills/<slug>/SKILL.md\`에 스킬을 만드세요:
 - 도구 호출 5회 이상이 사용된 비자발적 워크플로
 - 오류에서 회복한 경로 (실패 후 해결책을 찾음)
 - 사용자가 정정한 지식 (다음에 같은 실수를 반복하지 않도록)
@@ -41,7 +41,7 @@ Read memory.md with \`file_read\` first, then add or update with \`file_patch\`.
 - For topic-shaped facts (e.g. stock holdings list, project status), do not put them in memory.md — create or update a \`memory/<topic>.md\` file instead. Current files are listed under "Memory files" in the system prompt. Create new files with \`terminal_run\` (\`mkdir -p memory && touch memory/<topic>.md\`); update files when facts change; delete files whose topic no longer applies.
 
 **2. Create a skill (only when warranted)**
-If any of the following apply, read the \`skill-author\` skill (\`skills_read skill-author\`) and create a skill at \`user/skills/<slug>/SKILL.md\`:
+If any of the following apply, read the \`skill-authoring\` skill (\`skills_read skill-authoring\`) and create a skill at \`user/skills/<slug>/SKILL.md\`:
 - An involuntary workflow with 5+ tool calls
 - Recovery from an error (found a solution after a failure)
 - Knowledge corrected by the user (to avoid repeating the same mistake)
@@ -63,7 +63,7 @@ Do **not** create a skill when none of these apply. One-off questions, greetings
 - トピックごとに整理する内容(例: 保有株リスト、プロジェクト状態)は memory.md に入れず、\`memory/<トピック>.md\` ファイルを作成・更新してください。現在のファイル一覧はシステムプロンプトの Memory files に表示されます。新規ファイルは \`terminal_run\`(\`mkdir -p memory && touch memory/<トピック>.md\`)で作成し、内容が変わったら更新し、トピックが不要になったら削除してください。
 
 **2. スキル作成 (該当する場合のみ)**
-以下のいずれかが当てはまる場合、\`skill-author\` スキル(\`skills_read skill-author\`)を読み、\`user/skills/<slug>/SKILL.md\` にスキルを作成してください:
+以下のいずれかが当てはまる場合、\`skill-authoring\` スキル(\`skills_read skill-authoring\`)を読み、\`user/skills/<slug>/SKILL.md\` にスキルを作成してください:
 - ツール呼び出し5回以上の非自発的ワークフロー
 - エラーからの回復 (失敗後に解決策を発見)
 - ユーザーが訂正した知識 (同じミスを繰り返さないため)
