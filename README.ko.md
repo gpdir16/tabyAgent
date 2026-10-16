@@ -4,7 +4,7 @@
 
 OpenClaw/Hermes보다 더 자율적이고, 더 끈기 있고, 더 쉬운 대안입니다.
 
-작업을 시키면, 몇시간이 걸리던, 문제가 있던, 작업을 수행합니다.
+작업을 시키면 몇 시간이 걸리든 문제가 생기든 수행합니다.
 
 메모리, 스킬, 자기개선, 예약 작업, 할 일 목록, 웹 브라우징, GUI 앱 사용, 멀티 에이전트 등의 기능이 기본적으로 작동하며 추가 설정이 필요하지 않습니다.
 
@@ -18,6 +18,8 @@ OpenClaw/Hermes보다 더 자율적이고, 더 끈기 있고, 더 쉬운 대안�
 - **여러 에이전트**: 전문 역할별 에이전트를 만들고 협업시킬 수 있습니다. 각 에이전트는 자기 메모리, 페르소나, 텔레그램 토픽을 가집니다.
 - **어디서든 실행**: Docker 컨테이너 또는 로컬 Node.js로 실행할 수 있습니다. 네이티브 지원은 macOS와 Linux이며, Windows는 Docker를 통해 작동 가능하지만 보장되지는 않습니다.
 - **자기 개선**: tabyAgent는 스스로를 개선할 수 있습니다. 문제를 해결한 방법, 사용자의 지적 등을 학습하며 사용할수록 더 똑똑해집니다. 또한 원래 평소에 사용자가 항상 하던것이지만 까먹고 안한 경우 해당 사항을 학습해 알려주기도 합니다.
+- **시크릿 금고**: 비밀번호와 API 키를 암호화된 금고에 보관합니다. 에이전트는 값을 보지 않은 채로 사용하고, 새로 필요하면 채팅으로 요청한 뒤 사용자가 보낸 메시지를 바로 지웁니다.
+- **효율적인 운영**: 잠깐 쉬는 동안 이득일 때만 프롬프트 캐시를 유지하고, 설정 메뉴에서 날짜·모델별 토큰 사용량과 캐시 적중률을 보여줍니다.
 
 ## 차이점
 
@@ -58,7 +60,7 @@ OpenClaw/Hermes보다 더 자율적이고, 더 끈기 있고, 더 쉬운 대안�
 - "chatgpt 플러스 구독좀 대신 취소시켜줘"
 - "(X/Reddit 등 링크) 이거 진짜 되는거임?"
 - "(붙여넣은 긴 글) 요약"
-- "나중에 너가 쓸수있게 내 이메일 계정 줄게 주소는 () 고 smtp/pop3 비번은 ()야"
+- "나중에 너가 쓸수있게 내 이메일 계정 기억해둬 주소는 ()야"
 - "전에 알려준 메일 계정으로 스포티파이 가입좀 해놔줘"
 - "(논문 링크) 요거 쉽게 이해 가능하게 시각화해줘"
 - "privatestater analytics랑 privatestater captcha 이거 구글 애널리틱스랑 리캡차랑 비교해줘"
@@ -86,13 +88,13 @@ OpenClaw/Hermes보다 더 자율적이고, 더 끈기 있고, 더 쉬운 대안�
 
 #### 2. 설치 (Linux / macOS)
 
-터미널에 아래 한 줄을 붙여넣고 엔터를 누르세요. 설치에는 시간이 오래 소요될수 있으니 잠시 기다리세요.
+터미널에 아래 한 줄을 붙여넣고 엔터를 누르세요. 설치에 시간이 오래 걸릴 수 있으니 기다려 주세요.
 
 Docker 또는 로컬 실행 방식을 선택할 수 있으며, 보안 및 격리를 위해 Docker를 권장합니다.
 
-**요구사항:** Docker 실행을 선택한 경우 필요한 모든것을 자동으로 설치하며 신경쓸것이 없습니다. 로컬 실행을 선택한 경우 Node.js 22 이상이 설치되어있어야 합니다.
+**요구사항.** Docker 실행을 선택하면 필요한 것을 모두 자동으로 설치합니다. 로컬 실행을 선택하면 Node.js 22 이상이 설치되어 있어야 합니다.
 
-자동 스크립트는 Windows를 지원하지 않습니다. 또한 Windows를 사용중이라면 메인 OS를 Linux 기반 배포판으로 전환하는것을 고려해보세요 - 대부분의 경우, 더 빠르고 프라이버시 친화적이며 자유가 보장됩니다.
+자동 스크립트는 Windows를 지원하지 않습니다. Windows를 사용 중이라면 메인 OS를 Linux 기반 배포판으로 전환하는 것을 고려해 보세요. 대부분의 경우 더 빠르고 프라이버시 친화적이며 자유가 보장됩니다.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh | bash
@@ -121,26 +123,32 @@ docker compose up -d
 
 ## 제3자 라이선스
 
-| 프로젝트                  | 버전    | 라이선스   | 출처                                                             |
-| ------------------------- | ------- | ---------- | ---------------------------------------------------------------- |
-| grammy                    | 1.46.0  | MIT        | [저장소](https://github.com/grammyjs/grammY)                     |
-| @modelcontextprotocol/sdk | 1.30.0  | MIT        | [저장소](https://github.com/modelcontextprotocol/typescript-sdk) |
-| js-tiktoken               | 1.0.21  | MIT        | [저장소](https://github.com/dqbd/tiktoken)                       |
-| node-cron                 | 3.0.3   | ISC        | [저장소](https://github.com/node-cron/node-cron)                 |
-| openai                    | 4.104.0 | Apache-2.0 | [저장소](https://github.com/openai/openai-node)                  |
-| prettier                  | 3.8.3   | MIT        | [저장소](https://github.com/prettier/prettier)                   |
-| camofox-browser           | 2.4.7   | MIT        | [저장소](https://github.com/redf0x1/camofox-browser)             |
-| Camoufox                  | —       | MPL-2.0    | [저장소](https://github.com/daijro/camoufox)                     |
-| Playwright                | —       | Apache-2.0 | [저장소](https://github.com/microsoft/playwright)                |
+| 프로젝트                       | 버전    | 라이선스         | 출처                                                                |
+| ------------------------------ | ------- | ---------------- | ------------------------------------------------------------------- |
+| grammy                         | 1.46.0  | MIT              | [저장소](https://github.com/grammyjs/grammY)                        |
+| @modelcontextprotocol/sdk      | 1.30.0  | MIT              | [저장소](https://github.com/modelcontextprotocol/typescript-sdk)    |
+| js-tiktoken                    | 1.0.21  | MIT              | [저장소](https://github.com/dqbd/tiktoken)                          |
+| node-cron                      | 3.0.3   | ISC              | [저장소](https://github.com/node-cron/node-cron)                    |
+| openai                         | 4.104.0 | Apache-2.0       | [저장소](https://github.com/openai/openai-node)                     |
+| prettier                       | 3.8.3   | MIT              | [저장소](https://github.com/prettier/prettier)                      |
+| @biomejs/biome                 | 2.5.15  | MIT / Apache-2.0 | [저장소](https://github.com/biomejs/biome)                          |
+| @anthropic-ai/claude-agent-sdk | 0.3.296 | Proprietary      | [저장소](https://github.com/anthropics/claude-agent-sdk-typescript) |
+| zod                            | 4.6.7   | MIT              | [저장소](https://github.com/colinhacks/zod)                         |
+| camofox-browser                | 2.4.7   | MIT              | [저장소](https://github.com/redf0x1/camofox-browser)                |
+| Camoufox                       | —       | MPL-2.0          | [저장소](https://github.com/daijro/camoufox)                        |
+| Playwright                     | —       | Apache-2.0       | [저장소](https://github.com/microsoft/playwright)                   |
 
 <details>
 <summary>전이 의존성</summary>
 
-- **Apache-2.0:** `openai`
+- **Apache-2.0:** `@opentelemetry/api`, `openai`
 - **BSD-2-Clause:** `json-schema-typed`, `webidl-conversions`
 - **BSD-3-Clause:** `fast-uri`, `qs`
 - **ISC:** `inherits`, `isexe`, `node-cron`, `once`, `setprototypeof`, `which`, `wrappy`, `zod-to-json-schema`
-- **MIT:** `@grammyjs/types`, `@hono/node-server`, `@modelcontextprotocol/sdk`, `@types/node`, `@types/node-fetch`, `abort-controller`, `accepts`, `agentkeepalive`, `ajv`, `ajv-formats`, `asynckit`, `base64-js`, `body-parser`, `bytes`, `call-bind-apply-helpers`, `call-bound`, `combined-stream`, `content-disposition`, `content-type`, `cookie`, `cookie-signature`, `cors`, `cross-spawn`, `debug`, `delayed-stream`, `depd`, `dunder-proto`, `ee-first`, `encodeurl`, `es-define-property`, `es-errors`, `es-object-atoms`, `es-set-tostringtag`, `escape-html`, `etag`, `event-target-shim`, `eventsource`, `eventsource-parser`, `express`, `express-rate-limit`, `fast-deep-equal`, `finalhandler`, `form-data`, `form-data-encoder`, `formdata-node`, `forwarded`, `fresh`, `function-bind`, `get-intrinsic`, `get-proto`, `gopd`, `grammy`, `has-symbols`, `has-tostringtag`, `hasown`, `hono`, `http-errors`, `humanize-ms`, `iconv-lite`, `ip-address`, `ipaddr.js`, `is-promise`, `jose`, `js-tiktoken`, `json-schema-traverse`, `math-intrinsics`, `media-typer`, `merge-descriptors`, `mime-db`, `mime-types`, `ms`, `negotiator`, `node-domexception`, `node-fetch`, `object-assign`, `object-inspect`, `on-finished`, `parseurl`, `path-key`, `path-to-regexp`, `pkce-challenge`, `prettier`, `proxy-addr`, `range-parser`, `raw-body`, `require-from-string`, `router`, `safer-buffer`, `send`, `serve-static`, `shebang-command`, `shebang-regex`, `side-channel`, `side-channel-list`, `side-channel-map`, `side-channel-weakmap`, `statuses`, `toidentifier`, `tr46`, `type-is`, `undici-types`, `unpipe`, `uuid`, `vary`, `web-streams-polyfill`, `whatwg-url`, `zod`
+- **MIT:** `@anthropic-ai/sdk`, `@babel/runtime`, `@grammyjs/types`, `@hono/node-server`, `@modelcontextprotocol/sdk`, `@stablelib/base64`, `@types/node`, `@types/node-fetch`, `abort-controller`, `accepts`, `agentkeepalive`, `ajv`, `ajv-formats`, `asynckit`, `base64-js`, `body-parser`, `bytes`, `call-bind-apply-helpers`, `call-bound`, `combined-stream`, `content-disposition`, `content-type`, `cookie`, `cookie-signature`, `cors`, `cross-spawn`, `debug`, `delayed-stream`, `depd`, `dunder-proto`, `ee-first`, `encodeurl`, `es-define-property`, `es-errors`, `es-object-atoms`, `es-set-tostringtag`, `escape-html`, `etag`, `event-target-shim`, `eventsource`, `eventsource-parser`, `express`, `express-rate-limit`, `fast-deep-equal`, `finalhandler`, `form-data`, `form-data-encoder`, `formdata-node`, `forwarded`, `fresh`, `function-bind`, `get-intrinsic`, `get-proto`, `gopd`, `grammy`, `has-symbols`, `has-tostringtag`, `hasown`, `hono`, `http-errors`, `humanize-ms`, `iconv-lite`, `ip-address`, `ipaddr.js`, `is-promise`, `jose`, `js-tiktoken`, `json-schema-to-ts`, `json-schema-traverse`, `math-intrinsics`, `media-typer`, `merge-descriptors`, `mime-db`, `mime-types`, `ms`, `negotiator`, `node-domexception`, `node-fetch`, `object-assign`, `object-inspect`, `on-finished`, `parseurl`, `path-key`, `path-to-regexp`, `pkce-challenge`, `prettier`, `proxy-addr`, `range-parser`, `raw-body`, `require-from-string`, `router`, `safer-buffer`, `send`, `serve-static`, `shebang-command`, `shebang-regex`, `side-channel`, `side-channel-list`, `side-channel-map`, `side-channel-weakmap`, `standardwebhooks`, `statuses`, `toidentifier`, `tr46`, `ts-algebra`, `type-is`, `undici-types`, `unpipe`, `uuid`, `vary`, `web-streams-polyfill`, `whatwg-url`, `zod`
+- **MIT / Apache-2.0:** `@biomejs/cli-darwin-arm64`, `@biomejs/cli-darwin-x64`, `@biomejs/cli-linux-arm64`, `@biomejs/cli-linux-arm64-musl`, `@biomejs/cli-linux-x64`, `@biomejs/cli-linux-x64-musl`, `@biomejs/cli-win32-arm64`, `@biomejs/cli-win32-x64`
+- **Unlicense:** `fast-sha256`
+- **Proprietary (Anthropic):** `@anthropic-ai/claude-agent-sdk-darwin-arm64`, `@anthropic-ai/claude-agent-sdk-darwin-x64`, `@anthropic-ai/claude-agent-sdk-linux-arm64`, `@anthropic-ai/claude-agent-sdk-linux-arm64-musl`, `@anthropic-ai/claude-agent-sdk-linux-x64`, `@anthropic-ai/claude-agent-sdk-linux-x64-musl`, `@anthropic-ai/claude-agent-sdk-win32-arm64`, `@anthropic-ai/claude-agent-sdk-win32-x64`
 
 </details>
 

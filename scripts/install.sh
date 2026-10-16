@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tabyAgent — install or update (Docker or local; Linux / macOS)
+# tabyAgent. Install or update (Docker or local; Linux / macOS)
 set -euo pipefail
 
 INSTALLER_URL_DEFAULT="https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh"
@@ -12,11 +12,11 @@ bootstrap_tty_installer() {
     if [ -t 0 ]; then
         return 0
     fi
-    # Piped install with token already set — no interactive stdin needed
+    # Piped install with token already set: no interactive stdin needed
     if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${1:-}" ]; then
         return 0
     fi
-    # -r 테스트는 tty가 없는 샌드박스에서도 참이 될 수 있다 — 실제로 열어본다.
+    # -r 테스트는 tty가 없는 샌드박스에서도 참이 될 수 있다. 실제로 열어본다.
     if ! (exec 3<>/dev/tty) 2>/dev/null; then
         echo "Error: This installer needs an interactive terminal." >&2
         echo "  TELEGRAM_BOT_TOKEN='your-token' curl -fsSL ${INSTALLER_URL_DEFAULT} | bash" >&2
@@ -101,12 +101,12 @@ die() {
 can_prompt_user() {
     # stdin 경로는 프롬프트 출력도 필요하므로 stdin/stdout 둘 다 터미널이어야 한다.
     [ -t 0 ] && [ -t 1 ] && return 0
-    # -r/-w 테스트는 tty가 없는 샌드박스에서도 참이 될 수 있다 — 실제로 열어본다.
+    # -r/-w 테스트는 tty가 없는 샌드박스에서도 참이 될 수 있다. 실제로 열어본다.
     (exec 3<>/dev/tty) 2>/dev/null
 }
 
 say_user() {
-    # $( ) 캡처 안에서 불릴 때 stdout은 파이프다 — mode 같은 반환값을 오염시키지
+    # $( ) 캡처 안에서 불릴 때 stdout은 파이프다. mode 같은 반환값을 오염시키지
     # 않게 /dev/tty로 보내고, tty도 stdout도 터미널이 아니면 조용히 삼킨다.
     if (exec 3<>/dev/tty) 2>/dev/null; then
         printf '%s\n' "$@" >/dev/tty 2>/dev/null || true
@@ -124,7 +124,7 @@ read_user_line() {
         if [ -n "${prompt}" ]; then printf '%s' "${prompt}" >/dev/tty 2>/dev/null || true; fi
         IFS= read -r line </dev/tty 2>/dev/null || return 1
     elif [ -t 0 ]; then
-        # stdout이 $( ) 캡처면 -t 1이 거짓 — 캡처 오염 없이 프롬프트를 삼킨다.
+        # stdout이 $( ) 캡처면 -t 1이 거짓: 캡처 오염 없이 프롬프트를 삼킨다.
         [ -n "${prompt}" ] && [ -t 1 ] && printf '%s' "${prompt}"
         IFS= read -r line || return 1
     else
@@ -340,14 +340,14 @@ prompt_install_mode() {
     say_user ""
     if is_ko; then
         say_user "실행 방식 선택"
-        say_user "  1) Docker (권장) — 컨테이너에서 격리 실행"
-        say_user "  2) 로컬 — Node.js로 PC에서 직접 실행 (Docker 불필요)"
+        say_user "  1) Docker (권장): 컨테이너에서 격리 실행"
+        say_user "  2) 로컬: Node.js로 PC에서 직접 실행 (Docker 불필요)"
         read_user_line reply "선택 [1/2] (기본 1): " || { printf 'docker'; return 0; }
     else
         say_user ""
         say_user "Choose runtime"
-        say_user "  1) Docker (recommended) — isolated container"
-        say_user "  2) Local — run Node.js directly on your machine (no Docker)"
+        say_user "  1) Docker (recommended): isolated container"
+        say_user "  2) Local: run Node.js directly on your machine (no Docker)"
         read_user_line reply "Choice [1/2] (default 1): " || { printf 'docker'; return 0; }
     fi
 
@@ -423,7 +423,7 @@ uninstall_local_service() {
 prepare_mode_switch() {
     local from="$1" to="$2"
     [ "${from}" = "${to}" ] && return 0
-    if is_ko; then echo "==> 실행 방식 변경: ${from} → ${to}"; else echo "==> Switching runtime: ${from} → ${to}"; fi
+    if is_ko; then echo "==> 실행 방식을 ${from}에서 ${to}(으)로 바꿉니다"; else echo "==> Switching runtime from ${from} to ${to}"; fi
     if is_ko; then
         echo "  참고: Docker와 로컬은 사용자 데이터 위치가 다릅니다 (Docker volume vs ${USER_DATA_DIR})."
     else
@@ -447,9 +447,9 @@ ensure_systemd_linger() {
     if is_ko; then echo "==> 재부팅·로그아웃 후에도 실행되도록 linger 설정 중..."; else echo "==> Enabling systemd linger for reboot/logout survival..."; fi
     loginctl enable-linger "${USER}" 2>/dev/null || {
         if is_ko; then
-            echo "⚠ linger 설정 실패 — 로그아웃 후 서비스가 중지될 수 있습니다: sudo loginctl enable-linger ${USER}"
+            echo "경고: linger 설정에 실패했습니다. 로그아웃 후 서비스가 중지될 수 있습니다: sudo loginctl enable-linger ${USER}"
         else
-            echo "⚠ Could not enable linger — service may stop after logout: sudo loginctl enable-linger ${USER}"
+            echo "Warning: could not enable linger. The service may stop after logout: sudo loginctl enable-linger ${USER}"
         fi
     }
 }
@@ -525,7 +525,7 @@ strip_env_scalar() {
 }
 
 env_file_value() {
-    # grep은 매치가 없으면 1을 반환한다 — || true가 없으면 pipefail+set -e 때문에
+    # grep은 매치가 없으면 1을 반환한다. || true가 없으면 pipefail+set -e 때문에
     # 키가 없을 때 스크립트가 아무 출력 없이 종료된다.
     # 키가 여러 줄이면 마지막 것을 쓴다 (손편집된 .env 대비).
     local key="$1"
@@ -841,7 +841,7 @@ pull_image() {
     if is_ko; then echo "==> 설치 파일 받는 중..."; else echo "==> Downloading tabyAgent..."; fi
 
     while [ "${attempt}" -le "${max_attempts}" ]; do
-        # pull 출력(레이어 진행 표시)을 숨기지 않는다 — 다운로드가 오래 걸릴 때 멈춰 보이지 않게.
+        # pull 출력을 그대로 보여준다. 오래 걸리는 다운로드가 멈춘 것처럼 보이지 않게.
         if ${compose} -f "${COMPOSE_FILE}" pull; then
             return 0
         fi
@@ -905,13 +905,13 @@ download_source_tarball() {
     url="https://github.com/${REPO_OWNER}/tabyAgent/archive/refs/heads/${REPO_BRANCH}.tar.gz"
     tmp="$(mktemp -t tabyagent-src.XXXXXX.tar.gz)"
     if is_ko; then echo "==> 소스 코드 받는 중..."; else echo "==> Downloading source..."; fi
-    # tty에서는 진행 표시줄을 보여준다 — 다운로드가 오래 걸릴 때 멈춰 보이지 않게.
+    # tty에서는 진행 표시줄을 보여준다. 다운로드가 오래 걸릴 때 멈춰 보이지 않게.
     if [ -t 2 ]; then
         curl -fL --progress-bar "${url}" -o "${tmp}"
     else
         curl -fsSL "${url}" -o "${tmp}"
     fi
-    # 압축 해제가 성공한 뒤에만 기존 app을 지운다 — 네트워크/아카이브 실패가
+    # 압축 해제가 성공한 뒤에만 기존 app을 지운다. 네트워크/아카이브 실패가
     # 설치본을 통째로 날리지 않게.
     mkdir -p "${INSTALL_DIR}"
     if ! tar -xzf "${tmp}" -C "${INSTALL_DIR}" 2>/dev/null; then
