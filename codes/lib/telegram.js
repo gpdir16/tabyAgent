@@ -43,7 +43,7 @@ import { maybeScheduleSessionReview } from "./dreaming/review.js";
 import { SCHEDULED_TURN_MARKER } from "./agent/history/messages.js";
 import { markUserActivity } from "./user-activity.js";
 import { startUpdateScheduler } from "./update/scheduler.js";
-import { sendChatActionSafe, safeTelegramApi, sendMessageSafe } from "./telegram-api.js";
+import { sendChatActionSafe, safeTelegramApi, sendMessageSafe, sendRichMessageSafe } from "./telegram-api.js";
 import { memoryFilePath } from "./path-labels.js";
 import { routeForAgent, routeForSessionKey, routeFromCtx, telegramThreadOpts } from "./agent-route.js";
 import { USER_DIR } from "./paths.js";
@@ -194,7 +194,7 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { session =
 
         if (draft.isAvailable() && draft.getLastText()) {
             await draft.update(finalText);
-            const sent = await draft.finalize(result.stats);
+            const sent = await draft.finalize(result.stats, finalText);
             if (sent) {
                 save(result);
                 return result;
@@ -585,7 +585,7 @@ function helpMessage(lang) {
             "- `/stop` — 진행 중인 작업 중지",
             "- `/config` — 설정 (언어, 모델, 사고 수준, 푸터, 업데이트 등)",
             "- `/agents` — 에이전트 관리",
-            "- `/todo` — 할 일 목록 (추가: /todo <제목>)",
+            "- `/todo` — 할 일 목록 (추가: `/todo <제목>`)",
             "- `/migrate` — tabyBot 마이그레이션 패키지 생성",
             "- `/approve <6-digit code>` — 새 기기 승인",
             "",
@@ -607,7 +607,7 @@ function helpMessage(lang) {
             "- `/stop` — 実行中の作業を停止",
             "- `/config` — 設定 (言語, モデル, 思考レベル, フッター, 更新確認 等)",
             "- `/agents` — エージェント管理",
-            "- `/todo` — タスクリスト (追加: /todo <タイトル>)",
+            "- `/todo` — タスクリスト (追加: `/todo <タイトル>`)",
             "- `/migrate` — tabyBot移行パッケージを生成",
             "- `/approve <6-digit code>` — 新端末を承認",
             "",
@@ -628,7 +628,7 @@ function helpMessage(lang) {
         "- `/stop` — Stop the running task",
         "- `/config` — Settings (change language, model, thinking level, footer, updates, etc.)",
         "- `/agents` — Manage extra agents",
-        "- `/todo` — Todo list (add: /todo <title>)",
+        "- `/todo` — Todo list (add: `/todo <title>`)",
         "- `/migrate` — Build a tabyBot migration package",
         "- `/approve <6-digit code>` — Approve a new device",
         "",
@@ -682,7 +682,8 @@ export async function startTelegramBot() {
             return;
         }
         const lang = loadUserConfig().language || "en";
-        await sendMessageSafe(bot.api, route.chatId, `${t("start_ready", lang)}\n\n${helpMessage(lang)}`, telegramThreadOpts(route.threadId));
+        // 도움말은 마크다운(제목·목록·코드)으로 작성돼 있어 리치 메시지로 보낸다.
+        await sendRichMessageSafe(bot, route.chatId, `${t("start_ready", lang)}\n\n${helpMessage(lang)}`, telegramThreadOpts(route.threadId));
     });
 
     bot.command("help", async (ctx) => {
@@ -695,7 +696,7 @@ export async function startTelegramBot() {
         if (!(await requireApprovedAccess(ctx))) {
             return;
         }
-        await sendMessageSafe(bot.api, route.chatId, helpMessage(lang), telegramThreadOpts(route.threadId));
+        await sendRichMessageSafe(bot, route.chatId, helpMessage(lang), telegramThreadOpts(route.threadId));
     });
 
     bot.command("new", async (ctx) => {
