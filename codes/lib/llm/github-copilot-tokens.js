@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { USER_DIR } from "../paths.js";
 import { writeJsonAtomic } from "../atomic-file.js";
+import { sleep } from "./transport.js";
 
 const CLIENT_ID = "Iv1.b507a08c87ecfe98";
 const DEVICE_CODE_URL = "https://github.com/login/device/code";
@@ -100,7 +101,7 @@ export function clearGithubCopilotTokens() {
 }
 
 export async function ensureFreshGithubCopilotToken(stored = loadStored()) {
-    if (!stored) throw new Error("No GitHub Copilot OAuth tokens. Use /config → GitHub Copilot to log in.");
+    if (!stored) throw new Error("No GitHub Copilot OAuth tokens. Log in from the Provider tab in Settings.");
     if (stored.copilotAccessToken && stored.expiresAt > Date.now() + EXPIRY_MARGIN_MS) {
         return { accessToken: stored.copilotAccessToken, baseURL: stored.baseURL || getBaseURL(null, stored.copilotAccessToken) };
     }
@@ -175,22 +176,4 @@ export async function pollGithubCopilotDeviceFlow({ deviceCode, intervalMs, expi
         const detail = data.error_description || error || res.statusText;
         throw new Error(`GitHub Copilot device auth failed: ${res.status} ${detail}`.trim());
     }
-}
-
-function sleep(ms, signal) {
-    return new Promise((resolve, reject) => {
-        if (signal?.aborted) {
-            reject(new Error("Login cancelled."));
-            return;
-        }
-        const onAbort = () => {
-            clearTimeout(timer);
-            reject(new Error("Login cancelled."));
-        };
-        const timer = setTimeout(() => {
-            signal?.removeEventListener("abort", onAbort);
-            resolve();
-        }, ms);
-        signal?.addEventListener("abort", onAbort, { once: true });
-    });
 }

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { USER_DIR } from "../paths.js";
 import { writeJsonAtomic } from "../atomic-file.js";
+import { parseJwtClaims, sleep } from "./transport.js";
 
 const ISSUER = "https://auth.x.ai";
 const DEVICE_CODE_URL = `${ISSUER}/oauth2/device/code`;
@@ -10,17 +11,6 @@ const CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 const SCOPE = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write";
 const AUTH_FILE = path.join(USER_DIR, "grok-auth.json");
 const EXPIRY_MARGIN_MS = 5 * 60_000;
-
-function parseJwtClaims(token) {
-    if (typeof token !== "string") return null;
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    try {
-        return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-    } catch {
-        return null;
-    }
-}
 
 function expiresAtFromTokens(tokens, fallbackExpiresIn) {
     const access = tokens.access_token || tokens.accessToken;
@@ -57,7 +47,7 @@ export function loadGrokTokens() {
     }
 }
 
-export function saveGrokTokens(tokens) {
+function saveGrokTokens(tokens) {
     try {
         fs.mkdirSync(path.dirname(AUTH_FILE), { recursive: true });
         const data = {
@@ -89,17 +79,41 @@ export function clearGrokTokens() {
     }
 }
 
-function tokenHeaders() {
+// xAI 서버(로그인, CLI 프록시)는 오래된 클라이언트 버전을 거절함("update Grok Build"). 버전을 고정해 두면 다시 막히므로
+// 공식 CLI 패키지의 최신 버전을 npm에서 읽어 씀. 못 읽으면 FALLBACK_CLIENT_VERSION.
+const CLIENT_VERSION_URL = "https://registry.npmjs.org/@xai-official/grok/latest";
+const CLIENT_VERSION_TTL_MS = 6 * 60 * 60_000;
+const FALLBACK_CLIENT_VERSION = "1.0.52";
+
+let clientVersion = { value: FALLBACK_CLIENT_VERSION, at: 0 };
+
+export async function getClientVersion({ force = false } = {}) {
+    if (!force && Date.now() - clientVersion.at < CLIENT_VERSION_TTL_MS) return clientVersion.value;
+    try {
+        const res = await fetch(CLIENT_VERSION_URL, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(5000) });
+        const version = res.ok ? (await res.json())?.version : null;
+        if (typeof version === "string" && /^\d+\.\d+\.\d+/.test(version)) clientVersion = { value: version, at: Date.now() };
+    } catch {
+        // 못 읽으면 알고 있는 값을 그대로 씀
+    }
+    // 실패해도 매 요청마다 다시 묻지 않게 시각은 갱신함
+    clientVersion.at = Date.now();
+    return clientVersion.value;
+}
+
+// 공식 CLI는 로그인 요청에도 클라이언트 버전을 실어 보냄
+async function tokenHeaders() {
     return {
         "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",
+        "x-grok-client-version": await getClientVersion(),
     };
 }
 
-export async function refreshGrokToken(refreshToken) {
+async function refreshGrokToken(refreshToken) {
     const res = await fetch(TOKEN_URL, {
         method: "POST",
-        headers: tokenHeaders(),
+        headers: await tokenHeaders(),
         body: new URLSearchParams({
             grant_type: "refresh_token",
             refresh_token: refreshToken,
@@ -111,11 +125,11 @@ export async function refreshGrokToken(refreshToken) {
         const desc = data.error_description || data.error || "";
         if (res.status === 403) {
             throw new Error(
-                "Grok OAuth account is signed in but this request was not allowed. Use /config → Grok to log in again, or try a different model.",
+                "Grok OAuth account is signed in but this request was not allowed. Log in again from the Provider tab in Settings, or try a different model.",
             );
         }
         if (res.status === 400 || res.status === 401) {
-            throw new Error("Grok OAuth token expired or was revoked. Use /config → Grok to log in again.");
+            throw new Error("Grok OAuth token expired or was revoked. Log in again from the Provider tab in Settings.");
         }
         throw new Error(`Grok token refresh failed: ${res.status} ${desc}`.trim());
     }
@@ -134,7 +148,7 @@ export async function refreshGrokToken(refreshToken) {
 let refreshInFlight = null;
 
 export async function ensureFreshToken(stored, { forceRefresh = false } = {}) {
-    if (!stored) throw new Error("No Grok OAuth tokens. Use /config → Grok to log in.");
+    if (!stored) throw new Error("No Grok OAuth tokens. Log in from the Provider tab in Settings.");
     if (!forceRefresh && isFresh(stored)) return { accessToken: stored.accessToken };
     if (!stored.refreshToken) {
         if (!forceRefresh && stored.accessToken && (!stored.expiresAt || Date.now() < stored.expiresAt)) {
@@ -172,7 +186,7 @@ export async function ensureFreshToken(stored, { forceRefresh = false } = {}) {
 export async function startGrokDeviceFlow() {
     const res = await fetch(DEVICE_CODE_URL, {
         method: "POST",
-        headers: tokenHeaders(),
+        headers: await tokenHeaders(),
         body: new URLSearchParams({ client_id: CLIENT_ID, scope: SCOPE }).toString(),
     });
     if (!res.ok) {
@@ -204,7 +218,7 @@ export async function pollGrokDeviceFlow({ deviceCode, intervalMs, expiresAt, si
 
         const res = await fetch(TOKEN_URL, {
             method: "POST",
-            headers: tokenHeaders(),
+            headers: await tokenHeaders(),
             body: new URLSearchParams({
                 grant_type: "urn:ietf:params:oauth:grant-type:device_code",
                 client_id: CLIENT_ID,
@@ -242,22 +256,4 @@ export async function pollGrokDeviceFlow({ deviceCode, intervalMs, expiresAt, si
         const desc = data.error_description || err;
         throw new Error(`Device auth failed: ${res.status} ${desc}`.trim());
     }
-}
-
-function sleep(ms, signal) {
-    return new Promise((resolve, reject) => {
-        if (signal?.aborted) {
-            reject(new Error("Login cancelled."));
-            return;
-        }
-        const onAbort = () => {
-            clearTimeout(timer);
-            reject(new Error("Login cancelled."));
-        };
-        const timer = setTimeout(() => {
-            signal?.removeEventListener("abort", onAbort);
-            resolve();
-        }, ms);
-        if (signal) signal.addEventListener("abort", onAbort, { once: true });
-    });
 }

@@ -20,8 +20,16 @@ export function loadModelMeta() {
     }
 }
 
-export function saveModelMeta(meta) {
+function saveModelMeta(meta) {
     writeJsonAtomic(META_PATH, meta);
+}
+
+// 제공자가 응답과 함께 실제 컨텍스트 크기를 알려 주면 쓰고 있는 값과 캐시를 그 값으로 고침.
+export function rememberContextWindow(meta, contextWindow) {
+    if (!(contextWindow > 0) || meta.contextWindow === contextWindow) return;
+    meta.contextWindow = contextWindow;
+    const cached = loadModelMeta();
+    if (cached.model === meta.model) saveModelMeta({ ...cached, contextWindow });
 }
 
 export async function ensureModelMeta(provider) {
@@ -39,7 +47,7 @@ export async function ensureModelMeta(provider) {
     }
 
     let contextWindow = defaultContext;
-    // Copilot "auto"는 모델 목록에 없는 가상 라우팅 id — 요청마다 큐레이션된
+    // Copilot "auto"는 모델 목록에 없는 가상 라우팅 id: 요청마다 큐레이션된
     // 비전 모델 풀에서 고른다. false로 두면 첨부/스크린샷이 조용히 버려진다.
     let supportsVision = provider.model === "auto" ? true : findModelVisionSupport(null, provider.model);
     try {

@@ -1,16 +1,25 @@
 import { getMergedProvider, loadUserConfig } from "../config-loader.js";
-import { chatCompletions, createOpenAIClient } from "./openai-compatible.js";
-import { codexComplete } from "./codex-client.js";
-import { grokComplete } from "./grok-client.js";
+import { chatCompletions, chatCompletionsPing, createOpenAIClient } from "./openai-compatible.js";
+import { codexComplete, codexPing } from "./codex-client.js";
+import { grokComplete, grokPing } from "./grok-client.js";
 import { githubCopilotComplete } from "./github-copilot-client.js";
-import { ensureModelMeta } from "./model-meta.js";
+import { claudeAgentComplete, claudeAgentPing } from "./claude-agent-client.js";
+import { withCacheKeepAlive } from "./cache-keepalive.js";
+import { withUsageLog } from "./usage-log.js";
+import { ensureModelMeta, rememberContextWindow } from "./model-meta.js";
 import { getThinkingLevel, getCachedProviderThinkingMeta } from "../user-settings.js";
 
 const OAUTH_PROVIDER_TYPES = new Set(["codex-oauth", "grok-oauth", "github-copilot-oauth"]);
 
+// 모든 요청의 토큰 사용량을 기록한다(설정 > 효율적인 운영의 사용 기록).
 export async function createLlmClient() {
+    return withUsageLog(await buildLlmClient());
+}
+
+async function buildLlmClient() {
     const userConfig = loadUserConfig();
     const provider = getMergedProvider(userConfig);
+    const thinkingLevel = getThinkingLevel(userConfig);
 
     if (!OAUTH_PROVIDER_TYPES.has(provider.type)) {
         if (!provider.apiKey && !provider.apiKeyOptional) throw new Error("provider.apiKey is not set in config.json");
@@ -19,11 +28,25 @@ export async function createLlmClient() {
 
     if (provider.type === "codex-oauth") {
         const modelMeta = await ensureModelMeta(provider);
-        return {
+        const thinkingParam = () => getCachedProviderThinkingMeta(provider.id, provider.model).param || "reasoning_effort";
+        return withCacheKeepAlive({
             provider,
             modelMeta,
-            async complete({ messages, tools, tool_choice, stream, onTextDelta, signal }) {
+            ping({ messages, tools, tool_choice, signal, cacheKey }) {
+                return codexPing({
+                    cacheKey,
+                    model: provider.model,
+                    messages,
+                    tools,
+                    tool_choice,
+                    signal,
+                    thinkingLevel,
+                    thinkingParam: thinkingParam(),
+                });
+            },
+            complete({ messages, tools, tool_choice, stream, onTextDelta, signal, cacheKey }) {
                 return codexComplete({
+                    cacheKey,
                     model: provider.model,
                     messages,
                     tools: tools?.length ? tools : undefined,
@@ -31,20 +54,34 @@ export async function createLlmClient() {
                     stream,
                     onTextDelta,
                     signal,
-                    thinkingLevel: getThinkingLevel(userConfig),
-                    thinkingParam: getCachedProviderThinkingMeta(provider.id, provider.model).param || "reasoning_effort",
+                    thinkingLevel,
+                    thinkingParam: thinkingParam(),
                 });
             },
-        };
+        });
     }
 
     if (provider.type === "grok-oauth") {
         const modelMeta = await ensureModelMeta(provider);
-        return {
+        const thinkingParam = () => getCachedProviderThinkingMeta(provider.id, provider.model).param || "reasoning";
+        return withCacheKeepAlive({
             provider,
             modelMeta,
-            async complete({ messages, tools, tool_choice, stream, onTextDelta, signal }) {
+            ping({ messages, tools, tool_choice, signal, cacheKey }) {
+                return grokPing({
+                    cacheKey,
+                    model: provider.model,
+                    messages,
+                    tools,
+                    tool_choice,
+                    signal,
+                    thinkingLevel,
+                    thinkingParam: thinkingParam(),
+                });
+            },
+            complete({ messages, tools, tool_choice, stream, onTextDelta, signal, cacheKey }) {
                 return grokComplete({
+                    cacheKey,
                     model: provider.model,
                     messages,
                     tools: tools?.length ? tools : undefined,
@@ -52,11 +89,11 @@ export async function createLlmClient() {
                     stream,
                     onTextDelta,
                     signal,
-                    thinkingLevel: getThinkingLevel(userConfig),
-                    thinkingParam: getCachedProviderThinkingMeta(provider.id, provider.model).param || "reasoning",
+                    thinkingLevel,
+                    thinkingParam: thinkingParam(),
                 });
             },
-        };
+        });
     }
 
     if (provider.type === "github-copilot-oauth") {
@@ -64,7 +101,7 @@ export async function createLlmClient() {
         return {
             provider,
             modelMeta,
-            async complete({ messages, tools, tool_choice, stream, onTextDelta, signal }) {
+            complete({ messages, tools, tool_choice, stream, onTextDelta, signal }) {
                 return githubCopilotComplete({
                     model: provider.autoMode ? "auto" : provider.model,
                     messages,
@@ -73,12 +110,37 @@ export async function createLlmClient() {
                     stream,
                     onTextDelta,
                     signal,
-                    thinkingLevel: getThinkingLevel(userConfig),
+                    thinkingLevel,
                     thinkingParam: getCachedProviderThinkingMeta(provider.id, provider.model).param || "reasoning_effort",
                     autoModelCandidates: provider.autoModelCandidates,
                 });
             },
         };
+    }
+
+    if (provider.type === "claude-agent-sdk") {
+        const modelMeta = await ensureModelMeta(provider);
+        return withCacheKeepAlive({
+            provider,
+            modelMeta,
+            ping({ messages, tools, signal, cacheKey }) {
+                return claudeAgentPing({ cacheKey, model: provider.model, messages, tools, thinkingLevel, signal });
+            },
+            complete({ messages, tools, tool_choice, stream, onTextDelta, signal, cacheKey }) {
+                return claudeAgentComplete({
+                    cacheKey,
+                    model: provider.model,
+                    messages,
+                    tools: tools?.length ? tools : undefined,
+                    tool_choice,
+                    stream,
+                    onTextDelta,
+                    signal,
+                    thinkingLevel,
+                    onContextWindow: (contextWindow) => rememberContextWindow(modelMeta, contextWindow),
+                });
+            },
+        });
     }
 
     if (provider.type !== "openai-compatible") {
@@ -92,10 +154,23 @@ export async function createLlmClient() {
         extraHeaders: provider.extraHeaders,
     });
 
-    return {
+    const thinkingParam = () => getCachedProviderThinkingMeta(provider.id, provider.model).param || "reasoning_effort";
+    return withCacheKeepAlive({
         provider,
         modelMeta,
-        async complete({ messages, tools, tool_choice, stream, onTextDelta, signal }) {
+        ping({ messages, tools, tool_choice, signal }) {
+            return chatCompletionsPing({
+                client,
+                model: provider.model,
+                messages,
+                tools,
+                tool_choice,
+                signal,
+                thinkingLevel,
+                thinkingParam: thinkingParam(),
+            });
+        },
+        complete({ messages, tools, tool_choice, stream, onTextDelta, signal }) {
             return chatCompletions({
                 client,
                 model: provider.model,
@@ -105,9 +180,9 @@ export async function createLlmClient() {
                 stream,
                 onTextDelta,
                 signal,
-                thinkingLevel: getThinkingLevel(userConfig),
-                thinkingParam: getCachedProviderThinkingMeta(provider.id, provider.model).param || "reasoning_effort",
+                thinkingLevel,
+                thinkingParam: thinkingParam(),
             });
         },
-    };
+    });
 }
