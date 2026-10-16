@@ -50,10 +50,12 @@ function sessionKeyFor(item, agent) {
 function notifyChanged() {
     try {
         emitEvent?.({ type: "todos_changed" });
-    } catch {}
+    } catch (err) {
+        console.error("tabyAgent: todos_changed emit failed:", err?.message || err);
+    }
 }
 
-async function tick() {
+function tick() {
     if (!runAgentTodo && !remindUserTodo) return;
     for (const due of listDueTodos()) {
         const item = due.item;
@@ -123,7 +125,11 @@ export function startTodoScheduler() {
     }
     if (!timer) {
         timer = setInterval(() => {
-            tick().catch((err) => console.error("tabyAgent: todo tick failed:", err?.stack || err));
+            try {
+                tick();
+            } catch (err) {
+                console.error("tabyAgent: todo tick failed:", err?.stack || err);
+            }
         }, TICK_MS);
         timer.unref?.();
     }

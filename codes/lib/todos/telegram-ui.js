@@ -51,7 +51,7 @@ function todoListPayload(lang) {
 
 export async function sendTodoList(bot, chatId, threadId, lang) {
     const { text, keyboard } = todoListPayload(lang);
-    return sendMessageSafe(bot, chatId, text, { ...telegramThreadOpts(threadId), reply_markup: keyboard });
+    return await sendMessageSafe(bot, chatId, text, { ...telegramThreadOpts(threadId), reply_markup: keyboard });
 }
 
 export function addUserTodo(title) {
@@ -84,11 +84,15 @@ export async function postOfferCard(bot, chatId, threadId, item, offer, lang) {
 }
 
 async function settleCard(ctx, text) {
-    await ctx.answerCallbackQuery({ text: String(text).slice(0, 180) }).catch(() => {});
+    await ctx.answerCallbackQuery({ text: String(text).slice(0, 180) }).catch(() => {
+        // 카드 갱신·응답 실패(메시지 삭제, 만료된 콜백)는 무시한다.
+    });
     const msg = ctx.callbackQuery?.message;
     if (msg?.message_id && msg.chat?.id) {
         const base = String(msg.text || "").split("\n")[0];
-        await editMessageTextSafe(ctx.api, msg.chat.id, msg.message_id, `${base}\n\n${text}`).catch(() => {});
+        await editMessageTextSafe(ctx.api, msg.chat.id, msg.message_id, `${base}\n\n${text}`).catch(() => {
+            // 카드 갱신·응답 실패(메시지 삭제, 만료된 콜백)는 무시한다.
+        });
     }
 }
 
@@ -96,7 +100,9 @@ export async function handleTodoCallback(ctx) {
     const lang = loadUserConfig().language || "en";
     const chatId = String(ctx.callbackQuery?.message?.chat?.id ?? ctx.chat?.id ?? "");
     if (chatId && !isApproved(chatId)) {
-        await ctx.answerCallbackQuery({ text: t("todo_expired", lang) }).catch(() => {});
+        await ctx.answerCallbackQuery({ text: t("todo_expired", lang) }).catch(() => {
+            // 카드 갱신·응답 실패(메시지 삭제, 만료된 콜백)는 무시한다.
+        });
         return;
     }
 
@@ -126,7 +132,7 @@ export async function handleTodoCallback(ctx) {
 
     if (action === "run" || action === "offer") {
         let item = getTodo(parts[2]);
-        if (!item || item.status !== "open") return settleCard(ctx, t("todo_expired", lang));
+        if (item?.status !== "open") return settleCard(ctx, t("todo_expired", lang));
 
         if (action === "offer") {
             const accepted = acceptHandoff(item.id, parts[3]);
@@ -145,5 +151,7 @@ export async function handleTodoCallback(ctx) {
         );
     }
 
-    await ctx.answerCallbackQuery().catch(() => {});
+    await ctx.answerCallbackQuery().catch(() => {
+        // 카드 갱신·응답 실패(메시지 삭제, 만료된 콜백)는 무시한다.
+    });
 }
