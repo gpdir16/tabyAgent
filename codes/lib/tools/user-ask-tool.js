@@ -5,9 +5,9 @@ import { askUser, cancelPendingAsk } from "../agent/user-ask.js";
 
 const USER_ASK_DESCRIPTION = [
     "Ask the user a question and wait for their answer (inline buttons + free text).",
-    "Use when you need a decision or input only the user can give: which option to pick, a preference, or anything ambiguous that blocks progress.",
-    "Also works during scheduled todo runs — while you wait, the todo shows a 'needs answer' badge so the user can see you are blocked.",
-    "Pass a clear question and short options (e.g. ['승인', '취소']). The user can also type a custom answer. The wait times out, so ask only what truly blocks you.",
+    "Use when you need a decision or input only the user can give: which option to pick, a preference, missing materials, or anything ambiguous that blocks progress.",
+    "Also works during scheduled todo runs. While you wait, the todo shows a 'needs answer' badge so the user can see you are blocked.",
+    "Pass a clear question and short options (e.g. ['승인', '취소']). The user can also type a custom answer. The wait times out (max 600s), so ask only what truly blocks you.",
 ].join(" ");
 
 export const userAskToolDefinitions = [
@@ -35,7 +35,7 @@ export const userAskToolDefinitions = [
 
 export async function executeUserAskTool(_name, args, ctx) {
     if (!ctx?.bot || !ctx?.chatId) {
-        return { error: "No active Telegram chat — user_ask only works during a user message turn" };
+        return { error: "No active Telegram chat. user_ask only works during a user message turn" };
     }
 
     const question = String(args?.question ?? "").trim();
@@ -57,9 +57,9 @@ export async function executeUserAskTool(_name, args, ctx) {
     });
 
     const signal = ctx?.signal;
-    if (!signal) return askPromise;
+    if (!signal) return await askPromise;
 
-    return new Promise((resolve) => {
+    return await new Promise((resolve) => {
         const onAbort = () => {
             cancelPendingAsk(ctx.sessionKey || ctx.chatId, "aborted");
             resolve({ error: "aborted" });

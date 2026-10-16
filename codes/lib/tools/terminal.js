@@ -4,6 +4,7 @@ import { camofoxUser, camofoxEnv } from "../computer/camofox-user.js";
 import { USER_DIR, resolveAgentPath } from "../paths.js";
 import { isDockerRuntime } from "../runtime.js";
 import { terminalCwdParamDescription, terminalRunDescription } from "../path-labels.js";
+import { commandTouchesSecretStore } from "../secrets/store.js";
 
 function resolveCwd(cwd) {
     const resolved = resolveAgentPath(cwd);
@@ -118,7 +119,7 @@ function startBackgroundJob(command, cwd, env) {
         job.stderr = appendTruncated(job.stderr, d.toString());
     });
 
-    // close가 아니라 exit으로 상태를 본다 — 손자 프로세스가 파이프를 잡고 있어도
+    // close가 아니라 exit으로 상태를 본다. 손자 프로세스가 파이프를 잡고 있어도
     // 셸이 죽으면 잡 상태가 완료로 바뀐다(출력 수집은 파이프가 열린 동안 계속).
     child.on("exit", (code) => {
         if (job.status === "killed") return; // bg_kill이 이미 상태를 확정함
@@ -158,7 +159,9 @@ function killProcessTree(pid) {
     } catch {
         try {
             process.kill(pid, "SIGTERM");
-        } catch {}
+        } catch {
+            // 이미 닫혔거나 정리된 대상이면 무시한다
+        }
     }
     setTimeout(() => {
         try {
@@ -166,7 +169,9 @@ function killProcessTree(pid) {
         } catch {
             try {
                 process.kill(pid, "SIGKILL");
-            } catch {}
+            } catch {
+                // 이미 닫혔거나 정리된 대상이면 무시한다
+            }
         }
     }, 2000);
 }
@@ -203,7 +208,7 @@ function executeBackgroundTool(name, args, { maxChars } = {}) {
     return { error: `Unknown terminal tool: ${name}` };
 }
 
-export async function executeTerminalTool(name, args, { signal, agentId } = {}) {
+export function executeTerminalTool(name, args, { signal, agentId, secretEnv } = {}) {
     if (!["terminal_run", "bg_status", "bg_list", "bg_kill"].includes(name)) {
         return { error: `Unknown terminal tool: ${name}` };
     }
@@ -221,9 +226,11 @@ export async function executeTerminalTool(name, args, { signal, agentId } = {}) 
 
     const command = args?.command?.trim();
     if (!command) return { error: "command is required" };
+    if (commandTouchesSecretStore(command)) return { error: "The secret vault files are off limits. Use {{secret:NAME}} placeholders instead." };
 
     const cwd = resolveCwd(args?.cwd);
-    const env = camofoxEnv({ ...process.env, HOME: isDockerRuntime() ? USER_DIR : process.env.HOME || USER_DIR });
+    // secretEnv: {{secret:NAME}}이 치환된 환경 변수. 이 명령에만 넘기고 출력은 레지스트리가 마스킹한다.
+    const env = camofoxEnv({ ...process.env, ...secretEnv, HOME: isDockerRuntime() ? USER_DIR : process.env.HOME || USER_DIR });
     // --user 생략한 camofox 호출이 이 봇의 고정 브라우저 프로필을 쓰게 한다.
     if (agentId) env.CAMOFOX_CLI_USER = camofoxUser(agentId);
 
