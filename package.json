@@ -4,17 +4,27 @@
     "type": "module",
     "scripts": {
         "start": "node codes/index.js",
-        "format": "prettier --write .",
-        "format:check": "prettier --check ."
+        "lint": "biome check .",
+        "lint:fix": "biome check --write .",
+        "format": "biome format --write . && prettier --write \"**/*.{md,yml,yaml,html}\"",
+        "format:check": "biome check . && prettier --check \"**/*.{md,yml,yaml,html}\""
     },
     "dependencies": {
+        "@anthropic-ai/claude-agent-sdk": "0.3.296",
         "@modelcontextprotocol/sdk": "^1.12.1",
         "grammy": "^1.44.0",
         "js-tiktoken": "^1.0.19",
         "node-cron": "^3.0.3",
-        "openai": "^4.104.0"
+        "openai": "^4.104.0",
+        "zod": "4.6.7"
     },
     "devDependencies": {
+        "@biomejs/biome": "2.5.15",
         "prettier": "^3.8.3"
+    },
+    "overrides": {
+        "openai": {
+            "zod": "$zod"
+        }
     }
 }
