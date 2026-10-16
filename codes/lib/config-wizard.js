@@ -7,7 +7,7 @@ import { claimOwnerIfNone, hasOwner, isApproved, issuePendingCode } from "./auth
 import { t } from "./i18n.js";
 import { getApproveCliHint } from "./runtime.js";
 import { fetchProviderModels, providerFromWizardState, partitionModelsForPicker, buildVendorPickerItems, MODELS_PER_PAGE } from "./llm/models.js";
-import { deleteMessageSafe, sendMessageSafe } from "./telegram-api.js";
+import { deleteMessageSafe, editMessageTextSafe, sendMessageSafe } from "./telegram-api.js";
 import { restartUpdateScheduler } from "./update/scheduler.js";
 import { startDreamingScheduler } from "./dreaming/scheduler.js";
 import { applySelfImprovementPatch, getDreamingConfig, getProactiveConfig, getReviewConfig } from "./self-improvement.js";
@@ -18,9 +18,15 @@ import { clearGrokTokens, startGrokDeviceFlow, pollGrokDeviceFlow } from "./llm/
 import { fetchGrokModels } from "./llm/grok-client.js";
 import { clearGithubCopilotTokens, startGithubCopilotDeviceFlow, pollGithubCopilotDeviceFlow } from "./llm/github-copilot-tokens.js";
 import { fetchGithubCopilotModels } from "./llm/github-copilot-client.js";
+import { getClaudeAuthStatus } from "./llm/claude-agent-client.js";
+import { cancelClaudeLogin, startClaudeLogin, submitClaudeLoginCode } from "./llm/claude-login.js";
+import { cacheKeepAliveSummary, normalizeCacheKeepAlive } from "./llm/cache-keepalive.js";
+import { usageSummary } from "./llm/usage-log.js";
+import { createSecret, deleteSecret, listSecrets } from "./secrets/store.js";
+import { compressBotSessions } from "./agent/summarize.js";
+import { CONTEXT_TRIGGER_PRESETS, getCompressOnModelChange, getContextTriggerPercent, normalizeContextTriggerPercent } from "./user-settings.js";
 import {
     getThinkingLevel,
-    isReplyFooterEnabled,
     normalizeThinkingLevel,
     seedWizardDataFromConfig,
     thinkingLevelLabel,
@@ -53,6 +59,7 @@ const PROVIDERS = {
     codex: { id: "codex", label: "Codex OAuth (ChatGPT Plus/Pro)", apiKeyOptional: true },
     grok: { id: "grok", label: "Grok OAuth", apiKeyOptional: true },
     githubCopilot: { id: "github-copilot", label: "GitHub Copilot OAuth", apiKeyOptional: true },
+    claude: { id: "claude", label: "Claude OAuth (Pro/Max)", apiKeyOptional: true },
     custom: { id: "default", custom: true, label: "Custom URL" },
 };
 
@@ -73,7 +80,7 @@ const GROK_MODELS = [
     { id: "grok-4.20-0309-non-reasoning", label: "grok-4.20-0309-non-reasoning" },
 ];
 
-function emptyState(chatId, { mode = "onboarding" } = {}) {
+function emptyState(_chatId, { mode = "onboarding" } = {}) {
     return {
         mode,
         step: mode === "reconfig" ? "menu" : "language",
@@ -158,7 +165,7 @@ export function isWizardActive(chatId) {
     return Boolean(state?.adminChatId === String(chatId) && state?.step);
 }
 
-async function applyConfig(partial) {
+function applyConfig(partial) {
     const config = loadUserConfig();
     if (!config.telegram) config.telegram = {};
     if (!config.provider) config.provider = { id: "default" };
@@ -193,6 +200,21 @@ async function applyConfig(partial) {
     if (partial.updateCheckEnabled !== undefined) {
         config.updateCheckEnabled = Boolean(partial.updateCheckEnabled);
     }
+    if (partial.contextTriggerPercent !== undefined) {
+        config.contextTriggerPercent = normalizeContextTriggerPercent(partial.contextTriggerPercent);
+    }
+    if (partial.compressOnModelChange !== undefined) {
+        config.compressOnModelChange = Boolean(partial.compressOnModelChange);
+    }
+    // 캐시 유지는 지금 프로바이더에 대해 따로 둔다. 자동이 기본이라 끔이나 사용자 지정만 적는다.
+    if (partial.cacheKeepAlive !== undefined) {
+        const pid = config.provider?.id || "default";
+        config.cacheKeepAlive = { ...config.cacheKeepAlive };
+        const value = normalizeCacheKeepAlive(partial.cacheKeepAlive);
+        if (value) config.cacheKeepAlive[pid] = value;
+        else delete config.cacheKeepAlive[pid];
+        if (!Object.keys(config.cacheKeepAlive).length) delete config.cacheKeepAlive;
+    }
     if (partial.timezone !== undefined) {
         const tz = String(partial.timezone || "").trim();
         if (tz && isValidTimeZone(tz)) config.timezone = tz;
@@ -200,7 +222,8 @@ async function applyConfig(partial) {
     }
     let selfImprovementChanged = false;
     if (partial.selfImprovement !== undefined) {
-        const err = applySelfImprovementPatch((config.selfImprovement = config.selfImprovement || {}), partial.selfImprovement);
+        config.selfImprovement = config.selfImprovement || {};
+        const err = applySelfImprovementPatch(config.selfImprovement, partial.selfImprovement);
         if (!err) selfImprovementChanged = true;
         else console.warn(`tabyAgent: selfImprovement patch rejected: ${err}`);
     }
@@ -244,6 +267,13 @@ function texts(lang) {
             grokLoginFailed: "❌ Login failed: {error}\n\nTap retry to try again.",
             grokLoginRetry: "Retry login",
             grokLoginCancel: "Cancel",
+            claudeLoginPending:
+                "🔐 Claude sign-in\n\n1. Open this link and sign in with your Claude Pro/Max account:\n{url}\n\n2. Copy the code shown after sign-in and send it here as a message.",
+            claudeLoginChecking: "⏳ Checking the code…",
+            claudeLoginSuccess: "✅ Claude login successful!",
+            claudeLoginFailed: "❌ Login failed: {error}\n\nTap retry to try again.",
+            claudeLoginRetry: "Retry login",
+            claudeLoginCancel: "Cancel",
             copilotLoginTitle: "GitHub Copilot (OAuth)",
             copilotLoginPending:
                 "Waiting for authorization… Open the link below, enter the code, then approve.\n\n🔗 {url}\n\nCode: {code}\n\nThis will auto-complete when you approve.",
@@ -274,6 +304,39 @@ function texts(lang) {
             toggleOn: "On",
             toggleOff: "Off",
             catSelfImprove: "Self-improvement",
+            catEfficiency: "Efficiency",
+            catSecrets: "Secret vault",
+            secMenuText:
+                "🔐 Secret vault\n\nPasswords and API keys are stored encrypted. Agents use them through placeholders and never see the values.\nTap a secret to delete it.",
+            secEmpty: "No secrets stored yet.",
+            secAdd: "➕ Add secret",
+            secAskName: "Send a name for the new secret (e.g. GitHub token).",
+            secAskValue: 'Now send the value for "{name}". Your message is deleted right away.',
+            secSaved: "✅ Saved: {name}",
+            secFailed: "❌ Could not save: {error}",
+            secDeleteConfirm: 'Delete "{name}"?',
+            secDeleteYes: "Delete",
+            effUsageTitle: "Last 7 days",
+            effUsageEmpty: "No model requests recorded yet.",
+            effUsageLine: "{calls} requests · input {input} (cache hit {hit}) · output {output}",
+            effPingLine: "Cache keep-alive pings: {pings}",
+            effByModel: "By model",
+            effKeepAlive: "Prompt cache keep-alive",
+            effKeepAliveDesc: "Keeps the prompt cache warm during short breaks only when that saves money.",
+            effKeepAliveNA: "Not available for this provider",
+            effKaAuto: "Auto",
+            effKaOff: "Off",
+            effKaCustom: "Custom ({ttl} min cache, keep {hours} h)",
+            effKaAutoDetail: "Cache lasts about {ttl} min; kept up to {keep} after a chat.",
+            effTrigger: "Compress context at",
+            effCompressOnModel: "Ask to compress on model change",
+            effCompressNow: "Compress all sessions now",
+            effCompressRunning: "⏳ Compressing sessions…",
+            effCompressDone: "✅ Sessions compressed: {compressed}, skipped: {skipped}, failed: {failed}",
+            effCompressBusy: "A compression is already running.",
+            effCompressAsk: "Model changed. Compress sessions for a clean start?",
+            effCompressYes: "Compress",
+            effCompressNo: "Not now",
             timezone: "Timezone",
             tzServerDefault: "Server default (Docker: UTC)",
             siBack: "◀ Self-improvement",
@@ -342,6 +405,13 @@ function texts(lang) {
             grokLoginFailed: "❌ 로그인 실패: {error}\n\n다시 시도하려면 버튼을 누르세요.",
             grokLoginRetry: "다시 시도",
             grokLoginCancel: "취소",
+            claudeLoginPending:
+                "🔐 Claude 로그인\n\n1. 아래 링크를 열고 Claude Pro/Max 계정으로 로그인하세요:\n{url}\n\n2. 로그인 뒤 보이는 코드를 복사해 여기에 메시지로 보내 주세요.",
+            claudeLoginChecking: "⏳ 코드를 확인하는 중…",
+            claudeLoginSuccess: "✅ Claude 로그인 성공!",
+            claudeLoginFailed: "❌ 로그인 실패: {error}\n\n다시 시도하려면 버튼을 누르세요.",
+            claudeLoginRetry: "다시 시도",
+            claudeLoginCancel: "취소",
             copilotLoginTitle: "GitHub Copilot (OAuth)",
             copilotLoginPending:
                 "인증 대기 중… 아래 링크를 열고 코드를 입력한 뒤 승인하세요.\n\n🔗 {url}\n\n코드: {code}\n\n승인하면 자동으로 완료됩니다.",
@@ -371,6 +441,39 @@ function texts(lang) {
             toggleOn: "켜기",
             toggleOff: "끄기",
             catSelfImprove: "자기 개선",
+            catEfficiency: "효율적인 운영",
+            catSecrets: "시크릿 금고",
+            secMenuText:
+                "🔐 시크릿 금고\n\n비밀번호와 API 키를 암호화해 보관합니다. 에이전트는 자리표시자로만 쓰고 값은 보지 못합니다.\n지우려면 시크릿을 누르세요.",
+            secEmpty: "아직 저장된 시크릿이 없습니다.",
+            secAdd: "➕ 시크릿 추가",
+            secAskName: "새 시크릿의 이름을 보내 주세요 (예: GitHub 토큰).",
+            secAskValue: '이제 "{name}"의 값을 보내 주세요. 보낸 메시지는 바로 지워집니다.',
+            secSaved: "✅ 저장했습니다: {name}",
+            secFailed: "❌ 저장하지 못했습니다: {error}",
+            secDeleteConfirm: '"{name}"을(를) 지울까요?',
+            secDeleteYes: "삭제",
+            effUsageTitle: "최근 7일",
+            effUsageEmpty: "아직 기록된 모델 요청이 없습니다.",
+            effUsageLine: "요청 {calls}회 · 입력 {input} (캐시 적중 {hit}) · 출력 {output}",
+            effPingLine: "캐시 유지 핑: {pings}회",
+            effByModel: "모델별",
+            effKeepAlive: "프롬프트 캐시 유지",
+            effKeepAliveDesc: "잠깐 쉬는 동안 비용이 줄어들 때만 프롬프트 캐시를 유지합니다.",
+            effKeepAliveNA: "이 프로바이더에서는 쓸 수 없음",
+            effKaAuto: "자동",
+            effKaOff: "끔",
+            effKaCustom: "사용자 지정 (캐시 {ttl}분, {hours}시간 유지)",
+            effKaAutoDetail: "캐시는 약 {ttl}분 유지되고, 대화 뒤 최대 {keep} 동안 이어 둡니다.",
+            effTrigger: "컨텍스트 압축 시점",
+            effCompressOnModel: "모델 변경 시 압축 여부 묻기",
+            effCompressNow: "지금 모든 세션 압축",
+            effCompressRunning: "⏳ 세션을 압축하는 중…",
+            effCompressDone: "✅ 세션 압축 완료: 압축 {compressed}, 건너뜀 {skipped}, 실패 {failed}",
+            effCompressBusy: "이미 압축이 진행 중입니다.",
+            effCompressAsk: "모델이 변경되었습니다. 깔끔하게 시작하도록 세션을 압축할까요?",
+            effCompressYes: "압축",
+            effCompressNo: "나중에",
             timezone: "시간대",
             tzServerDefault: "서버 기본값 (도커: UTC)",
             siBack: "◀ 자기 개선",
@@ -438,6 +541,13 @@ function texts(lang) {
             grokLoginFailed: "❌ ログイン失敗: {error}\n\n再試行ボタンを押してください。",
             grokLoginRetry: "再試行",
             grokLoginCancel: "キャンセル",
+            claudeLoginPending:
+                "🔐 Claude ログイン\n\n1. 次のリンクを開き、Claude Pro/Max アカウントでログインしてください:\n{url}\n\n2. ログイン後に表示されるコードをコピーして、ここにメッセージで送ってください。",
+            claudeLoginChecking: "⏳ コードを確認しています…",
+            claudeLoginSuccess: "✅ Claude ログイン成功！",
+            claudeLoginFailed: "❌ ログイン失敗: {error}\n\n再試行ボタンを押してください。",
+            claudeLoginRetry: "再試行",
+            claudeLoginCancel: "キャンセル",
             copilotLoginTitle: "GitHub Copilot (OAuth)",
             copilotLoginPending:
                 "認証待機中… 下のリンクを開き、コードを入力して承認してください。\n\n🔗 {url}\n\nコード: {code}\n\n承認すると自動で完了します。",
@@ -468,6 +578,39 @@ function texts(lang) {
             toggleOn: "オン",
             toggleOff: "オフ",
             catSelfImprove: "自己改善",
+            catEfficiency: "効率的な運用",
+            catSecrets: "シークレット保管庫",
+            secMenuText:
+                "🔐 シークレット保管庫\n\nパスワードやAPIキーを暗号化して保管します。エージェントはプレースホルダー経由で使い、値は見えません。\n削除するにはシークレットを押してください。",
+            secEmpty: "まだシークレットは保存されていません。",
+            secAdd: "➕ シークレットを追加",
+            secAskName: "新しいシークレットの名前を送ってください (例: GitHub トークン)。",
+            secAskValue: "次に「{name}」の値を送ってください。送ったメッセージはすぐに削除されます。",
+            secSaved: "✅ 保存しました: {name}",
+            secFailed: "❌ 保存できませんでした: {error}",
+            secDeleteConfirm: "「{name}」を削除しますか？",
+            secDeleteYes: "削除",
+            effUsageTitle: "直近7日",
+            effUsageEmpty: "まだモデルへのリクエスト記録がありません。",
+            effUsageLine: "リクエスト {calls}回 · 入力 {input} (キャッシュヒット {hit}) · 出力 {output}",
+            effPingLine: "キャッシュ維持ピング: {pings}回",
+            effByModel: "モデル別",
+            effKeepAlive: "プロンプトキャッシュ維持",
+            effKeepAliveDesc: "少し休んでいる間、費用が下がる場合だけプロンプトキャッシュを維持します。",
+            effKeepAliveNA: "このプロバイダーでは使えません",
+            effKaAuto: "自動",
+            effKaOff: "オフ",
+            effKaCustom: "カスタム (キャッシュ {ttl}分、{hours}時間維持)",
+            effKaAutoDetail: "キャッシュは約{ttl}分保持され、会話後最大{keep}維持します。",
+            effTrigger: "コンテキスト圧縮のタイミング",
+            effCompressOnModel: "モデル変更時に圧縮するか確認",
+            effCompressNow: "今すぐ全セッションを圧縮",
+            effCompressRunning: "⏳ セッションを圧縮しています…",
+            effCompressDone: "✅ セッション圧縮完了: 圧縮 {compressed}、スキップ {skipped}、失敗 {failed}",
+            effCompressBusy: "すでに圧縮を実行中です。",
+            effCompressAsk: "モデルが変更されました。セッションを圧縮してすっきり始めますか？",
+            effCompressYes: "圧縮",
+            effCompressNo: "後で",
             timezone: "タイムゾーン",
             tzServerDefault: "サーバー既定 (Docker: UTC)",
             siBack: "◀ 自己改善",
@@ -537,6 +680,8 @@ function menuKeyboard(state) {
     kb.text(`${msg.catApproval}: ${approvalLevelLabel(lang, getApprovalLevel(cfg))}`, "cfg:cat:approval").row();
     const siOn = [getProactiveConfig().enabled, getDreamingConfig().enabled, getReviewConfig().enabled].filter(Boolean).length;
     kb.text(`${msg.catSelfImprove}: ${siOn}/3`, "cfg:cat:si").row();
+    kb.text(msg.catEfficiency, "cfg:cat:eff").row();
+    kb.text(`${msg.catSecrets}: ${listSecrets().length}`, "cfg:cat:sec").row();
     kb.text(msg.done, "cfg:done");
     return kb;
 }
@@ -795,6 +940,170 @@ async function showThinkingStep(bot, chatId, state) {
     await replaceStep(bot, chatId, state, texts(lang).thinkingPick, thinkingKeyboard(state, meta));
 }
 
+// ── 효율적인 운영: 사용 기록, 프롬프트 캐시 유지, 컨텍스트 압축 ──
+
+const KEEP_ALIVE_CUSTOM_PRESETS = [
+    { ttlMinutes: 5, keepHours: 1 },
+    { ttlMinutes: 60, keepHours: 4 },
+];
+
+function fmt(template, vars) {
+    return template.replace(/\{(\w+)\}/g, (m, k) => (vars[k] !== undefined ? String(vars[k]) : m));
+}
+
+function compactNumber(lang, n) {
+    const locale = { ko: "ko-KR", ja: "ja-JP" }[lang] || "en-US";
+    return new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: 1 }).format(n);
+}
+
+function durationLabel(lang, ms) {
+    const minutes = Math.round(ms / 60000);
+    if (minutes < 60) return lang === "ko" ? `${minutes}분` : lang === "ja" ? `${minutes}分` : `${minutes} min`;
+    const hours = Math.round((minutes / 60) * 10) / 10;
+    return lang === "ko" ? `${hours}시간` : lang === "ja" ? `${hours}時間` : `${hours} h`;
+}
+
+function weekUsage() {
+    const sum = () => ({ calls: 0, input: 0, cached: 0, output: 0, pings: 0 });
+    const total = sum();
+    const models = new Map();
+    for (const { models: rows } of usageSummary().days.slice(-7)) {
+        for (const [id, row] of Object.entries(rows || {})) {
+            const m = models.get(id) || sum();
+            for (const k of Object.keys(total)) {
+                total[k] += row[k] || 0;
+                m[k] += row[k] || 0;
+            }
+            models.set(id, m);
+        }
+    }
+    return { total, models };
+}
+
+function currentKeepAlive() {
+    try {
+        const config = loadUserConfig();
+        return cacheKeepAliveSummary(getMergedProvider(config), config);
+    } catch {
+        // 프로바이더 설정이 아직 없으면 캐시 유지 항목을 숨긴다.
+        return null;
+    }
+}
+
+function effMenuText(lang) {
+    const msg = texts(lang);
+    const { total, models } = weekUsage();
+    const lines = [`📊 ${msg.effUsageTitle}`];
+    if (!total.calls && !total.pings) {
+        lines.push(msg.effUsageEmpty);
+    } else {
+        const hit = total.input > 0 ? `${Math.round((total.cached / total.input) * 100)}%` : "-";
+        const n = (v) => compactNumber(lang, v);
+        lines.push(fmt(msg.effUsageLine, { calls: n(total.calls), input: n(total.input), hit, output: n(total.output) }));
+        if (total.pings) lines.push(fmt(msg.effPingLine, { pings: n(total.pings) }));
+        const top = [...models.entries()].sort((a, b) => b[1].input + b[1].output - (a[1].input + a[1].output)).slice(0, 5);
+        if (top.length > 1) {
+            lines.push("", msg.effByModel);
+            for (const [id, m] of top) lines.push(`• ${id}: ${n(m.calls)} · ${n(m.input)} / ${n(m.output)}`);
+        }
+    }
+    const ka = currentKeepAlive();
+    lines.push("", `♻️ ${msg.effKeepAlive}`, msg.effKeepAliveDesc);
+    if (!ka) lines.push(msg.effKeepAliveNA);
+    else if (ka.mode === "auto") lines.push(fmt(msg.effKaAutoDetail, { ttl: Math.round(ka.ttlMs / 60000), keep: durationLabel(lang, ka.keepMs) }));
+    return lines.join("\n");
+}
+
+function keepAliveLabel(msg, ka) {
+    if (!ka) return msg.effKeepAliveNA;
+    if (ka.mode === "off") return msg.effKaOff;
+    if (ka.mode === "custom") return fmt(msg.effKaCustom, { ttl: ka.ttlMinutes, hours: ka.keepHours });
+    return msg.effKaAuto;
+}
+
+function effMenuKeyboard(state) {
+    const lang = uiLang(state);
+    const msg = texts(lang);
+    const cfg = loadUserConfig();
+    const ka = currentKeepAlive();
+    const kb = new InlineKeyboard();
+    if (ka) kb.text(`${msg.effKeepAlive}: ${keepAliveLabel(msg, ka)}`, "cfg:eff:ka").row();
+    kb.text(`${msg.effTrigger}: ${getContextTriggerPercent(cfg)}%`, "cfg:eff:trigger").row();
+    kb.text(`${msg.effCompressOnModel}: ${onOffLabel(lang, getCompressOnModelChange(cfg))}`, "cfg:eff:tog:compress").row();
+    kb.text(msg.effCompressNow, "cfg:eff:compress").row();
+    kb.text(msg.backMenu, "cfg:menu");
+    return kb;
+}
+
+function keepAlivePickerKeyboard(state) {
+    const msg = texts(uiLang(state));
+    const kb = new InlineKeyboard().text(msg.effKaAuto, "cfg:eff:kaset:auto").row().text(msg.effKaOff, "cfg:eff:kaset:off").row();
+    KEEP_ALIVE_CUSTOM_PRESETS.forEach((p, i) => {
+        kb.text(fmt(msg.effKaCustom, { ttl: p.ttlMinutes, hours: p.keepHours }), `cfg:eff:kaset:c${i}`).row();
+    });
+    kb.text(msg.backMenu, "cfg:cat:eff");
+    return kb;
+}
+
+function triggerPickerKeyboard(state) {
+    const msg = texts(uiLang(state));
+    const cur = getContextTriggerPercent();
+    const kb = new InlineKeyboard();
+    for (const pct of CONTEXT_TRIGGER_PRESETS) kb.text(`${pct === cur ? "✓ " : ""}${pct}%`, `cfg:eff:trig:${pct}`).row();
+    kb.text(msg.backMenu, "cfg:cat:eff");
+    return kb;
+}
+
+async function showEffMenu(bot, chatId, state) {
+    const lang = uiLang(state);
+    state.step = "eff_menu";
+    saveState(state);
+    await replaceStep(bot, chatId, state, effMenuText(lang), effMenuKeyboard(state));
+}
+
+// ── 시크릿 금고: 이름 목록, 추가, 삭제. 값은 보여 주지 않는다. ──
+
+function secMenuKeyboard(state) {
+    const msg = texts(uiLang(state));
+    const kb = new InlineKeyboard();
+    for (const sec of listSecrets()) kb.text(`🗑 ${trimLabel(sec.name)}`, `cfg:sec:ask:${sec.id}`).row();
+    kb.text(msg.secAdd, "cfg:sec:add").row();
+    kb.text(msg.backMenu, "cfg:menu");
+    return kb;
+}
+
+async function showSecMenu(bot, chatId, state) {
+    const msg = texts(uiLang(state));
+    state.step = "sec_menu";
+    delete state.data.secretName;
+    saveState(state);
+    const body = listSecrets().length ? msg.secMenuText : `${msg.secMenuText}\n\n${msg.secEmpty}`;
+    await replaceStep(bot, chatId, state, body, secMenuKeyboard(state));
+}
+
+// 세션 압축은 한 번에 하나만 돌린다(압축 = 대화 기록 재작성 + LLM 호출).
+let sessionCompressInFlight = false;
+
+async function runSessionCompression(bot, chatId, lang) {
+    const msg = texts(lang);
+    if (sessionCompressInFlight) {
+        await sendMessageSafe(bot, chatId, msg.effCompressBusy);
+        return;
+    }
+    sessionCompressInFlight = true;
+    try {
+        const sent = await sendMessageSafe(bot, chatId, msg.effCompressRunning);
+        const result = await compressBotSessions();
+        const text = fmt(msg.effCompressDone, result);
+        const messageId = sent.messageIds?.[0];
+        if (!messageId || !(await editMessageTextSafe(bot, chatId, messageId, text))) await sendMessageSafe(bot, chatId, text);
+    } catch (err) {
+        await sendMessageSafe(bot, chatId, `❌ ${err?.message || err}`);
+    } finally {
+        sessionCompressInFlight = false;
+    }
+}
+
 async function showMenuStep(bot, chatId, state) {
     const lang = uiLang(state);
     state.step = "menu";
@@ -807,10 +1116,17 @@ async function returnToMenu(bot, chatId, state) {
 
 async function completeModelSelection(bot, chatId, state, { userMessageId } = {}) {
     if (isReconfig(state)) {
+        const prevModel = loadUserConfig().provider?.model || "";
         await applyConfig({ model: state.data.model });
         await clearActivePrompt(bot, chatId, state);
         await deleteMessageSafe(bot, chatId, userMessageId);
         await returnToMenu(bot, chatId, state);
+        // 모델이 바뀌면 묻기만 하고, 사용자가 버튼을 눌러야 압축한다.
+        if (prevModel && prevModel !== state.data.model && getCompressOnModelChange()) {
+            const msg = texts(uiLang(state));
+            const kb = new InlineKeyboard().text(msg.effCompressYes, "cfg:eff:compress").text(msg.effCompressNo, "cfg:eff:dismiss");
+            await sendMessageSafe(bot, chatId, msg.effCompressAsk, { reply_markup: kb });
+        }
         return;
     }
     await finishWizard(bot, chatId, state, { userMessageId });
@@ -849,6 +1165,8 @@ function providerKeyboard(lang, state = null) {
         .text("Grok OAuth", "cfg:prov:grok")
         .row()
         .text("GitHub Copilot OAuth", "cfg:prov:githubCopilot")
+        .row()
+        .text("Claude OAuth (Pro/Max)", "cfg:prov:claude")
         .row()
         .text("Custom API URL", "cfg:prov:custom")
         .row();
@@ -1021,7 +1339,6 @@ async function finishWizard(bot, chatId, state, { userMessageId } = {}) {
     }
 
     const cfg = loadUserConfig();
-    const modelId = state.data.model || "";
     let provider;
     try {
         provider = providerFromWizardState(state);
@@ -1215,6 +1532,46 @@ async function startCodexLogin(bot, chatId, state) {
         });
 }
 
+// Claude 로그인은 공식 CLI(`claude auth login`)가 한다. 여기서는 링크를 보여 주고
+// 사용자가 보낸 인증 코드 한 줄만 CLI에 넘긴다. 토큰은 CLI가 저장하고 봇은 보지 않는다.
+async function startClaudeLoginFlow(bot, chatId, state) {
+    const lang = uiLang(state);
+    const msg = texts(lang);
+    const failKb = () => new InlineKeyboard().text(msg.claudeLoginRetry, "cfg:claude:retry").row().text(msg.claudeLoginCancel, "cfg:claude:cancel");
+
+    const status = await getClaudeAuthStatus();
+    if (status.loggedIn) {
+        await sendModelStep(bot, chatId, state);
+        return;
+    }
+
+    state.step = "claude_login";
+    saveState(state);
+
+    let started;
+    try {
+        started = await startClaudeLogin({
+            onDone: async (result) => {
+                const current = loadState();
+                if (current?.step !== "claude_login") return;
+                if (result.ok) {
+                    await clearActivePrompt(bot, chatId, current);
+                    await sendMessageSafe(bot, chatId, msg.claudeLoginSuccess);
+                    await sendModelStep(bot, chatId, current);
+                } else {
+                    await replaceStep(bot, chatId, current, msg.claudeLoginFailed.replace("{error}", result.detail || "unknown"), failKb());
+                }
+            },
+        });
+    } catch (err) {
+        await replaceStep(bot, chatId, state, msg.claudeLoginFailed.replace("{error}", err.message), failKb());
+        return;
+    }
+
+    const kb = new InlineKeyboard().text(msg.claudeLoginCancel, "cfg:claude:cancel");
+    await replaceStep(bot, chatId, state, msg.claudeLoginPending.replace("{url}", started.url), kb);
+}
+
 async function startGrokLogin(bot, chatId, state) {
     const lang = uiLang(state);
     const msg = texts(lang);
@@ -1351,7 +1708,7 @@ async function dismissCallbackPrompt(ctx, bot, chatId, state) {
 
 export async function handleConfigWizardCallback(ctx, bot) {
     const data = ctx.callbackQuery.data;
-    let state = loadState() || emptyState(ctx.chat.id);
+    const state = loadState() || emptyState(ctx.chat.id);
 
     const access = assertWizardChat(ctx, state);
     if (!access.ok) {
@@ -1448,6 +1805,93 @@ export async function handleConfigWizardCallback(ctx, bot) {
         state.step = "approval_pick";
         saveState(state);
         await replaceStep(bot, chatId, state, texts(uiLang(state)).approvalPick, approvalKeyboard(state));
+        return;
+    }
+    if (data === "cfg:cat:sec") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await showSecMenu(bot, chatId, state);
+        return;
+    }
+    if (data === "cfg:sec:add") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.step = "sec_name";
+        saveState(state);
+        const msg = texts(uiLang(state));
+        await replaceStep(bot, chatId, state, msg.secAskName, new InlineKeyboard().text(msg.backMenu, "cfg:cat:sec"));
+        return;
+    }
+    if (data.startsWith("cfg:sec:ask:")) {
+        const id = data.slice("cfg:sec:ask:".length);
+        const sec = listSecrets().find((row) => row.id === id);
+        await ctx.answerCallbackQuery();
+        if (!sec) return;
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        const msg = texts(uiLang(state));
+        const kb = new InlineKeyboard().text(msg.secDeleteYes, `cfg:sec:del:${id}`).row().text(msg.backMenu, "cfg:cat:sec");
+        await replaceStep(bot, chatId, state, fmt(msg.secDeleteConfirm, { name: sec.name }), kb);
+        return;
+    }
+    if (data.startsWith("cfg:sec:del:")) {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        deleteSecret(data.slice("cfg:sec:del:".length));
+        await showSecMenu(bot, chatId, state);
+        return;
+    }
+    if (data === "cfg:cat:eff") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await showEffMenu(bot, chatId, state);
+        return;
+    }
+    if (data === "cfg:eff:ka" || data === "cfg:eff:trigger") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        state.step = "eff_pick";
+        saveState(state);
+        const msg = texts(uiLang(state));
+        if (data === "cfg:eff:ka")
+            await replaceStep(bot, chatId, state, `${msg.effKeepAlive}\n${msg.effKeepAliveDesc}`, keepAlivePickerKeyboard(state));
+        else await replaceStep(bot, chatId, state, msg.effTrigger, triggerPickerKeyboard(state));
+        return;
+    }
+    if (data.startsWith("cfg:eff:kaset:")) {
+        const value = data.slice("cfg:eff:kaset:".length);
+        const preset = value.startsWith("c") ? KEEP_ALIVE_CUSTOM_PRESETS[Number(value.slice(1))] : null;
+        await ctx.answerCallbackQuery();
+        if (value.startsWith("c") && !preset) return;
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await applyConfig({ cacheKeepAlive: preset ? { mode: "custom", ...preset } : { mode: value === "off" ? "off" : "auto" } });
+        await showEffMenu(bot, chatId, state);
+        return;
+    }
+    if (data.startsWith("cfg:eff:trig:")) {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await applyConfig({ contextTriggerPercent: Number(data.slice("cfg:eff:trig:".length)) });
+        await showEffMenu(bot, chatId, state);
+        return;
+    }
+    if (data === "cfg:eff:tog:compress") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await applyConfig({ compressOnModelChange: !getCompressOnModelChange() });
+        await showEffMenu(bot, chatId, state);
+        return;
+    }
+    if (data === "cfg:eff:dismiss") {
+        await ctx.answerCallbackQuery();
+        await deleteMessageSafe(bot, chatId, ctx.callbackQuery?.message?.message_id);
+        return;
+    }
+    if (data === "cfg:eff:compress") {
+        await ctx.answerCallbackQuery();
+        // 모델 변경 직후 띄운 확인 메시지에서 눌렀으면 그 메시지는 치운다.
+        const fromMessageId = ctx.callbackQuery?.message?.message_id;
+        if (fromMessageId && fromMessageId !== state.activeMessageId) await deleteMessageSafe(bot, chatId, fromMessageId);
+        void runSessionCompression(bot, chatId, uiLang(state));
         return;
     }
     if (data === "cfg:cat:si" || data === "cfg:si:back") {
@@ -1615,6 +2059,8 @@ export async function handleConfigWizardCallback(ctx, bot) {
             await startGrokLogin(bot, chatId, state);
         } else if (providerKey === "githubCopilot") {
             await startGithubCopilotLogin(bot, chatId, state);
+        } else if (providerKey === "claude") {
+            await startClaudeLoginFlow(bot, chatId, state);
         } else if (provider.apiKeyOptional) {
             saveState(state);
             await sendModelStep(bot, chatId, state);
@@ -1658,6 +2104,24 @@ export async function handleConfigWizardCallback(ctx, bot) {
         if (grokLoginAbort) grokLoginAbort.abort();
         grokLoginAbort = null;
         delete state.data.grokFlow;
+        saveState(state);
+        const lang = uiLang(state);
+        await replaceStep(bot, chatId, state, texts(lang).provider, providerKeyboard(lang, state));
+        return;
+    }
+
+    if (data === "cfg:claude:retry") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await startClaudeLoginFlow(bot, chatId, state);
+        return;
+    }
+
+    if (data === "cfg:claude:cancel") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        cancelClaudeLogin();
+        state.step = "provider";
         saveState(state);
         const lang = uiLang(state);
         await replaceStep(bot, chatId, state, texts(lang).provider, providerKeyboard(lang, state));
@@ -1808,6 +2272,40 @@ export async function handleConfigWizardText(ctx, bot) {
             await showMenuStep(bot, chatId, state);
             return;
         }
+        case "sec_menu": {
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            await showSecMenu(bot, chatId, state);
+            return;
+        }
+        case "sec_name": {
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            const name = text.replace(/\s+/g, " ").trim().slice(0, 60);
+            if (!name) return;
+            state.data.secretName = name;
+            state.step = "sec_value";
+            saveState(state);
+            await replaceStep(bot, chatId, state, fmt(msg.secAskValue, { name }), new InlineKeyboard().text(msg.backMenu, "cfg:cat:sec"));
+            return;
+        }
+        case "sec_value": {
+            // 값이 담긴 메시지는 채팅에 남기지 않는다. 앞뒤 공백도 값의 일부일 수 있어 원문을 쓴다.
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            const name = state.data.secretName;
+            try {
+                createSecret({ name, value: ctx.message.text });
+                await sendMessageSafe(bot, chatId, fmt(msg.secSaved, { name }));
+            } catch (err) {
+                await sendMessageSafe(bot, chatId, fmt(msg.secFailed, { error: err?.message || err }));
+            }
+            await showSecMenu(bot, chatId, state);
+            return;
+        }
+        case "eff_menu":
+        case "eff_pick": {
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            await showEffMenu(bot, chatId, state);
+            return;
+        }
         case "si_menu":
         case "si_pick": {
             await deleteMessageSafe(bot, chatId, userMessageId);
@@ -1817,6 +2315,19 @@ export async function handleConfigWizardText(ctx, bot) {
         case "language": {
             await deleteMessageSafe(bot, chatId, userMessageId);
             await replaceStep(bot, chatId, state, `${msg.invalid}\n\n${msg.welcome}`, languageKeyboard(uiLang(state)));
+            return;
+        }
+        case "claude_login": {
+            // 인증 코드는 채팅에 남기지 않는다.
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            await replaceStep(bot, chatId, state, msg.claudeLoginChecking);
+            try {
+                await submitClaudeLoginCode(text);
+                // 성공·실패 결과는 startClaudeLogin의 onDone이 이어서 처리한다.
+            } catch (err) {
+                const kb = new InlineKeyboard().text(msg.claudeLoginRetry, "cfg:claude:retry").row().text(msg.claudeLoginCancel, "cfg:claude:cancel");
+                await replaceStep(bot, chatId, state, msg.claudeLoginFailed.replace("{error}", err.message), kb);
+            }
             return;
         }
         case "provider": {

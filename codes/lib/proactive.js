@@ -1,4 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
 import { listAgents, mainAgentRef } from "./agents-store.js";
+import { writeJsonAtomic } from "./atomic-file.js";
+import { USER_DIR } from "./paths.js";
 import { scheduleWork } from "./agent-queue.js";
 import { getProactiveConfig } from "./self-improvement.js";
 import { sessionKeyForAgent } from "./agent-route.js";
@@ -6,29 +10,51 @@ import { defaultTimeZone, isValidTimeZone } from "./scheduling/time.js";
 import { isUserIdle, DEFAULT_IDLE_REQUIRED_MS } from "./user-activity.js";
 
 const TICK_MS = 60_000;
+const STATE_PATH = path.join(USER_DIR, "proactive-state.json");
 
-export const CHECKIN_PROMPT = `This is a proactive check-in — you are reaching out first, not answering a request.
+export const CHECKIN_PROMPT = `This is a proactive check-in. You are reaching out first, not answering a request.
 
 Look for anything the user would actually want to know right now:
 - Open user todos due soon or overdue. If one looks doable by you, is not assigned to anyone, and you have NOT already offered on it (its line shows "you already offered" when you have), offer it with todo_offer. Otherwise remind briefly.
-- Your automations' recent runs — findings the user has not seen yet.
-- Missed promises: anything in memory or recent sessions where you said you would tell the user something later ("I'll let you know at 9", "I'll check tomorrow") but no automation exists for it. These are dropped notifications — surface them now, and create the missing automation with todo_add so it cannot be lost again.
+- Your automations' recent runs: findings the user has not seen yet.
+- Missed promises: anything in memory or recent sessions where you said you would tell the user something later ("I'll let you know at 9", "I'll check tomorrow") but no automation exists for it. These are dropped notifications. Surface them now, and create the missing automation with todo_add so it cannot be lost again.
 - Recent sessions: unanswered questions, open threads, follow-ups left hanging. Use session_search for older context.
-- Missed routines: if your memory's "## Routines" section lists a time-anchored routine whose usual window has fully passed today AND today's activity shows no sign of it (this thread; session_search today's sessions across agents if unsure), you may gently ask once — a light question, never an alarm. Strict limits: only routines explicitly listed there (never infer new ones), at most one routine mention per check-in, never if you already asked about it today (check your recent messages), and when in doubt whether it happened today, stay silent.
+- Missed routines: if your memory's "## Routines" section lists a time-anchored routine whose usual window has fully passed today AND today's activity shows no sign of it (this thread; session_search today's sessions across agents if unsure), you may gently ask once, as a light question and never an alarm. Strict limits: only routines explicitly listed there (never infer new ones), at most one routine mention per check-in, never if you already asked about it today (check your recent messages), and when in doubt whether it happened today, stay silent.
 - Something NEW and time-sensitive: a fresh release, a just-announced event, a deadline that only now became urgent. A static date or fact already sitting in memory is not a finding.
 
 Rules:
 - Speak only when you have something genuinely useful. Lead with the useful part, keep it short, match the user's language.
-- **New to the user, not new to you.** The user is one person across all agents — a fact any agent already surfaced, or one already stored in memory, is not news. Never recite stored schedules, holdings, or dates the user already knows. Unsure whether it was already surfaced? session_search first; still unsure, stay silent.
+- **New to the user, not new to you.** The user is one person across all agents. A fact any agent already surfaced, or one already stored in memory, is not news. Never recite stored schedules, holdings, or dates the user already knows. Unsure whether it was already surfaced? session_search first; still unsure, stay silent.
 - If you notice a recurring "tell me when X" need with no automation yet, create it yourself with todo_add and mention it in one line.
 - Do not repeat yourself: if you or another agent already surfaced something and nothing changed, stay silent.
 - No filler ("just checking in", "how can I help"). Every message must carry information or a concrete suggestion.
-- If nothing qualifies, reply with ONLY __SILENT__ — no preamble, no "nothing new to report", no narrating what you checked. NOT OK: "Nothing new to surface. __SILENT__", "I'll just check todos and times, then move on." The entire reply is the marker or it is a real message — never both.`;
+- If nothing qualifies, reply with ONLY __SILENT__. No preamble, no "nothing new to report", no narrating what you checked. NOT OK: "Nothing new to surface. __SILENT__", "I'll just check todos and times, then move on." The entire reply is the marker or it is a real message, never both.`;
 
 let timer = null;
 let runCheckin = null;
+// 에이전트 id -> 마지막 체크인 시각(ms). 재부팅해도 이어지도록 파일에 남긴다.
+// 메모리에만 두면 재부팅 직후 모든 에이전트가 같은 틱에 한꺼번에 깨어난다.
 const lastRunAt = new Map();
 const inFlight = new Set();
+
+function loadLastRuns() {
+    try {
+        const raw = JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+        for (const [id, at] of Object.entries(raw?.lastRunAt || {})) {
+            if (Number.isFinite(at)) lastRunAt.set(id, at);
+        }
+    } catch (err) {
+        if (err?.code !== "ENOENT") console.error("tabyAgent: invalid proactive-state.json:", err?.message || err);
+    }
+}
+
+function saveLastRuns() {
+    try {
+        writeJsonAtomic(STATE_PATH, { lastRunAt: Object.fromEntries(lastRunAt) });
+    } catch (err) {
+        console.error("tabyAgent: proactive state save failed:", err?.message || err);
+    }
+}
 
 export function setProactiveRunner(fn) {
     runCheckin = fn;
@@ -51,7 +77,7 @@ function proactiveConfig() {
     };
 }
 
-export function proactiveTick(now = new Date()) {
+function proactiveTick(now = new Date()) {
     if (!runCheckin) return { ran: 0, reason: "no_runner" };
     const cfg = proactiveConfig();
     if (!cfg.enabled) return { ran: 0, reason: "disabled" };
@@ -63,21 +89,29 @@ export function proactiveTick(now = new Date()) {
     for (const agent of [mainAgentRef(), ...listAgents()]) {
         const sessionKey = sessionKeyForAgent(agent);
         if (!sessionKey || inFlight.has(agent.id)) continue;
-        const last = lastRunAt.get(agent.id) || 0;
-        if (now.getTime() - last < cfg.intervalMs) continue;
+        // 기록이 없는 에이전트(새로 만들었거나 첫 실행)는 지금을 기준으로 삼아 한 주기 뒤에 첫 체크인을 한다.
+        if (!lastRunAt.has(agent.id)) {
+            lastRunAt.set(agent.id, now.getTime());
+            saveLastRuns();
+        }
+        if (now.getTime() - lastRunAt.get(agent.id) < cfg.intervalMs) continue;
         inFlight.add(agent.id);
         lastRunAt.set(agent.id, now.getTime());
+        saveLastRuns();
         pending.push(
             scheduleWork("proactive", () => runCheckin({ agent, sessionKey }), { sessionKey, cancellable: true })
                 .catch((err) => console.error(`tabyAgent: proactive check-in failed (${agent.id}):`, err?.stack || err))
                 .finally(() => inFlight.delete(agent.id)),
         );
+        // 한 틱에 한 에이전트만 깨운다. 주기가 겹쳐도 모델 호출이 한꺼번에 몰리지 않는다.
+        break;
     }
     return { ran: pending.length, done: Promise.allSettled(pending) };
 }
 
 export function startProactiveScheduler() {
-    // 타이머는 비활성이어도 항상 둔다 — enabled 등 설정은 매 틱 다시 읽어
+    loadLastRuns();
+    // 타이머는 비활성이어도 항상 둔다. enabled 등 설정은 매 틱 다시 읽어
     // 설정 변경이 재시작 없이 반영된다.
     if (!timer) {
         timer = setInterval(() => {

@@ -5,6 +5,7 @@ import { bootstrapBotTokenFromEnv, hasBotToken } from "./lib/readiness.js";
 import { runLegacyMigrations } from "./lib/migrate-legacy.js";
 import { isDockerRuntime } from "./lib/runtime.js";
 import { ensureSession, DISPLAY } from "./lib/computer/display.js";
+import { flushUsageLog } from "./lib/llm/usage-log.js";
 
 const RETRY_MS = 10000;
 
@@ -13,6 +14,7 @@ function sleep(ms) {
 }
 
 async function shutdown() {
+    flushUsageLog();
     await shutdownTools();
     process.exit(0);
 }
@@ -28,14 +30,14 @@ function startSharedDisplay() {
             if (r?.sess) process.env.DISPLAY = `:${r.sess.display}`;
             else if (r?.error) console.warn(`tabyAgent: shared display unavailable: ${r.error}`);
         })
-        .catch(() => {});
+        .catch((err) => console.warn(`tabyAgent: shared display setup failed: ${err?.message || err}`));
 }
 
 async function main() {
     ensureUserDir();
     bootstrapBotTokenFromEnv();
     runLegacyMigrations();
-    await initTools();
+    initTools();
 
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);

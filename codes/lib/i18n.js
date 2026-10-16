@@ -69,6 +69,26 @@ const MESSAGES = {
         ko: "이 질문은 더 이상 유효하지 않습니다.",
         ja: "この質問はもう有効ではありません。",
     },
+    secret_ask_title: {
+        en: "Secret needed: {name}",
+        ko: "시크릿이 필요합니다: {name}",
+        ja: "シークレットが必要です: {name}",
+    },
+    secret_ask_hint: {
+        en: "Send the value as your next message. It is stored in the encrypted vault and your message is deleted right away. The agent only gets a placeholder, never the value.",
+        ko: "다음 메시지로 값을 보내 주세요. 암호화된 금고에 저장되고 보낸 메시지는 바로 지워집니다. 에이전트는 값이 아니라 자리표시자만 받습니다.",
+        ja: "次のメッセージで値を送ってください。暗号化された保管庫に保存され、送ったメッセージはすぐに削除されます。エージェントが受け取るのはプレースホルダーだけで、値は見えません。",
+    },
+    secret_ask_saved: {
+        en: "Saved to the vault: {name}",
+        ko: "금고에 저장했습니다: {name}",
+        ja: "保管庫に保存しました: {name}",
+    },
+    secret_ask_failed: {
+        en: "Could not save the secret. Your message was deleted.",
+        ko: "시크릿을 저장하지 못했습니다. 보낸 메시지는 지웠습니다.",
+        ja: "シークレットを保存できませんでした。送ったメッセージは削除しました。",
+    },
     user_ask_cancelled: {
         en: "Cancelled.",
         ko: "취소됨.",
@@ -338,6 +358,11 @@ const MESSAGES = {
         en: "What's different?",
         ko: "무엇이 다른가요?",
         ja: "何が違いますか？",
+    },
+    sessions_compress_ask: {
+        en: "Model changed. Compress sessions for a clean start?",
+        ko: "모델이 변경되었습니다. 깔끔하게 시작하도록 세션을 압축할까요?",
+        ja: "モデルが変更されました。セッションを圧縮してすっきり始めますか？",
     },
 };
 
