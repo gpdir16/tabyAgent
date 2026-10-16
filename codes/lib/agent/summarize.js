@@ -6,7 +6,16 @@ import {
     getContextLimit,
     getKeepRecentTokenBudget,
 } from "./context.js";
-import { compressedSummaryTurn, loadChatHistory, replaceChatHistoryAfterCompression, turnToMessages } from "./chat-history.js";
+import {
+    compressedSummaryTurn,
+    hasRecoverableChatTurn,
+    listSessionRoots,
+    loadChatHistory,
+    replaceChatHistoryAfterCompression,
+    turnToMessages,
+} from "./chat-history.js";
+import { isAgentSessionRunning } from "./session.js";
+import { createLlmClient } from "../llm/client.js";
 
 const COMPRESS_SYSTEM = `You compress chat transcripts for long-term context storage.
 
@@ -36,7 +45,7 @@ Rules:
 - Same language as the source (Korean stays Korean, etc.).
 - Dense markdown bullets or short paragraphs. No filler, no "summary:" prefix, no preamble.
 - Do NOT invent information that is not in the transcript. If you are unsure, omit it.
-- Earlier compressed summary (if provided above a --- separator) is already trusted context — preserve its facts and refine/extend, never drop them.`;
+- Earlier compressed summary (if provided above a --- separator) is already trusted context. Preserve its facts and refine/extend them, never drop them.`;
 
 const TOOL_OUTPUT_TRIM_THRESHOLD = 600;
 const TOOL_OUTPUT_KEEP_HEAD = 200;
@@ -46,8 +55,8 @@ function buildWithHistory(userMessage, history, opts = {}) {
     return buildInitialMessages(userMessage, { history, ...opts });
 }
 
-function tokenCount(messages, model) {
-    return countMessagesTokens(messages, model);
+function tokenCount(messages) {
+    return countMessagesTokens(messages);
 }
 
 function contentToText(content) {
@@ -92,25 +101,26 @@ function turnToTranscript(turn) {
     return turnToMessages(turn).map(messageToTranscriptLine).filter(Boolean).join("\n\n");
 }
 
-function turnTokens(turn, model) {
-    return countMessagesTokens(turnToMessages(turn), model);
+function turnTokens(turn) {
+    return countMessagesTokens(turnToMessages(turn));
 }
 
-function itemTokens(item, model) {
-    if (item.kind === "user") return countTokens(item.text, model);
-    return turnTokens(item.turn, model);
+function itemTokens(item) {
+    if (item.kind === "user") return countTokens(item.text);
+    return turnTokens(item.turn);
 }
 
-function splitHistoryForCompression(turns, userMessage, model, recentBudget) {
+function splitHistoryForCompression(turns, userMessage, recentBudget) {
     const items = turns.map((turn) => ({ kind: "turn", turn }));
-    items.push({ kind: "user", text: userMessage });
+    // 수동 압축은 진행 중인 유저 메시지가 없으므로 null을 허용한다.
+    if (userMessage != null) items.push({ kind: "user", text: userMessage });
 
     const recentItems = [];
     let used = 0;
     let splitAt = 0;
 
     for (let i = items.length - 1; i >= 0; i--) {
-        const tok = itemTokens(items[i], model);
+        const tok = itemTokens(items[i]);
         if (used + tok > recentBudget && recentItems.length > 0) {
             splitAt = i + 1;
             break;
@@ -200,7 +210,7 @@ function repairToolPairIntegrity(messages) {
     }
 
     // Drop orphan tool results (no surviving assistant tool_call for them).
-    let repaired = messages.filter((m) => !(m.role === "tool" && m.tool_call_id && !survivingCallIds.has(m.tool_call_id)));
+    const repaired = messages.filter((m) => !(m.role === "tool" && m.tool_call_id && !survivingCallIds.has(m.tool_call_id)));
 
     // Insert stub tool results for orphan tool_calls (assistant asked, no answer).
     const patched = [];
@@ -212,7 +222,7 @@ function repairToolPairIntegrity(messages) {
                     patched.push({
                         role: "tool",
                         tool_call_id: tc.id,
-                        content: "[Result from earlier conversation — see context summary above]",
+                        content: "[Result from earlier conversation. See the context summary above]",
                     });
                     resultIds.add(tc.id);
                 }
@@ -227,13 +237,12 @@ async function applyIntelligentCompression(
     llm,
     userMessage,
     fullHistory,
-    model,
     modelMeta,
     attachments = [],
-    { signal, runtimeInfo = {}, chatId = null } = {},
+    { signal, runtimeInfo = {}, chatId = null, archiveReason = "context_compression", excludeMessageIds = [] } = {},
 ) {
     const recentBudget = getKeepRecentTokenBudget(modelMeta);
-    const { oldItems, recentItems } = splitHistoryForCompression(fullHistory, userMessage, model, recentBudget);
+    const { oldItems, recentItems } = splitHistoryForCompression(fullHistory, userMessage, recentBudget);
 
     if (!oldItems.length) {
         return null;
@@ -248,7 +257,7 @@ async function applyIntelligentCompression(
     const latestUser = recentUserMessage(recentItems, userMessage);
 
     if (chatId) {
-        replaceChatHistoryAfterCompression(chatId, recentHistory, summary);
+        replaceChatHistoryAfterCompression(chatId, recentHistory, summary, { reason: archiveReason });
     }
 
     // 디스크에 저장된 요약을 진행 중인 요청에도 그대로 실어야
@@ -258,6 +267,7 @@ async function applyIntelligentCompression(
         modelMeta,
         attachments,
         runtimeInfo,
+        excludeMessageIds,
     });
     return repairToolPairIntegrity(rebuilt);
 }
@@ -266,16 +276,15 @@ export async function ensureWithinContextLimit(
     llm,
     userMessage,
     modelMeta,
-    { chatId, onStatusPhase, attachments = [], session = null, runtimeInfo = {}, history = null } = {},
+    { chatId, onStatusPhase, attachments = [], session = null, runtimeInfo = {}, history = null, excludeMessageIds = [] } = {},
 ) {
     const fullHistory = history ?? (chatId ? loadChatHistory(chatId) : []);
-    const model = llm.provider.model;
     const trigger = getCompressTriggerTokens(modelMeta);
     const hardLimit = getContextLimit(modelMeta);
 
-    const buildOpts = { attachments, modelMeta, runtimeInfo };
+    const buildOpts = { attachments, modelMeta, runtimeInfo, excludeMessageIds };
     let messages = buildWithHistory(userMessage, fullHistory, buildOpts);
-    let tokens = tokenCount(messages, model);
+    let tokens = tokenCount(messages);
 
     if (tokens <= trigger) {
         return { messages, didCompress: false };
@@ -286,7 +295,7 @@ export async function ensureWithinContextLimit(
         maxMemoryChars: 60000,
         ...buildOpts,
     });
-    tokens = tokenCount(messages, model);
+    tokens = tokenCount(messages);
 
     if (tokens <= trigger) {
         return { messages, didCompress: false };
@@ -298,14 +307,15 @@ export async function ensureWithinContextLimit(
             return { messages, didCompress: false };
         }
         onStatusPhase?.("compressing");
-        compressed = await applyIntelligentCompression(llm, userMessage, fullHistory, model, modelMeta, attachments, {
+        compressed = await applyIntelligentCompression(llm, userMessage, fullHistory, modelMeta, attachments, {
             signal: session?.signal,
             runtimeInfo,
             chatId,
+            excludeMessageIds,
         });
         if (compressed) {
             messages = compressed;
-            tokens = tokenCount(messages, model);
+            tokens = tokenCount(messages);
         }
     } catch (err) {
         if (session?.isAborted?.() || err?.name === "AbortError") {
@@ -326,4 +336,53 @@ export async function ensureWithinContextLimit(
         }),
         didCompress: false,
     };
+}
+
+/* ── 수동 세션 압축(설정의 모델 탭 고급 항목) ─────────────────────
+   자동 압축(applyIntelligentCompression)과 같은 함수를 그대로 호출하되
+   트리거만 수동이다. 진행 중인 유저 메시지가 없으므로 null을 넘기고,
+   반환된 재구성 메시지는 진행 중 요청이 없어 버린다. */
+// 세션에 압축할 실제 대화가 있는지. 실행 중/복구 대기/빈 세션은 false.
+function sessionNeedsCompression(chatId) {
+    if (isAgentSessionRunning(chatId) || hasRecoverableChatTurn(chatId)) return false;
+    const turns = loadChatHistory(chatId);
+    return turns.some((t) => (t?.messages || []).some((m) => m?.role !== "system"));
+}
+
+async function compressSessionHistory(llm, chatId) {
+    // 실행 중이거나 복구 대기(pending/interrupted) 턴이 있는 세션은 건드리지 않는다.
+    if (!sessionNeedsCompression(chatId)) return false;
+    const compressed = await applyIntelligentCompression(llm, null, loadChatHistory(chatId), llm.modelMeta, [], {
+        chatId,
+        archiveReason: "manual_compression",
+    });
+    return compressed !== null;
+}
+
+// chatIds를 생략하면 디스크에 있는 모든 텔레그램 세션(메인·토픽)을 압축한다.
+// 반환: { compressed, skipped, failed }. 실행 중/빈 세션은 skipped로 센다.
+// onProgress(done, total): 압축 대상 중 몇 개를 끝냈는지 알린다.
+export async function compressBotSessions(chatIds = null, onProgress = null) {
+    const ids = Array.isArray(chatIds) && chatIds.length ? chatIds : listSessionRoots().map((r) => r.sessionKey);
+    const result = { compressed: 0, skipped: 0, failed: 0 };
+    // 압축할 게 하나도 없으면 모델 클라이언트 자체를 만들지 않는다.
+    const candidates = ids.filter(sessionNeedsCompression);
+    result.skipped = ids.length - candidates.length;
+    if (!candidates.length) return result;
+    let done = 0;
+    onProgress?.(done, candidates.length);
+    // 에이전트별 모델 오버라이드가 없으므로 클라이언트 하나로 모두 요약한다.
+    const llm = await createLlmClient();
+    for (const chatId of candidates) {
+        try {
+            if (await compressSessionHistory(llm, chatId)) result.compressed += 1;
+            else result.skipped += 1;
+        } catch (err) {
+            console.warn(`tabyAgent: manual session compression failed for ${chatId}:`, err?.message || err);
+            result.failed += 1;
+        }
+        done += 1;
+        onProgress?.(done, candidates.length);
+    }
+    return result;
 }

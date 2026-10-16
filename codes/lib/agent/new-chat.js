@@ -2,11 +2,9 @@ import { loadUserConfig } from "../config-loader.js";
 import { runAgent } from "./loop.js";
 import { clearChatHistory, loadChatHistory } from "./chat-history.js";
 import { t } from "../i18n.js";
-import { memoryFilePath } from "../path-labels.js";
 import { agentIdForSessionKey } from "./chat-history.js";
 
 export function memoryFlushPrompt(lang) {
-    const memoryPath = memoryFilePath();
     const prompts = {
         ko: `[시스템 · /new]
 사용자가 새 대화를 시작했습니다. 이전 **활성** 스레드는 이미 새 세션 파일로 교체되었고, 이전 세션 JSON은 \`user/temp/chat-…/sessions/\`에 **보관**되었습니다.
@@ -76,7 +74,7 @@ Do **not** create a skill when none of these apply. One-off questions, greetings
     return prompts[lang] || prompts.en;
 }
 
-export async function handleNewChat(bot, sessionKey) {
+export function handleNewChat(bot, sessionKey) {
     const lang = loadUserConfig().language || "en";
 
     // Snapshot the conversation BEFORE clearing, then rotate to a fresh session immediately.

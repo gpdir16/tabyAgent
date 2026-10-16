@@ -15,7 +15,10 @@ import {
     lastChatTurnMessages,
     listSessionRoots,
     markChatTurnInterrupted,
+    newMessageId,
     prepareChatTurnRecovery,
+    settlePendingUserTurns,
+    userMessageIdsOf,
 } from "./agent/chat-history.js";
 import { handleNewChat } from "./agent/new-chat.js";
 import { TelegramDraftStream } from "./telegram-draft.js";
@@ -37,7 +40,7 @@ import { addUserTodo, handleTodoCallback, sendTodoList } from "./todos/telegram-
 import { setProactiveRunner, CHECKIN_PROMPT, startProactiveScheduler } from "./proactive.js";
 import { startDreamingScheduler } from "./dreaming/scheduler.js";
 import { maybeScheduleSessionReview } from "./dreaming/review.js";
-import { SCHEDULED_TURN_MARKER } from "./tools/todo-tool.js";
+import { SCHEDULED_TURN_MARKER } from "./agent/history/messages.js";
 import { markUserActivity } from "./user-activity.js";
 import { startUpdateScheduler } from "./update/scheduler.js";
 import { sendChatActionSafe, safeTelegramApi, sendMessageSafe } from "./telegram-api.js";
@@ -116,7 +119,15 @@ async function streamReplyEditFallback(bot, route, fullText, stats) {
     await sendTelegramReply(bot, route.chatId, (fullText || "").trim() || "…", stats, telegramThreadOpts(route.threadId));
 }
 
-async function replyWithStreaming(bot, ctx, route, userText, status, { attachments = [], session = null, recoveryBase = null } = {}) {
+// 스트리밍 초안은 메시지마다 다른 id를 쓴다. 대기열에서 이어지는 턴은 원래 업데이트가 없다.
+let draftSeq = 0;
+function nextDraftId(ctx) {
+    draftSeq = (draftSeq + 1) % 1_000_000;
+    return ctx?.update?.update_id ?? 1_000_000_000 + draftSeq;
+}
+
+// run: { turnId, message(턴을 시작시킨 사용자 메시지 또는 null), recoveryBase }
+async function replyWithStreaming(bot, ctx, route, userText, status, { session = null, run }) {
     const agentConfig = loadAgentConfig();
     const rawMode = agentConfig.telegramStreaming ?? "draft";
     const mode = rawMode === "off" || rawMode === "draft" ? rawMode : "off";
@@ -124,7 +135,7 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { attachmen
         console.warn(`tabyAgent: unknown telegramStreaming "${rawMode}", using "off"`);
     }
     const extra = telegramThreadOpts(route.threadId);
-    const saveExtra = { attachments, baseMessages: recoveryBase };
+    const message = run.recoveryBase ? null : run.message;
     const agentOpts = {
         chatId: route.chatId,
         sessionKey: route.sessionKey,
@@ -132,10 +143,12 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { attachmen
         agentId: route.agentId,
         bot,
         session,
-        attachments,
+        attachments: message?.attachments || [],
+        userMessageMeta: message ? { id: message.id, at: message.at } : null,
         onStatusPhase: (phase, detail) => status.setPhase(phase, detail),
-        onCheckpoint: (turnMessages) => checkpointTurn(route.sessionKey, turnMessages, recoveryBase),
+        onCheckpoint: (turnMessages) => checkpointTurn(route.sessionKey, turnMessages, run),
     };
+    const save = (result) => saveChatTurn(route.sessionKey, result, run);
 
     if (mode === "off") {
         const result = await runAgent(userText, agentOpts);
@@ -145,13 +158,12 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { attachmen
         if (!isSilentReply(result)) {
             await sendTelegramReply(bot, route.chatId, result.text, result.stats, extra);
         }
-        saveChatTurn(route.sessionKey, result, saveExtra);
+        save(result);
         return result;
     }
 
     if (mode === "draft") {
-        const draftId = ctx.update.update_id;
-        const draft = new TelegramDraftStream(bot, route.chatId, draftId, extra);
+        const draft = new TelegramDraftStream(bot, route.chatId, nextDraftId(ctx), extra);
 
         const result = await runAgent(userText, {
             ...agentOpts,
@@ -176,7 +188,7 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { attachmen
         await status.completeSuccess();
 
         if (isSilentReply(result)) {
-            saveChatTurn(route.sessionKey, result, saveExtra);
+            save(result);
             return result;
         }
 
@@ -184,13 +196,13 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { attachmen
             await draft.update(finalText);
             const sent = await draft.finalize(result.stats);
             if (sent) {
-                saveChatTurn(route.sessionKey, result, saveExtra);
+                save(result);
                 return result;
             }
         }
 
         await streamReplyEditFallback(bot, route, finalText, result.stats);
-        saveChatTurn(route.sessionKey, result, saveExtra);
+        save(result);
         return result;
     }
 
@@ -202,32 +214,48 @@ async function replyWithStreaming(bot, ctx, route, userText, status, { attachmen
             await streamReplyEditFallback(bot, route, result.text || "…", result.stats);
         }
     }
-    saveChatTurn(route.sessionKey, result, saveExtra);
+    save(result);
     return result;
 }
 
-function checkpointTurn(sessionKey, turnMessages, baseMessages = null) {
+// 이번 턴을 시작시킨 사용자 메시지를 저장용 모양으로 되돌린다.
+// 모델에 보낸 본문은 가공돼 있다(이미지 파트 배열, 시크릿 자리표시자). 그대로 저장하면
+// 세션 파일에 이미지 원문이 들어가고 사용자가 보낸 말과 달라진다.
+function storableTurnMessages(turnMessages, message) {
+    const messages = turnMessages.map((m) => ({ ...m }));
+    const userMessage = message?.id ? messages.find((m) => m?.role === "user" && m.id === message.id) : null;
+    if (!userMessage) {
+        // 시작 메시지가 없는 턴(자동 실행·복구)도 이미지 파트는 텍스트로 줄인다.
+        for (const m of messages) {
+            if (m?.role === "user" && Array.isArray(m.content)) m.content = m.content.find((part) => part?.type === "text")?.text || "";
+        }
+        return messages;
+    }
+    userMessage.content = message.text;
+    if (message.attachments?.length) userMessage.attachments = message.attachments;
+    return messages;
+}
+
+// 이 실행의 기록은 turnId로 찾는다. 위치(마지막 턴)로 찾으면 실행 중에 온 메시지와 뒤섞인다.
+function checkpointTurn(sessionKey, turnMessages, run) {
     try {
-        checkpointChatTurn(sessionKey, turnMessages, { baseMessages });
+        checkpointChatTurn(sessionKey, storableTurnMessages(turnMessages, run.recoveryBase ? null : run.message), {
+            turnId: run.turnId,
+            baseMessages: run.recoveryBase,
+        });
     } catch (err) {
         console.error("Chat checkpoint failed:", err?.stack || err);
     }
 }
 
-function saveChatTurn(sessionKey, result, { attachments = [], baseMessages = null } = {}) {
+function saveChatTurn(sessionKey, result, run) {
     if (!result?.turnMessages?.length) return;
     try {
-        const messages = result.turnMessages.map((message) => ({ ...message }));
-        const userMessage = messages.find((message) => message?.role === "user");
-        if (userMessage && Array.isArray(userMessage.content)) {
-            const textPart = userMessage.content.find((part) => part?.type === "text");
-            userMessage.content = textPart?.text || "";
-        }
-        appendChatTurn(sessionKey, messages, {
+        appendChatTurn(sessionKey, storableTurnMessages(result.turnMessages, run.recoveryBase ? null : run.message), {
+            turnId: run.turnId,
             stats: result.stats,
-            attachments,
             deliveredAttachments: result.deliveredAttachments,
-            baseMessages,
+            baseMessages: run.recoveryBase,
         });
     } catch (err) {
         console.error("Chat history save failed:", err?.stack || err);
@@ -259,6 +287,8 @@ async function deliverAutomationReply(bot, route, text, stats = null) {
 // 사용자 메시지가 아니므로 스트리밍/상태 메시지 없이 돌고, 결과는 호출자가 보낸다.
 async function runAutomatedTurn(bot, route, { userText, todoId = null, quietEmpty = true, automated = true, recoveryBase = null } = {}) {
     const session = beginAgentSession(route.sessionKey, { automated });
+    const run = { turnId: newMessageId(), message: null, recoveryBase };
+    let outcome = "failed";
     try {
         const result = await runAgent(userText, {
             chatId: route.chatId,
@@ -271,17 +301,19 @@ async function runAutomatedTurn(bot, route, { userText, todoId = null, quietEmpt
             todoId,
             onCheckpoint: automated
                 ? undefined // 자동 턴은 중간 체크포인트를 쓰지 않는다 — 무의미 턴이면 통째로 저장을 건너뛴다.
-                : (turnMessages) => checkpointTurn(route.sessionKey, turnMessages, recoveryBase),
+                : (turnMessages) => checkpointTurn(route.sessionKey, turnMessages, run),
         });
+        if (isStoppedByUser(result)) outcome = "stopped";
+        else if (!result?.error || result.error === "silent") outcome = "done";
         const skipPersist = automated && isUnremarkableAutoTurn(result);
         if (!skipPersist) {
-            saveChatTurn(route.sessionKey, result, { baseMessages: recoveryBase });
+            saveChatTurn(route.sessionKey, result, run);
             if (result?.error && !isStoppedByUser(result)) markChatTurnInterrupted(route.sessionKey);
         }
         maybeScheduleSessionReview({ sessionKey: route.sessionKey, agentId: route.agentId, result, automated });
         return result;
     } finally {
-        endAgentSession(route.sessionKey);
+        finishAgentSession(bot, route, session, outcome);
     }
 }
 
@@ -341,7 +373,9 @@ function setAutomationHandlers(bot) {
                 return result;
             } catch (err) {
                 console.error("Todo job error:", err?.stack || err);
-                await deliverAutomationReply(bot, route, `${isJob ? "⏰" : "❌"} ${item.title}: ${err?.message || String(err)}`).catch(() => {});
+                await deliverAutomationReply(bot, route, `${isJob ? "⏰" : "❌"} ${item.title}: ${err?.message || String(err)}`).catch(() => {
+                    // 오류 안내 전송 실패는 무시한다. 원래 오류는 위에서 이미 기록했다.
+                });
                 return { error: err?.message || String(err), silent: true };
             }
         },
@@ -371,7 +405,26 @@ function setAutomationHandlers(bot) {
     });
 }
 
-async function handleAgentTurn(bot, ctx, route, userText, { attachments = [] } = {}) {
+// 턴이 끝날 때 세션을 닫고 남은 대기 메시지를 정리한다.
+// 끝나기 직전에 도착해 이번 실행에 합쳐지지 못한 메시지는 버리지 않고 다음 턴으로 넘긴다.
+// 실패한 턴 뒤에는 잇지 않는다(같은 오류를 되풀이한다). 기록에는 끊긴 턴으로 남아 있다.
+function finishAgentSession(bot, route, session, outcome) {
+    const leftover = session.drainPendingMessages();
+    endAgentSession(route.sessionKey);
+    if (outcome === "stopped") settleStoppedSession(route.sessionKey);
+    else if (outcome === "done" && leftover.length) startUserTurn(bot, null, route, leftover);
+}
+
+// 사용자가 멈춘 대화에 남은 대기 메시지는 다시 실행하지 않고 기록으로만 남긴다.
+function settleStoppedSession(sessionKey) {
+    try {
+        settlePendingUserTurns(sessionKey);
+    } catch (err) {
+        console.error("Pending user turn settle failed:", err?.stack || err);
+    }
+}
+
+async function handleAgentTurn(bot, ctx, route, message) {
     const lang = loadUserConfig().language || "en";
     if (getTopicsEnabled() === true) {
         await refreshTopicsEnabled(bot);
@@ -380,22 +433,29 @@ async function handleAgentTurn(bot, ctx, route, userText, { attachments = [] } =
     const extra = telegramThreadOpts(route.threadId);
     const status = new TelegramStatusMessage(bot, route.chatId, lang, extra);
     const session = beginAgentSession(route.sessionKey);
+    const run = { turnId: newMessageId(), message, recoveryBase: null };
+    // 턴이 어떻게 끝났는지: 남은 대기 메시지를 어떻게 할지 정한다.
+    let outcome = "failed";
 
     try {
         await status.start();
         await sendChatActionSafe(bot, route.chatId, "typing", extra);
 
-        let result = await replyWithStreaming(bot, ctx, route, userText, status, { attachments, session });
-        let recoveryBase = null;
+        let result = await replyWithStreaming(bot, ctx, route, message.text, status, { session, run });
 
         // 첫 실행이 실패로 끝났으면(빈 응답/라운드 초과/에러) 중단된 턴을 정리하고 한 번 이어서 완료한다.
         if (shouldRecover(result)) {
             markChatTurnInterrupted(route.sessionKey);
             if (prepareChatTurnRecovery(route.sessionKey)) {
-                recoveryBase = lastChatTurnMessages(route.sessionKey);
-                result = await replyWithStreaming(bot, ctx, route, RECOVERY_PROMPT, status, { session, recoveryBase });
+                run.recoveryBase = lastChatTurnMessages(route.sessionKey);
+                // 끊긴 턴에 함께 묶인 대기 메시지는 이미 기록으로 모델에 들어간다. 대기열에서 또 넣지 않는다.
+                session.dropPendingMessages(new Set(userMessageIdsOf(run.recoveryBase)));
+                result = await replyWithStreaming(bot, ctx, route, RECOVERY_PROMPT, status, { session, run });
             }
         }
+
+        if (isStoppedByUser(result)) outcome = "stopped";
+        else if (!result?.error || result.error === "silent") outcome = "done";
 
         // 최종 결과도 실패면 턴을 interrupted로 남겨 다음 부팅 복구가 잡는다.
         if (result?.error && !isStoppedByUser(result)) markChatTurnInterrupted(route.sessionKey);
@@ -411,7 +471,7 @@ async function handleAgentTurn(bot, ctx, route, userText, { attachments = [] } =
             await status.completeSuccess();
             const body = result.text?.trim() || t("stopped_by_user", lang);
             await sendTelegramReply(bot, route.chatId, body, result.stats, extra);
-            saveChatTurn(route.sessionKey, result, { baseMessages: recoveryBase });
+            saveChatTurn(route.sessionKey, result, run);
             return result;
         }
 
@@ -426,24 +486,45 @@ async function handleAgentTurn(bot, ctx, route, userText, { attachments = [] } =
         return { error: "agent_turn_failed", text: null };
     } finally {
         status.dispose();
-        endAgentSession(route.sessionKey);
+        finishAgentSession(bot, route, session, outcome);
     }
 }
 
-function tryEnqueueDuringRun(sessionKey, text) {
-    return enqueueAgentMessage(sessionKey, text);
+function newUserMessage(text, attachments = []) {
+    return { id: newMessageId(), text: String(text || "").trim(), attachments, at: new Date().toISOString() };
 }
 
-function dispatchAgentWork(ctx, route, workFn) {
+// 실행 전에 디스크에 기록해 두면 프로세스 크래시가 나도 부팅 복구가 이어 받는다.
+function recordUserMessage(sessionKey, message) {
+    markUserActivity();
+    try {
+        appendPendingUserTurn(sessionKey, message);
+    } catch (err) {
+        console.error("Pending user turn save failed:", err?.stack || err);
+    }
+}
+
+function dispatchAgentWork(bot, route, workFn) {
     const lang = loadUserConfig().language || "en";
     void scheduleWork("user", workFn, { chatId: route.chatId, sessionKey: route.sessionKey, cancellable: true }).catch((err) => {
         console.error("Agent error:", err?.stack || err);
-        void sendMessageSafe(ctx.api, route.chatId, formatAgentError(err, lang), telegramThreadOpts(route.threadId));
+        void sendMessageSafe(bot.api, route.chatId, formatAgentError(err, lang), telegramThreadOpts(route.threadId));
     });
 }
 
-function dispatchAgentTurn(bot, ctx, route, userText, { attachments = [] } = {}) {
-    dispatchAgentWork(ctx, route, () => handleAgentTurn(bot, ctx, route, userText, { attachments }));
+// 사용자 메시지로 새 턴을 예약한다. 첫 메시지가 턴을 시작하고, 나머지는 실행 중에 합쳐 넣는다.
+function startUserTurn(bot, ctx, route, messages) {
+    const [first, ...rest] = messages;
+    dispatchAgentWork(bot, route, () => handleAgentTurn(bot, ctx, route, first));
+    // scheduleWork가 세션을 만들어 두므로, 뒤따르는 메시지는 그 세션의 대기열에 쌓인다.
+    for (const message of rest) enqueueAgentMessage(route.sessionKey, message);
+}
+
+// 사용자 메시지 한 건을 받는다. 실행 중이면 현재 턴에 끼워 넣고(대기열), 아니면 새 턴을 예약한다.
+function dispatchUserMessage(bot, ctx, route, message) {
+    recordUserMessage(route.sessionKey, message);
+    if (enqueueAgentMessage(route.sessionKey, message)) return;
+    startUserTurn(bot, ctx, route, [message]);
 }
 
 async function registerBotCommands(bot) {
@@ -659,7 +740,9 @@ export async function startTelegramBot() {
         }
 
         const stoppedQueued = cancelQueuedAgentWork(route.sessionKey);
-        const stoppedActive = stoppedQueued ? false : requestAgentStop(route.sessionKey);
+        const stoppedActive = requestAgentStop(route.sessionKey);
+        // 실행 중인 턴은 끝나면서 스스로 정리한다. 예약만 돼 있던 턴은 여기서 대기 메시지를 확정한다.
+        if (stoppedQueued && !stoppedActive) settleStoppedSession(route.sessionKey);
         if (stoppedActive || stoppedQueued) {
             await sendMessageSafe(ctx.api, route.chatId, t("stop_requested", lang), telegramThreadOpts(route.threadId));
             return;
@@ -828,36 +911,14 @@ export async function startTelegramBot() {
         }
 
         try {
-            if (isAgentSessionRunning(route.sessionKey)) {
-                const saved = await saveIncomingTelegramFile(ctx);
-                const userText = formatFileUserMessage(saved, { visionAttached: false });
-                markUserActivity();
-                try {
-                    appendPendingUserTurn(route.sessionKey, userText, [saved]);
-                } catch (err) {
-                    console.error("Pending user turn save failed:", err?.stack || err);
-                }
-                if (tryEnqueueDuringRun(route.sessionKey, userText)) {
-                    return;
-                }
+            const saved = await saveIncomingTelegramFile(ctx);
+            // 실행 중인 턴에 합쳐질 때는 그 턴의 모델 호출에 이미지 파트가 붙지 않는다.
+            let visionAttached = false;
+            if (!isAgentSessionRunning(route.sessionKey) && isVisionImageMime(saved?.mimeType)) {
+                const meta = await ensureModelMeta(getMergedProvider(loadUserConfig()));
+                visionAttached = Boolean(meta.supportsVision);
             }
-
-            dispatchAgentWork(ctx, route, async () => {
-                const saved = await saveIncomingTelegramFile(ctx);
-                let visionAttached = false;
-                if (isVisionImageMime(saved?.mimeType)) {
-                    const meta = await ensureModelMeta(getMergedProvider(loadUserConfig()));
-                    visionAttached = Boolean(meta.supportsVision);
-                }
-                const userText = formatFileUserMessage(saved, { visionAttached });
-                markUserActivity();
-                try {
-                    appendPendingUserTurn(route.sessionKey, userText, [saved]);
-                } catch (err) {
-                    console.error("Pending user turn save failed:", err?.stack || err);
-                }
-                return handleAgentTurn(bot, ctx, route, userText, { attachments: [saved] });
-            });
+            dispatchUserMessage(bot, ctx, route, newUserMessage(formatFileUserMessage(saved, { visionAttached }), [saved]));
         } catch (err) {
             console.error("File message error:", err?.stack || err);
             await sendMessageSafe(ctx.api, route.chatId, formatAgentError(err, lang), telegramThreadOpts(route.threadId));
@@ -898,23 +959,12 @@ export async function startTelegramBot() {
         }
 
         // 대기 중인 user_ask가 있으면 이 텍스트를 답변으로 처리하고 에이전트 큐로 보내지 않는다.
-        if (hasPendingAsk(route.sessionKey) && resolvePendingAskByText(route.sessionKey, trimmed)) {
+        if (hasPendingAsk(route.sessionKey) && resolvePendingAskByText(route.sessionKey, text, { messageId: ctx.message?.message_id })) {
             return;
         }
 
         try {
-            markUserActivity();
-            // 실행 전에 디스크에 기록해 두면 프로세스 크래시가 나도 부팅 복구가 이어 받는다.
-            try {
-                appendPendingUserTurn(route.sessionKey, text);
-            } catch (err) {
-                console.error("Pending user turn save failed:", err?.stack || err);
-            }
-            if (tryEnqueueDuringRun(route.sessionKey, text)) {
-                return;
-            }
-
-            dispatchAgentTurn(bot, ctx, route, text);
+            dispatchUserMessage(bot, ctx, route, newUserMessage(text));
         } catch (err) {
             console.error("Agent error:", err?.stack || err);
             await sendMessageSafe(ctx.api, route.chatId, formatAgentError(err, lang), telegramThreadOpts(route.threadId));
