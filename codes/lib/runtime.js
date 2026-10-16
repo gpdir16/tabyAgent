@@ -22,7 +22,7 @@ function shellCommandPrefix(command) {
     return shellQuote(text);
 }
 
-export function isManagedLocalInstall() {
+function isManagedLocalInstall() {
     if (IS_DOCKER) return false;
     const home = resolveManagedInstallHome(process.argv[1], CODES_DIR);
     if (!home) return false;

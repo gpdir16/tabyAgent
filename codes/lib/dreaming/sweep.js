@@ -4,7 +4,7 @@ import { USER_DIR } from "../paths.js";
 import { DEFAULT_AGENT_ID, agentMemoryPath, getAgent, listAgents, mainAgentRef } from "../agents-store.js";
 import { agentIdForSessionKey, extractSessionTextLines, listSessionRoots } from "../agent/chat-history.js";
 import { createLlmClient } from "../llm/client.js";
-import { writeFileAtomic } from "../atomic-file.js";
+import { readJsonFile, writeFileAtomic } from "../atomic-file.js";
 import { getDreamingConfig } from "../self-improvement.js";
 import { appendDreamDiary, dreamBackupDir, loadDreamingState, saveDreamingState } from "./state.js";
 
@@ -16,14 +16,6 @@ const MEMORY_INPUT_CAP = 40000;
 const AGENT_MEMORY_INPUT_CAP = 20000;
 const MAX_SESSION_FILES = 200;
 
-function readJson(filePath) {
-    try {
-        return JSON.parse(fs.readFileSync(filePath, "utf8"));
-    } catch {
-        return null;
-    }
-}
-
 function readText(filePath, cap) {
     try {
         const text = fs.readFileSync(filePath, "utf8");
@@ -33,8 +25,8 @@ function readText(filePath, cap) {
     }
 }
 
-// Light phase — state.ingested의 {mtime, lines, done} 포인터 이후 새 줄만 수집한다.
-export function collectCandidates(state) {
+// Light phase: state.ingested의 {mtime, lines, done} 포인터 이후 새 줄만 수집한다.
+function collectCandidates(state) {
     const candidates = [];
     let scannedFiles = 0;
     let totalChars = 0;
@@ -44,7 +36,7 @@ export function collectCandidates(state) {
     for (const { sessionKey, dir: root } of listSessionRoots()) {
         const ownerId = agentIdForSessionKey(sessionKey);
         const owner = (ownerId && ownerId !== DEFAULT_AGENT_ID && getAgent(ownerId)) || mainAgentRef();
-        const manifest = readJson(path.join(root, "manifest.json"));
+        const manifest = readJsonFile(path.join(root, "manifest.json"));
         if (!manifest?.sessions?.length) continue;
 
         // 캡에 걸릴 때를 대비해 최신 세션부터 본다.
@@ -61,7 +53,7 @@ export function collectCandidates(state) {
             const prev = state.ingested[key];
             if (prev && prev.mtime === mtime && prev.done) continue;
 
-            const data = readJson(filePath);
+            const data = readJsonFile(filePath);
             const lines = extractSessionTextLines(data?.turns);
             const base = prev?.lines || 0;
             const fresh = lines.slice(base);
@@ -98,34 +90,34 @@ export function collectCandidates(state) {
     return { candidates, scannedFiles };
 }
 
-const DEEP_SYSTEM = `You are the memory consolidation pass of a personal AI assistant — a "dream" sweep that runs on a schedule, outside any live conversation.
+const DEEP_SYSTEM = `You are the memory consolidation pass of a personal AI assistant. This is a "dream" sweep that runs on a schedule, outside any live conversation.
 
 You receive:
-1. CURRENT MEMORY — the durable memory files injected into every future session: one shared file for basic user facts, plus one private file per agent.
-2. CANDIDATES — conversation lines produced since the last sweep (user and assistant messages only).
+1. CURRENT MEMORY: the durable memory files injected into every future session: one shared file for basic user facts, plus one private file per agent.
+2. CANDIDATES: conversation lines produced since the last sweep (user and assistant messages only).
 
 Decide which candidates deserve durable memory, then return a JSON object:
-{"ops":[{"op":"add"|"replace"|"remove","target":"shared"|"<agentId>","section":"<heading without ##>","find":"<exact existing substring>","text":"declarative fact","reason":"why"}],"routines":[{"target":"<agentId>","key":"<slug>","text":"<activity> — usually around <HH:MM> local","day":"<YYYY-MM-DD of that candidate>"}],"summary":"<one line>"}
+{"ops":[{"op":"add"|"replace"|"remove","target":"shared"|"<agentId>","section":"<heading without ##>","find":"<exact existing substring>","text":"declarative fact","reason":"why"}],"routines":[{"target":"<agentId>","key":"<slug>","text":"<activity>, usually around <HH:MM> local","day":"<YYYY-MM-DD of that candidate>"}],"summary":"<one line>"}
 
 Rules:
 - Promote only what still matters in a week: stable user facts, preferences, corrections, decisions, durable project context. Skip small talk, one-off task details, anything secret-shaped.
 - Write declarative facts ("User prefers concise replies"), never self-instructions ("Always reply concisely").
 - target "shared" is for basic user facts every agent needs (school, region, occupation, stable communication preferences). An agent's own id targets that agent's private memory (its domain, holdings, watchlists, decisions).
 - Prefer replace/remove over add when a candidate refines or contradicts an existing entry. Merge near-duplicates instead of stacking them.
-- Routines — recurring time-anchored user patterns ("studies Japanese around 21:00"). Two paths:
-  - The user explicitly stated it as a routine → "add" under "## Routines" of the observing agent's memory (never "shared" — every agent would nudge it). Format: "- <activity> — usually around <HH:MM> local".
-  - You only OBSERVED it in candidates → do NOT write memory. Emit it in the top-level "routines" array instead — sightings accumulate across sweeps and auto-promote after 3 separate days.
+- Routines are recurring time-anchored user patterns ("studies Japanese around 21:00"). There are two paths:
+  - If the user explicitly stated it as a routine, "add" it under "## Routines" of the observing agent's memory (never "shared", or every agent would nudge it). Format: "- <activity>, usually around <HH:MM> local".
+  - If you only OBSERVED it in candidates, do NOT write memory. Emit it in the top-level "routines" array instead. Sightings accumulate across sweeps and auto-promote after 3 separate days.
 - Remove "## Routines" entries the user clearly dropped.
-- "add" appends "- <text>" under the "## <section>" heading (created if missing). "replace" and "remove" require "find": a substring that occurs EXACTLY ONCE in the target file — copy it verbatim from CURRENT MEMORY.
+- "add" appends "- <text>" under the "## <section>" heading (created if missing). "replace" and "remove" require "find": a substring that occurs EXACTLY ONCE in the target file. Copy it verbatim from CURRENT MEMORY.
 - Never touch the "## Setup" section.
-- At most {{MAX_OPS}} ops. Zero ops is a valid, common result — do not invent memories to justify the run.
+- At most {{MAX_OPS}} ops. Zero ops is a valid, common result. Do not invent memories to justify the run.
 - Respond with JSON only. No prose, no code fences.`;
 
 function formatMemorySections() {
-    const parts = [`### target "shared" — memory.md\n\n${readText(MEMORY_PATH, MEMORY_INPUT_CAP) || "(empty)"}`];
+    const parts = [`### target "shared" (memory.md)\n\n${readText(MEMORY_PATH, MEMORY_INPUT_CAP) || "(empty)"}`];
     for (const agent of listAgents()) {
         const body = readText(agentMemoryPath(agent.id), AGENT_MEMORY_INPUT_CAP) || "(empty)";
-        parts.push(`### target "${agent.id}" — ${agent.name} private memory\n\n${body}`);
+        parts.push(`### target "${agent.id}" (${agent.name} private memory)\n\n${body}`);
     }
     return parts.join("\n\n");
 }
@@ -134,7 +126,7 @@ function formatCandidates(candidates) {
     return candidates.map((c, i) => `#${i + 1} [${c.agentName}/${c.session} ${c.at || ""}] ${c.role}: ${c.text}`).join("\n\n");
 }
 
-export function parseDecision(text) {
+function parseDecision(text) {
     const trimmed = String(text || "").trim();
     const start = trimmed.indexOf("{");
     const end = trimmed.lastIndexOf("}");
@@ -150,18 +142,17 @@ export function parseDecision(text) {
 function countOccurrences(haystack, needle) {
     if (!needle) return 0;
     let count = 0;
-    let idx = 0;
-    while ((idx = haystack.indexOf(needle, idx)) !== -1) {
+    let idx = haystack.indexOf(needle);
+    while (idx !== -1) {
         count += 1;
-        idx += needle.length;
+        idx = haystack.indexOf(needle, idx + needle.length);
     }
     return count;
 }
 
 function sectionBounds(content, section) {
     const re = /^##\s+(.+?)\s*$/gm;
-    let match;
-    while ((match = re.exec(content))) {
+    for (const match of content.matchAll(re)) {
         const name = match[1].trim().toLowerCase();
         const bodyStart = match.index + match[0].length;
         const next = /^##\s/m.exec(content.slice(bodyStart));
@@ -249,7 +240,7 @@ function backupOnce(backupDir, filePath, label, done) {
     done.add(filePath);
 }
 
-export function applyOps(ops, { maxOps, backupDir, resolveTarget = targetFileFor } = {}) {
+function applyOps(ops, { maxOps, backupDir, resolveTarget = targetFileFor } = {}) {
     const agentsById = new Map(listAgents().map((a) => [a.id, a]));
     const results = [];
     const contents = new Map();
@@ -304,8 +295,8 @@ const ROUTINE_PROMOTE_DAYS = 3;
 const ROUTINE_PROMOTE_CAP = 2;
 
 // 관찰된 루틴 신호를 스윕 간에 누적한다. LLM은 신호만 보내고,
-// 날짜 수 세기와 승격은 코드가 한다 — 뇌는 판단, 손은 적용.
-export function accumulateRoutines(routines, state, { backupDir, diary = [] } = {}) {
+// 날짜 수 세기와 승격은 코드가 한다. 뇌는 판단, 손은 적용.
+function accumulateRoutines(routines, state, { backupDir, diary = [] } = {}) {
     state.routineWatch = state.routineWatch || {};
     const now = Date.now();
     const agents = new Set([DEFAULT_AGENT_ID, ...listAgents().map((a) => a.id)]);
@@ -325,7 +316,8 @@ export function accumulateRoutines(routines, state, { backupDir, diary = [] } = 
         if (!agents.has(target) || !key || !day || !text) continue;
 
         const watchKey = `${target}/${key}`;
-        const entry = (state.routineWatch[watchKey] ||= { days: [], text, lastSeen: 0 });
+        state.routineWatch[watchKey] ??= { days: [], text, lastSeen: 0 };
+        const entry = state.routineWatch[watchKey];
         if (!Array.isArray(entry.days)) entry.days = [];
         entry.text = text;
         entry.lastSeen = now;
@@ -333,8 +325,10 @@ export function accumulateRoutines(routines, state, { backupDir, diary = [] } = 
         if (entry.days.length < ROUTINE_PROMOTE_DAYS) continue;
 
         const memText = readText(targetFileFor(target).filePath, AGENT_MEMORY_INPUT_CAP).toLowerCase();
+        // 루틴 문구는 "<활동>, usually around <시각> local" 형식이다. 예전에 기록된 항목은
+        // "<활동> — usually around …"처럼 줄표로 나뉘어 있으므로 두 형식을 모두 읽는다.
         const activity = entry.text
-            .split("—")[0]
+            .split(/\s+—\s+|,\s+usually around\b/)[0]
             .replace(/^[-*]\s+/, "")
             .trim()
             .toLowerCase();
@@ -377,7 +371,7 @@ export function accumulateRoutines(routines, state, { backupDir, diary = [] } = 
 function describeOp(op) {
     const target = String(op.target || "shared");
     const what = op.op === "add" ? `"${normalizeFactText(op.text).slice(0, 80)}"` : `"${String(op.find || "").slice(0, 60)}"`;
-    return `${op.op} → ${target}${op.section ? `/${op.section}` : ""} ${what}`;
+    return `${op.op} on ${target}${op.section ? `/${op.section}` : ""} ${what}`;
 }
 
 export async function runDreamSweep({ trigger = "cron" } = {}) {
@@ -388,7 +382,7 @@ export async function runDreamSweep({ trigger = "cron" } = {}) {
     const { candidates, scannedFiles } = collectCandidates(state);
 
     const diary = [`## ${now.toISOString()} sweep (${trigger})`];
-    diary.push(`- Scanned ${scannedFiles} session file(s) → ${candidates.length} candidate line(s)`);
+    diary.push(`- Scanned ${scannedFiles} session file(s) and found ${candidates.length} candidate line(s)`);
 
     if (!candidates.length) {
         state.lastSweepAt = now.toISOString();
@@ -413,7 +407,7 @@ export async function runDreamSweep({ trigger = "cron" } = {}) {
         });
         decision = parseDecision(response.choices?.[0]?.message?.content);
     } catch (err) {
-        // ingested 포인터를 저장하지 않는다 — 다음 스윕이 같은 후보를 다시 본다.
+        // ingested 포인터를 저장하지 않는다. 다음 스윕이 같은 후보를 다시 본다.
         diary.push(`- Consolidation call failed: ${err?.message || err}. Will retry next sweep.`);
         appendDreamDiary(diary.join("\n"));
         console.error("tabyAgent: dream sweep consolidation failed:", err?.message || err);
@@ -426,7 +420,7 @@ export async function runDreamSweep({ trigger = "cron" } = {}) {
 
     for (const r of results) {
         diary.push(
-            `- ${r.ok ? "applied" : "rejected"} ${describeOp(r.op)} — ${r.ok ? r.detail : `rejected: ${r.detail}`}${r.op?.reason ? ` (${r.op.reason})` : ""}`,
+            `- ${r.ok ? "applied" : "rejected"} ${describeOp(r.op)}: ${r.ok ? r.detail : `rejected: ${r.detail}`}${r.op?.reason ? ` (${r.op.reason})` : ""}`,
         );
     }
     accumulateRoutines(decision.routines, state, { backupDir, diary });
@@ -436,6 +430,6 @@ export async function runDreamSweep({ trigger = "cron" } = {}) {
     state.lastSweepAt = now.toISOString();
     saveDreamingState(state);
     appendDreamDiary(diary.join("\n"));
-    console.log(`tabyAgent: dream sweep done — ${candidates.length} candidates, ${applied} op(s) applied`);
+    console.log(`tabyAgent: dream sweep done. ${candidates.length} candidates, ${applied} op(s) applied`);
     return { ok: true, candidates: candidates.length, applied };
 }

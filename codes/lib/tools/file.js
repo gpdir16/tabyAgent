@@ -3,14 +3,15 @@ import { writeFileAtomic } from "../atomic-file.js";
 import { countMessagesTokens, countTokens, getContextWindow } from "../agent/context.js";
 import { resolveAgentPath } from "../paths.js";
 import { filePathParamDescription, filePatchDescription, fileReadDescription } from "../path-labels.js";
+import { isSecretStorePath } from "../secrets/store.js";
 
 function resolveFilePath(rawPath) {
     return resolveAgentPath(rawPath);
 }
 
-function getMaxFileReadTokens(messages, modelMeta, model) {
+function getMaxFileReadTokens(messages, modelMeta) {
     const window = getContextWindow(modelMeta);
-    const used = countMessagesTokens(messages || [], model);
+    const used = countMessagesTokens(messages || []);
     const remaining = Math.max(0, window - used);
     const half = Math.floor(remaining * 0.5);
     return Math.max(0, half - 1);
@@ -48,7 +49,7 @@ function sliceByLineRange(lines, startLine, endLine) {
     return { start, end, slice: lines.slice(start - 1, end) };
 }
 
-function truncateToTokenBudget(text, maxTokens, model) {
+function truncateToTokenBudget(text, maxTokens) {
     if (maxTokens <= 0) {
         return { text: "", tokens: 0, truncated: true };
     }
@@ -58,13 +59,13 @@ function truncateToTokenBudget(text, maxTokens, model) {
     while (lo < hi) {
         const mid = Math.ceil((lo + hi) / 2);
         const chunk = lines.slice(0, mid).join("\n");
-        if (countTokens(chunk, model) <= maxTokens) lo = mid;
+        if (countTokens(chunk) <= maxTokens) lo = mid;
         else hi = mid - 1;
     }
     const kept = lines.slice(0, lo).join("\n");
     return {
         text: kept,
-        tokens: countTokens(kept, model),
+        tokens: countTokens(kept),
         truncated: lo < lines.length,
     };
 }
@@ -126,9 +127,10 @@ function recordFileSnapshot(ctx, resolvedPath, content) {
     ctx.fileSnapshots?.set(resolvedPath, content);
 }
 
-export async function executeFileRead(args, ctx) {
+export function executeFileRead(args, ctx) {
     const resolved = resolveFilePath(args?.path);
     if (!resolved) return { error: "path is required" };
+    if (isSecretStorePath(resolved)) return { error: "The secret vault files are off limits. Use {{secret:NAME}} placeholders instead." };
     if (!fs.existsSync(resolved)) return { error: "file not found", path: resolved };
     const stat = fs.statSync(resolved);
     if (!stat.isFile()) return { error: "not a file", path: resolved };
@@ -139,8 +141,7 @@ export async function executeFileRead(args, ctx) {
         };
     }
 
-    const model = ctx.model || "gpt-4o-mini";
-    const maxTokens = getMaxFileReadTokens(ctx.messages, ctx.modelMeta, model);
+    const maxTokens = getMaxFileReadTokens(ctx.messages, ctx.modelMeta);
     if (maxTokens <= 0) {
         return {
             error: "No context budget left for file_read (must stay under 50% of remaining window)",
@@ -157,7 +158,7 @@ export async function executeFileRead(args, ctx) {
         endLine = limit;
     }
 
-    // Re-read dedup — same path + range + mtime within one turn returns a stub.
+    // Re-read dedup. Same path + range + mtime within one turn returns a stub.
     const cacheKey = `${resolved}:${startLine ?? 1}:${endLine ?? "end"}:${stat.mtimeMs}`;
     if (fileReadCache.has(cacheKey)) {
         const prev = fileReadCache.get(cacheKey);
@@ -166,7 +167,7 @@ export async function executeFileRead(args, ctx) {
             startLine: prev.start,
             endLine: prev.end,
             totalLines: prev.totalLines,
-            content: `[Already read in this turn — content suppressed to save context. Re-read with a different startLine/endLine if you need it again, or use the previous result.]`,
+            content: `[Already read in this turn. Content suppressed to save context. Re-read with a different startLine/endLine if you need it again, or use the previous result.]`,
             deduped: true,
         };
     }
@@ -193,7 +194,7 @@ export async function executeFileRead(args, ctx) {
     const { start, end, slice } = sliceByLineRange(lines, requestedStart, requestedEnd);
     const joined = formatLineNumbered(slice, start);
 
-    const { text, tokens, truncated } = truncateToTokenBudget(joined, maxTokens, model);
+    const { text, tokens, truncated } = truncateToTokenBudget(joined, maxTokens);
     const returnedLineCount = text ? text.split("\n").length : 0;
 
     const notes = [];
@@ -256,15 +257,16 @@ function applyHunk(fileLines, hunk, offset = 0) {
     const startPos = hunk.oldStart - 1 + offset;
     const oldSlice = result.slice(startPos, startPos + hunk.oldCount);
     if (oldSlice.join("\n") !== oldLines.join("\n")) {
-        return { ok: false, error: "Context mismatch — file changed since last read. Re-read the file first." };
+        return { ok: false, error: "Context mismatch. The file changed since the last read. Re-read the file first." };
     }
     result.splice(startPos, hunk.oldCount, ...newLines);
     return { ok: true, result, offset: offset + newLines.length - hunk.oldCount };
 }
 
-export async function executeFilePatch(args, ctx = {}) {
+export function executeFilePatch(args, ctx = {}) {
     const resolved = resolveFilePath(args?.path);
     if (!resolved) return { error: "path is required" };
+    if (isSecretStorePath(resolved)) return { error: "The secret vault files are off limits. Use {{secret:NAME}} placeholders instead." };
     if (!fs.existsSync(resolved)) return { error: "file not found", path: resolved };
 
     const stat = fs.statSync(resolved);

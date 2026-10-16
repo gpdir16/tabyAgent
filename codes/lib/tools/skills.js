@@ -8,7 +8,7 @@ export const skillsToolDefinitions = [
         function: {
             name: "skills_read",
             description:
-                "Read SKILL.md by skill name. Built-in (codes) wins over user copy with the same name. The skill catalog is already in the system prompt — use this when you need the full playbook.",
+                "Read SKILL.md by skill name. Built-in (codes) wins over user copy with the same name. The skill catalog is already in the system prompt. Use this when you need the full playbook.",
             parameters: {
                 type: "object",
                 properties: {
@@ -20,7 +20,7 @@ export const skillsToolDefinitions = [
     },
 ];
 
-export async function executeSkillsTool(name, args) {
+export function executeSkillsTool(name, args) {
     if (name === "skills_read") {
         const skillName = args?.name?.trim();
         if (!skillName) return { error: "name is required" };

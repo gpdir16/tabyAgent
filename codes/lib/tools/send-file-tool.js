@@ -29,7 +29,7 @@ export async function executeSendFileTool(_name, args, ctx) {
     }
     const filePath = resolveAgentPath(raw);
     if (!filePath) return { error: "path is required" };
-    return sendTelegramFile(ctx.bot, ctx.chatId, filePath, {
+    return await sendTelegramFile(ctx.bot, ctx.chatId, filePath, {
         caption: args?.caption,
         ...telegramThreadOpts(ctx.threadId),
     });

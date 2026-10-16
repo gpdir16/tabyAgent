@@ -401,7 +401,9 @@ function collectConvEntries(srcRoot) {
                     entries.push({ id, file: `sessions/${name}`, kind: "archived", _root: srcRoot, _origin: tag(id) });
                 }
             }
-        } catch {}
+        } catch {
+            // 읽을 수 없는 항목은 건너뛴다.
+        }
     }
     return { manifest, entries };
 }
@@ -444,7 +446,9 @@ function mergeConversationDirs(srcRoots, dstRoot, srcUserDir, dstUserDir, backup
             const m = /^s(\d+)\.json$/.exec(name);
             if (m) seq = Math.max(seq, Number(m[1]));
         }
-    } catch {}
+    } catch {
+        // 읽을 수 없는 항목은 건너뛴다.
+    }
 
     // 같은 소스 id가 다른 채팅 디렉터리에 반복될 수 있으므로 (root, id) 쌍으로 리매핑한다.
     // 이전 실행에서 이미 옮긴 세션은 idMap에 없으므로 migratedFrom 태그로 역조회한다.
@@ -520,7 +524,9 @@ function migrateSessions(srcDir, dstDir, agentUuidForSessionKey, report, backups
     let names = [];
     try {
         names = fs.readdirSync(tempDir);
-    } catch {}
+    } catch {
+        // 읽을 수 없는 항목은 건너뛴다.
+    }
     for (const name of names) {
         if (!name.startsWith("chat-")) continue;
         const dir = path.join(tempDir, name);

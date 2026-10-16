@@ -14,7 +14,7 @@ export const vizToolDefinitions = [
         function: {
             name: "viz_create",
             description:
-                "Generate an interactive visualization HTML file from a template. Provide a template type and a JSON config object — the tool injects the config into the template engine and writes a ready-to-deploy HTML file. Returns the output path. Then deploy with `terminal_run` using `wrangler deploy --temporary`.",
+                "Generate an interactive visualization HTML file from a template. Provide a template type and a JSON config object. The tool injects the config into the template engine and writes a ready-to-deploy HTML file. Returns the output path. Then deploy with `terminal_run` using `wrangler deploy --temporary`.",
             parameters: {
                 type: "object",
                 properties: {
@@ -103,7 +103,7 @@ const VALIDATORS = {
     "decision-tree": validateDecisionTreeConfig,
 };
 
-export async function executeVizTool(name, args) {
+export function executeVizTool(name, args) {
     if (name !== "viz_create") return { error: `Unknown viz tool: ${name}` };
 
     const template = args?.template;

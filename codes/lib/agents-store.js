@@ -150,7 +150,7 @@ export function slugifyAgentId(name, existingIds = []) {
         .replace(/^-+|-+$/g, "")
         .slice(0, MAX_ID);
 
-    let base = ascii || "agent";
+    const base = ascii || "agent";
 
     const used = new Set(existingIds);
     if (!used.has(base)) return base;
@@ -277,7 +277,11 @@ export function removeAgent(id) {
     saveAgentsStore(store);
     moveDirAside(agentHomeDir(id));
     // 에이전트의 자동화/인계 항목도 같이 정리한다 (순환 import 회피를 위해 지연 로드).
-    import("./todos/store.js").then((m) => m.purgeAgentTodos(id)).catch(() => {});
+    import("./todos/store.js")
+        .then((m) => m.purgeAgentTodos(id))
+        .catch(() => {
+            // 정리에 실패해도 에이전트 삭제는 이미 끝났다. 남은 항목은 스케줄러가 건너뛴다.
+        });
     return { agent: removed };
 }
 
@@ -287,7 +291,7 @@ export function formatPeerAgentsForPrompt(currentId = DEFAULT_AGENT_ID) {
         lines.push(`- **${DEFAULT_AGENT_NAME}** (\`${DEFAULT_AGENT_ID}\`) — default assistant`);
     }
     for (const a of listAgents().filter((agent) => agent.id !== currentId)) {
-        const role = a.persona ? ` — ${a.persona}` : "";
+        const role = a.persona ? `: ${a.persona}` : "";
         lines.push(`- **${a.name}** (\`${a.id}\`)${role}`);
     }
     return lines.join("\n");

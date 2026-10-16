@@ -15,7 +15,7 @@ export const sessionSearchToolDefinitions = [
         function: {
             name: "session_search",
             description:
-                "Search every archived session transcript (all agents) by keyword or regex. Returns matching user/assistant lines with session file paths — follow up with file_read on a hit for full context. Only conversation text is searched, not tool outputs.",
+                "Search every archived session transcript (all agents) by keyword or regex. Returns matching user/assistant lines with session file paths. Follow up with file_read on a hit for full context. Only conversation text is searched, not tool outputs.",
             parameters: {
                 type: "object",
                 properties: {
@@ -45,7 +45,7 @@ function snippetAround(text, idx, queryLen) {
     return `${start > 0 ? "…" : ""}${text.slice(start, end).replace(/\s+/g, " ")}${end < text.length ? "…" : ""}`;
 }
 
-export async function executeSessionSearchTool(name, args) {
+export function executeSessionSearchTool(name, args) {
     if (name !== "session_search") return { error: `Unknown tool: ${name}` };
 
     const query = String(args?.query || "").trim();

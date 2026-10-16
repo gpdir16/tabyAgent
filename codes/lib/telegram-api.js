@@ -233,19 +233,19 @@ export async function sendMessageSafe(bot, chatId, text, opts = {}) {
 export async function createForumTopicSafe(bot, chatId, name, extra = {}) {
     const api = bot?.api || bot;
     if (!api || !chatId || !name) return { ok: false, error: "missing chat or name" };
-    return safeTelegramApi(() => api.createForumTopic(chatId, name, extra));
+    return await safeTelegramApi(() => api.createForumTopic(chatId, name, extra));
 }
 
 export async function deleteForumTopicSafe(bot, chatId, threadId) {
     const api = bot?.api || bot;
     if (!api || !chatId || !threadId) return { ok: false, error: "missing chat or thread" };
-    return safeTelegramApi(() => api.deleteForumTopic(chatId, threadId));
+    return await safeTelegramApi(() => api.deleteForumTopic(chatId, threadId));
 }
 
 export async function editForumTopicSafe(bot, chatId, threadId, extra = {}) {
     const api = bot?.api || bot;
     if (!api || !chatId || !threadId) return { ok: false, error: "missing chat or thread" };
-    return safeTelegramApi(() => api.editForumTopic(chatId, threadId, extra));
+    return await safeTelegramApi(() => api.editForumTopic(chatId, threadId, extra));
 }
 
 export async function sendPhotoSafe(bot, chatId, input, opts = {}) {

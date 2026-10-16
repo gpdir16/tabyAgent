@@ -74,7 +74,7 @@ export function mcpConfigEditHint(serverName) {
     return `MCP server not connected: ${serverName}. Edit \`${mcpConfigPath()}\`; it loads on the next message.`;
 }
 
-export function buildSkillContentVars() {
+function buildSkillContentVars() {
     return {
         USER_DIR,
         CODES_DIR,
@@ -112,7 +112,7 @@ export function renderSkillContent(text) {
     if (typeof text !== "string" || !text) return text;
     const vars = skillContentVars();
     let out = text.replace(/\{\{([A-Z][A-Z0-9_]*)\}\}/g, (match, key) => {
-        if (!Object.prototype.hasOwnProperty.call(vars, key)) return match;
+        if (!Object.hasOwn(vars, key)) return match;
         return String(vars[key]);
     });
     for (const [legacy, resolve] of LEGACY_SKILL_PATHS) {
