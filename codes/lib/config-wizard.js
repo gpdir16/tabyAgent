@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { InlineKeyboard } from "grammy";
 import { USER_DIR } from "./paths.js";
-import { getMergedProvider, loadUserConfig, saveUserConfig, loadProviderConfig } from "./config-loader.js";
+import { getMergedProvider, loadUserConfig, saveUserConfig } from "./config-loader.js";
 import { claimOwnerIfNone, hasOwner, isApproved, issuePendingCode } from "./auth.js";
 import { t } from "./i18n.js";
 import { getApproveCliHint } from "./runtime.js";
@@ -12,6 +12,7 @@ import { restartUpdateScheduler } from "./update/scheduler.js";
 import { startDreamingScheduler } from "./dreaming/scheduler.js";
 import { applySelfImprovementPatch, getDreamingConfig, getProactiveConfig, getReviewConfig } from "./self-improvement.js";
 import { isValidTimeZone } from "./scheduling/time.js";
+import { applyConfiguredTimeZone } from "./process-timezone.js";
 import { maybeSendMigrateNotice } from "./migrate-tabybot.js";
 import { clearCodexTokens, startDeviceFlow, pollDeviceFlow } from "./llm/codex-tokens.js";
 import { clearGrokTokens, startGrokDeviceFlow, pollGrokDeviceFlow } from "./llm/grok-tokens.js";
@@ -21,6 +22,7 @@ import { fetchGithubCopilotModels } from "./llm/github-copilot-client.js";
 import { getClaudeAuthStatus } from "./llm/claude-agent-client.js";
 import { cancelClaudeLogin, startClaudeLogin, submitClaudeLoginCode } from "./llm/claude-login.js";
 import { cacheKeepAliveSummary, normalizeCacheKeepAlive } from "./llm/cache-keepalive.js";
+import { defaultPreset } from "./model-presets.js";
 import { usageSummary } from "./llm/usage-log.js";
 import { createSecret, deleteSecret, listSecrets } from "./secrets/store.js";
 import { compressBotSessions } from "./agent/summarize.js";
@@ -56,6 +58,7 @@ const PROVIDERS = {
     zenmux: { id: "zenmux", label: "ZenMux" },
     upstage: { id: "upstage", label: "Upstage" },
     orcarouter: { id: "orcarouter", label: "OrcaRouter" },
+    opencodeGo: { id: "opencode-go", label: "OpenCode Go" },
     codex: { id: "codex", label: "Codex OAuth (ChatGPT Plus/Pro)", apiKeyOptional: true },
     grok: { id: "grok", label: "Grok OAuth", apiKeyOptional: true },
     githubCopilot: { id: "github-copilot", label: "GitHub Copilot OAuth", apiKeyOptional: true },
@@ -133,15 +136,14 @@ async function replaceStep(bot, chatId, state, text, keyboard) {
 export function isConfigReady() {
     const config = loadUserConfig();
     if (!config.telegram?.botToken?.trim()) return false;
-    if (!config.provider?.model?.trim()) return false;
-    const pid = config.provider?.id || "default";
     try {
-        const p = loadProviderConfig(pid);
-        if (p.apiKeyOptional) return true;
+        // 기본 모델 프리셋이 쓸 수 있는 상태인지 본다.
+        const provider = getMergedProvider(config);
+        if (!provider.model) return false;
+        return Boolean(provider.apiKey?.trim() || provider.apiKeyOptional);
     } catch {
-        // unknown provider — require apiKey
+        return false;
     }
-    return Boolean(config.provider?.apiKey?.trim());
 }
 
 export function bootstrapBotTokenFromEnv() {
@@ -209,10 +211,11 @@ function applyConfig(partial) {
     // 캐시 유지는 지금 프로바이더에 대해 따로 둔다. 자동이 기본이라 끔이나 사용자 지정만 적는다.
     if (partial.cacheKeepAlive !== undefined) {
         const pid = config.provider?.id || "default";
+        const presetUid = getMergedProvider(config).presetUid || pid;
         config.cacheKeepAlive = { ...config.cacheKeepAlive };
         const value = normalizeCacheKeepAlive(partial.cacheKeepAlive);
-        if (value) config.cacheKeepAlive[pid] = value;
-        else delete config.cacheKeepAlive[pid];
+        if (value) config.cacheKeepAlive[presetUid] = value;
+        else delete config.cacheKeepAlive[presetUid];
         if (!Object.keys(config.cacheKeepAlive).length) delete config.cacheKeepAlive;
     }
     if (partial.timezone !== undefined) {
@@ -228,7 +231,10 @@ function applyConfig(partial) {
         else console.warn(`tabyAgent: selfImprovement patch rejected: ${err}`);
     }
 
+    // 모델 프리셋이 있는 설정은 그 기본 프리셋의 값도 함께 맞춘다.
+    if (Array.isArray(config.modelPresets) && config.modelPresets.length) defaultPreset(config).thinkingLevel = config.thinkingLevel;
     saveUserConfig(config);
+    if (partial.timezone !== undefined) applyConfiguredTimeZone(config.timezone);
     // proactive는 매 틱 설정을 다시 읽으므로 재시작 불필요. dreaming 크론은 재등록이 필요하다(시간대 포함).
     if (selfImprovementChanged || partial.timezone !== undefined) startDreamingScheduler();
 }

@@ -1,4 +1,4 @@
-import { loadUserConfig, loadProviderConfig } from "./config-loader.js";
+import { loadProviderConfig } from "./config-loader.js";
 
 const LABELS = {
     en: { off: "Off", none: "None", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh", max: "Max" },
@@ -41,11 +41,6 @@ export function normalizeThinkingLevel(value, providerIdOrMeta) {
     if (!meta.levels.length) return v;
     if (meta.levels.includes(v)) return v;
     return meta.defaultLevel;
-}
-
-export function getThinkingLevelForUser(config = loadUserConfig()) {
-    const pid = config.provider?.id || "default";
-    return normalizeThinkingLevel(config.thinkingLevel ?? config.reasoningEffort, pid);
 }
 
 export function getProviderThinkingMeta(providerId) {

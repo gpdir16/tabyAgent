@@ -1,18 +1,24 @@
 import { getMergedProvider, loadAgentConfig, loadUserConfig } from "../config-loader.js";
 import { createLlmClient } from "../llm/client.js";
-import { assistantMessageToPlain } from "../llm/messages.js";
+import { assistantMessageToPlain, stripReasoning } from "../llm/messages.js";
 import { executeTool, getAllToolDefinitions, toolResultContent } from "./tool-registry.js";
 import { buildToolResultContent } from "../llm/vision.js";
 import { extractTurnMessages } from "./chat-history.js";
 import { ensureWithinContextLimit } from "./summarize.js";
 import { clearFileReadCache } from "../tools/file.js";
-import { countMessagesTokens } from "./context.js";
+import { countMessagesTokens, countRequestTokens, countTokens } from "./context.js";
+import { learnTokenScale } from "../llm/token-estimate.js";
 import { DEFAULT_AGENT_ID } from "../agents-store.js";
-import { buildQueuedUserMessage } from "./history/messages.js";
-import { EMPTY_REPLY_HINT, QUIET_EMPTY_HINT } from "./session.js";
+import { buildPendingUserMessages } from "./history/messages.js";
+import { EMPTY_REPLY_HINT, QUIET_EMPTY_HINT, SILENT_TO_USER_HINT } from "./session.js";
+import { purgeOnceSecrets } from "./user-ask.js";
 
 const SILENT_REPLY_TOKEN = "__SILENT__";
 const TOOL_BUDGET_ERROR = { error: "Tool call budget exceeded for this turn." };
+const USER_STEERED_RESULT = {
+    ok: false,
+    error: "Not run: the user sent a new message. Read it first, then run this again only if it is still needed.",
+};
 const EMPTY_STATS = { toolCallCount: 0, modelCallCount: 0, tokensUsed: 0, contextWindow: 128000 };
 
 function parseToolArgs(raw) {
@@ -24,7 +30,18 @@ function parseToolArgs(raw) {
 }
 
 function providerKey(provider) {
-    return [provider.id, provider.type, provider.baseURL, provider.model, provider.autoMode, ...(provider.autoModelCandidates || [])].join("\u0000");
+    return [
+        provider.presetUid || "",
+        provider.profileUid || "",
+        provider.id,
+        provider.type,
+        provider.baseURL,
+        provider.model,
+        provider.autoMode,
+        provider.thinkingLevel || "",
+        provider.openRouterPins?.[provider.model] || "",
+        ...(provider.autoModelCandidates || []),
+    ].join("\u0000");
 }
 
 function deliveredAttachmentsFromMessages(messages) {
@@ -69,7 +86,20 @@ function buildToolImageObservation(result, { visionEnabled = false } = {}) {
 // 한 턴의 진행 상태. 메시지 목록·호출 횟수·중단 여부 같은 값을 묶어 두고,
 // 결과 만들기·체크포인트·빈 답변 복구를 메서드로 처리한다.
 class AgentTurn {
-    constructor({ llm, messages, contextBaseLength, session, setStatus, onTextDelta, onCheckpoint, quietEmpty, maxEmptyReplyRetries, cacheKey }) {
+    constructor({
+        llm,
+        messages,
+        contextBaseLength,
+        session,
+        setStatus,
+        onTextDelta,
+        onCheckpoint,
+        quietEmpty,
+        silenceHint,
+        maxEmptyReplyRetries,
+        cacheKey,
+        toolTokens,
+    }) {
         this.llm = llm;
         this.cacheKey = cacheKey || null;
         this.inputTokens = 0;
@@ -81,10 +111,15 @@ class AgentTurn {
         this.onTextDelta = onTextDelta;
         this.onCheckpoint = onCheckpoint;
         this.quietEmpty = quietEmpty;
+        // 침묵을 되돌릴 때 붙이는 안내. 그룹 방에서는 누가 불렀는지에 맞춰 바꾼다.
+        this.silenceHint = silenceHint || SILENT_TO_USER_HINT;
         this.maxEmptyReplyRetries = maxEmptyReplyRetries;
         this.toolCallCount = 0;
         this.modelCallCount = 0;
         this.partialText = null; // 스트리밍 중 지금까지 받은 본문. 중단되면 이것을 돌려준다.
+        this.toolTokens = toolTokens || 0; // 도구 정의의 어림 토큰 수. 도구를 켠 호출의 입력에 들어간다.
+        this.usageAnchor = null; // 마지막 호출에서 API가 센 입력 토큰 수와 그때 보낸 메시지 수
+        this.silenceRejected = false;
     }
 
     get stopRequested() {
@@ -93,14 +128,39 @@ class AgentTurn {
 
     stats() {
         const contextWindow = this.llm.modelMeta?.contextWindow ?? 128000;
-        const loadedContext = countMessagesTokens(this.messages.slice(0, this.contextBaseLength));
-        const peakContext = countMessagesTokens(this.messages);
         return {
             toolCallCount: this.toolCallCount,
             modelCallCount: this.modelCallCount,
-            tokensUsed: Math.max(loadedContext, peakContext),
+            tokensUsed: this.contextTokens(),
             contextWindow,
         };
+    }
+
+    // 지금 대화가 차지한 컨텍스트. 마지막 호출에서 API가 센 입력 토큰을 기준으로 그 뒤에 붙은 메시지만 어림해 더한다.
+    // 아직 호출 전이거나 그사이 모델이 바뀌었으면 전체를 어림한다.
+    contextTokens() {
+        const model = this.llm.modelMeta?.model || "";
+        const anchor = this.usageAnchor;
+        if (!anchor || anchor.model !== model) return countRequestTokens(this.messages, { model, toolTokens: this.toolTokens });
+        return anchor.tokens + countRequestTokens(this.messages.slice(anchor.length), { model });
+    }
+
+    // 호출의 실제 입력 토큰 수로 기준점을 옮기고, 같은 요청의 어림값과 견줘 모델별 배율을 배운다.
+    learnUsage(usage, sentLength, toolTokens) {
+        const actual = Number(usage?.prompt_tokens ?? usage?.input_tokens) || 0;
+        if (!actual) return;
+        const model = this.llm.modelMeta?.model || "";
+        learnTokenScale(model, countMessagesTokens(this.messages.slice(0, sentLength)) + toolTokens, actual);
+        this.usageAnchor = { model, length: sentLength, tokens: actual };
+    }
+
+    // 사람이 보낸 턴의 침묵은 한 번 되돌려 답을 받는다. 침묵은 자동 턴(quietEmpty)만 쓸 수 있다.
+    // 앞 턴의 예약 작업 흐름에 끌려가 사용자 질문에 __SILENT__로 끝내는 일이 있었다. 되돌렸으면 true.
+    rejectSilence() {
+        if (this.quietEmpty || this.silenceRejected) return false;
+        this.silenceRejected = true;
+        this.messages.push({ role: "user", content: this.silenceHint });
+        return true;
     }
 
     // 응답의 usage에서 입력 토큰과 그중 캐시에서 읽은 토큰을 모은다(Chat Completions와 Responses 모양 모두).
@@ -142,12 +202,14 @@ class AgentTurn {
         this.onCheckpoint?.(extractTurnMessages(this.messages, this.contextBaseLength));
     }
 
-    // 작업 중에 사용자가 보낸 메시지를 대화에 합친다. 합쳤으면 true.
+    // 작업 중에 사용자가 보낸 메시지를 각각의 user 메시지로 대화에 합친다. 합쳤으면 true.
     injectPendingUserMessages() {
         if (!this.session) return false;
         const pending = this.session.drainPendingMessages();
         if (!pending.length) return false;
-        this.messages.push(buildQueuedUserMessage(pending));
+        const messages = buildPendingUserMessages(pending);
+        if (!messages.length) return false;
+        this.messages.push(...messages);
         return true;
     }
 
@@ -175,12 +237,13 @@ class AgentTurn {
         for (let attempt = 0; attempt < this.maxEmptyReplyRetries; attempt++) {
             if (this.stopRequested) return null;
 
-            if (attempt > 0) {
+            if (attempt > 0 && this.messages.at(-1)?.role !== "user") {
                 this.messages.push({ role: "user", content: this.quietEmpty ? QUIET_EMPTY_HINT : EMPTY_REPLY_HINT });
             }
 
             this.setStatus("thinking");
             this.modelCallCount += 1;
+            const sentLength = this.messages.length;
             let response;
             try {
                 response = await this.llm.complete({
@@ -199,6 +262,7 @@ class AgentTurn {
                 throw err;
             }
             this.recordUsage(response.usage);
+            this.learnUsage(response.usage, sentLength, 0);
 
             if (this.stopRequested) return null;
 
@@ -209,7 +273,10 @@ class AgentTurn {
             if (msg.content?.trim()) {
                 this.messages.push(msg);
                 this.checkpoint();
-                if (isSilentReply(msg.content)) return { text: null, usage: response.usage, silent: true };
+                if (isSilentReply(msg.content)) {
+                    if (this.rejectSilence()) continue;
+                    return { text: null, usage: response.usage, silent: true };
+                }
                 return { text: msg.content, usage: response.usage };
             }
         }
@@ -223,7 +290,10 @@ class AgentTurn {
             this.messages.push(choice);
             this.checkpoint();
             if (this.injectPendingUserMessages()) return undefined;
-            if (isSilentReply(choice.content)) return this.result({ text: null, usage: response.usage, silent: true });
+            if (isSilentReply(choice.content)) {
+                if (this.rejectSilence()) return undefined;
+                return this.result({ text: null, usage: response.usage, silent: true });
+            }
             return this.result({ text: choice.content, usage: response.usage });
         }
 
@@ -236,7 +306,7 @@ class AgentTurn {
             return this.replyResult(recovered);
         }
 
-        if (this.quietEmpty) return this.result({ text: null, silent: true });
+        // 자동 턴(quietEmpty)이어도 끝내 답을 못 받은 것은 침묵이 아니라 실패다. 실패로 알려야 "할 말 없음"과 가려진다.
         return this.result({ text: null, error: "empty_reply_exhausted" });
     }
 
@@ -258,6 +328,13 @@ class AgentTurn {
                 return this.stopped();
             }
 
+            // 작업 중에 사용자가 메시지를 보냈으면 남은 도구는 건너뛰고 다음 라운드에서 바로 읽힌다.
+            if (this.session?.hasPendingMessages?.()) {
+                this.pushSkippedToolResults(toolCalls, toolIndex, USER_STEERED_RESULT);
+                this.checkpoint();
+                break;
+            }
+
             this.setStatus("tools", tc.function.name);
 
             const parsed = parseToolArgs(tc.function.arguments);
@@ -271,13 +348,21 @@ class AgentTurn {
             }
             this.toolCallCount += 1;
 
+            if (this.session) this.session.toolRunning = true;
             const result = await executeTool(tc.function.name, parsed.args, {
                 ...toolContext,
                 messages: this.messages,
+                contextTokens: () => this.contextTokens(),
+                toolCall: tc,
+                // user_ask·secret_request가 질문을 만들면(답을 기다리기 전에) 체크포인트를 남긴다.
+                // 그래야 질문 카드가 저장된 메시지 순서의 제자리에서 바로 그려지고 새로고침에도 살아남는다.
+                onAskCreated: () => this.checkpoint(),
                 model: this.llm.provider.model,
                 modelMeta: this.llm.modelMeta,
                 signal: this.session?.signal,
                 onStatusPhase: this.setStatus,
+            }).finally(() => {
+                if (this.session) this.session.toolRunning = false;
             });
 
             this.pushToolResult(tc.id, result);
@@ -302,6 +387,7 @@ class AgentTurn {
     async callModel({ tools, toolsEnabled }) {
         this.setStatus("thinking");
         this.modelCallCount += 1;
+        const sentLength = this.messages.length;
         try {
             const response = await this.llm.complete({
                 messages: this.messages,
@@ -313,6 +399,7 @@ class AgentTurn {
                 cacheKey: this.cacheKey,
             });
             this.recordUsage(response.usage);
+            this.learnUsage(response.usage, sentLength, toolsEnabled ? this.toolTokens : 0);
             return { response };
         } catch (err) {
             if (isStoppedError(err, this.session)) {
@@ -344,7 +431,6 @@ class AgentTurn {
             return this.replyResult(latest);
         }
 
-        if (this.quietEmpty) return this.result({ text: null, silent: true });
         return this.result({ text: null, error: "tool_rounds_exceeded" });
     }
 }
@@ -369,6 +455,16 @@ export async function runAgent(userMessage, options = {}) {
             stats: EMPTY_STATS,
             turnMessages: [],
         };
+    } finally {
+        // 이 턴에서 받은 일회용 시크릿(인증 코드 등)은 턴이 끝나면 쓸 일이 없으니 금고에서 지운다.
+        const sessionKey = options.sessionKey || options.chatId;
+        if (sessionKey) {
+            try {
+                purgeOnceSecrets(sessionKey);
+            } catch (err) {
+                console.warn(`tabyAgent: one-time secret cleanup failed: ${err?.message || err}`);
+            }
+        }
     }
 }
 
@@ -389,6 +485,7 @@ async function runAgentTurn(
         consultDepth = 0,
         onCheckpoint,
         quietEmpty = false,
+        silenceHint = null,
         todoId = null,
         userMessageMeta = null,
     } = {},
@@ -407,7 +504,11 @@ async function runAgentTurn(
     // 이번 실행이 직접 다루는 메시지(지금 메시지와, 시작 전에 대기열에 쌓인 메시지)는
     // 기록에 대기 턴으로도 남아 있다. 프롬프트에 두 번 들어가지 않게 그 id를 넘긴다.
     const ownedMessageIds = [userMessageMeta?.id, ...(session?.pendingMessageIds?.() || [])].filter(Boolean);
+    // 도구 정의도 요청마다 입력에 들어가므로 압축할지 정할 때 함께 센다.
+    const tools = await getAllToolDefinitions();
+    const toolTokens = countTokens(tools);
     const contextResult = await ensureWithinContextLimit(llm, userMessage, llm.modelMeta, {
+        toolTokens,
         chatId: persistHistory === false ? null : resolvedSessionKey,
         onStatusPhase: setStatus,
         attachments,
@@ -439,13 +540,14 @@ async function runAgentTurn(
         onTextDelta,
         onCheckpoint,
         quietEmpty,
+        silenceHint,
         maxEmptyReplyRetries,
         cacheKey: resolvedSessionKey,
+        toolTokens,
     });
 
     if (turn.stopRequested) return turn.stopped(null);
 
-    const tools = await getAllToolDefinitions();
     const toolContext = {
         chatId,
         sessionKey: resolvedSessionKey,
@@ -465,6 +567,8 @@ async function runAgentTurn(
         if (providerKey(configuredProvider) !== activeProviderKey) {
             turn.llm = await createLlmClient();
             activeProviderKey = providerKey(turn.llm.provider);
+            // 앞 모델의 추론 내용은 새 업체가 모르는 필드일 수 있다
+            for (const message of turn.messages) stripReasoning(message);
             visionSupport = Boolean(turn.llm.modelMeta?.supportsVision);
         }
         turn.injectPendingUserMessages();

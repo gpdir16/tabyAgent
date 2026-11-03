@@ -1,5 +1,6 @@
-import { loadUserConfig, saveUserConfig } from "../config-loader.js";
-import { getCachedProviderThinkingMeta, normalizeThinkingLevel } from "../user-settings.js";
+import { getMergedProvider, loadUserConfig, saveUserConfig } from "../config-loader.js";
+import { defaultPreset } from "../model-presets.js";
+import { normalizeThinkingLevel } from "../user-settings.js";
 import { restartUpdateScheduler } from "../update/scheduler.js";
 
 // nsfwLevel/approvalLevel은 에이전트가 스스로 완화할 수 없게 config_set에서 제외한다
@@ -46,8 +47,10 @@ export function executeConfigTool(name, args, ctx = {}) {
         updated = true;
     }
     if (a.thinkingLevel !== undefined) {
-        const meta = getCachedProviderThinkingMeta(config.provider?.id || "default", config.provider?.model || "");
-        config.thinkingLevel = normalizeThinkingLevel(a.thinkingLevel, meta);
+        // 추론 깊이는 기본 모델 프리셋이 있으면 그 값, 없으면 예전 전역 값을 쓴다.
+        const level = normalizeThinkingLevel(a.thinkingLevel, getMergedProvider(config).id);
+        config.thinkingLevel = level;
+        if (Array.isArray(config.modelPresets) && config.modelPresets.length) defaultPreset(config).thinkingLevel = level;
         updated = true;
     }
     if (a.showReplyFooter !== undefined) {
@@ -64,7 +67,7 @@ export function executeConfigTool(name, args, ctx = {}) {
     return {
         ok: true,
         language: config.language,
-        thinkingLevel: config.thinkingLevel,
+        thinkingLevel: defaultPreset(config).thinkingLevel,
         showReplyFooter: config.showReplyFooter,
         updateCheckEnabled: config.updateCheckEnabled,
         nsfwLevel: config.nsfwLevel,

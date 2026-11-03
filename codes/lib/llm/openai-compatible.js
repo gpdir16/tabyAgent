@@ -1,8 +1,11 @@
-import OpenAI from "openai";
 import { sanitizeMessagesForApi } from "./sanitize-messages.js";
 import { requestOnce, stoppedError, streamWithFallback, throwIfAborted } from "./transport.js";
 
-export function createOpenAIClient({ baseURL, apiKey, extraHeaders = {} }) {
+// openai SDK는 불러오기만 해도 메모리를 15MB쯤 쓴다. OpenAI 호환 업체를 처음 부를 때 불러온다.
+let OpenAI;
+
+export async function createOpenAIClient({ baseURL, apiKey, extraHeaders = {} }) {
+    OpenAI ??= (await import("openai")).default;
     return new OpenAI({
         apiKey,
         baseURL,
@@ -21,16 +24,31 @@ function completionPayload(completion) {
             },
         ],
         usage: completion.usage ?? null,
+        // 실제로 답한 모델(OpenRouter 별칭이 넘겨 준 모델을 알아내는 데 쓴다)
+        model: completion.model || null,
     };
 }
 
-function buildParams({ model, messages, tools, tool_choice, thinkingLevel, thinkingParam }) {
-    const params = { model, messages: sanitizeMessagesForApi(messages) };
+// OpenAI 호환 업체 중에는 본문이 텍스트 블록 배열이면 받지 못하는 곳이 있다. 이미지가 없는 메시지는
+// 블록(하네스 블록과 사용자 글)을 빈 줄로 이어 문자열로 보낸다. 이미지가 있으면 원래대로 배열이다.
+function joinTextOnlyContent(messages) {
+    return messages.map((m) =>
+        Array.isArray(m.content) && m.content.every((part) => part?.type === "text")
+            ? { ...m, content: m.content.map((part) => part.text).join("\n\n") }
+            : m,
+    );
+}
+
+function buildParams({ model, messages, tools, tool_choice, thinkingLevel, thinkingParam, providerRouting }) {
+    const params = { model, messages: joinTextOnlyContent(sanitizeMessagesForApi(messages)) };
 
     const level = String(thinkingLevel || "").toLowerCase();
     if (level && level !== "off") {
         params[thinkingParam || "reasoning_effort"] = level;
     }
+
+    // OpenRouter: 지정한 업스트림 프로바이더만 쓰고 폴백을 끈다.
+    if (providerRouting) params.provider = providerRouting;
 
     if (tools?.length && tool_choice !== "none") {
         params.tools = tools;
@@ -39,6 +57,8 @@ function buildParams({ model, messages, tools, tool_choice, thinkingLevel, think
     return params;
 }
 
+const REASONING_TEXT_KEYS = new Set(["text", "summary", "data"]);
+
 // 스트림 조각을 모아 최종 응답 모양으로 만든다.
 class StreamAccumulator {
     constructor() {
@@ -46,10 +66,16 @@ class StreamAccumulator {
         this.usage = null;
         this.finishReason = null;
         this.toolCalls = new Map(); // delta의 index별로 이어 붙인다
+        this.model = null;
+        // 추론 내용. 다음 호출에 돌려주므로 버리지 않고 모은다(messages.js의 pickReasoning).
+        this.reasoning = "";
+        this.reasoningContent = "";
+        this.reasoningDetails = new Map(); // index별로 글을 이어 붙인다
     }
 
     add(chunk, onTextDelta) {
         if (chunk.usage) this.usage = chunk.usage;
+        if (chunk.model) this.model = chunk.model;
         const choice = chunk.choices?.[0];
         if (!choice) return;
         if (choice.finish_reason) this.finishReason = choice.finish_reason;
@@ -61,6 +87,27 @@ class StreamAccumulator {
         }
         if (Array.isArray(delta.tool_calls)) {
             for (const tc of delta.tool_calls) this.addToolCallDelta(tc);
+        }
+        if (typeof delta.reasoning === "string") this.reasoning += delta.reasoning;
+        if (typeof delta.reasoning_content === "string") this.reasoningContent += delta.reasoning_content;
+        if (Array.isArray(delta.reasoning_details)) {
+            for (const detail of delta.reasoning_details) this.addReasoningDetail(detail);
+        }
+    }
+
+    // 조각마다 같은 index의 글(text, summary, data)은 이어 붙이고 나머지(서명, 형식)는 최신 값으로 둔다.
+    addReasoningDetail(detail) {
+        if (!detail || typeof detail !== "object") return;
+        const idx = Number.isInteger(detail.index) ? detail.index : 0;
+        const acc = this.reasoningDetails.get(idx);
+        if (!acc) {
+            this.reasoningDetails.set(idx, { ...detail });
+            return;
+        }
+        for (const [key, value] of Object.entries(detail)) {
+            if (value == null) continue;
+            if (REASONING_TEXT_KEYS.has(key) && typeof value === "string") acc[key] = (acc[key] || "") + value;
+            else acc[key] = value;
         }
     }
 
@@ -79,7 +126,12 @@ class StreamAccumulator {
         if (this.toolCalls.size) {
             message.tool_calls = [...this.toolCalls.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
         }
-        return { choices: [{ message, finish_reason: this.finishReason || "stop" }], usage: this.usage };
+        if (this.reasoningDetails.size) {
+            message.reasoning_details = [...this.reasoningDetails.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+        }
+        if (this.reasoningContent) message.reasoning_content = this.reasoningContent;
+        if (this.reasoning) message.reasoning = this.reasoning;
+        return { choices: [{ message, finish_reason: this.finishReason || "stop" }], usage: this.usage, model: this.model };
     }
 }
 
@@ -94,11 +146,14 @@ export function chatCompletions({
     signal,
     thinkingLevel,
     thinkingParam = "reasoning_effort",
+    providerRouting,
+    headers,
 }) {
-    const params = buildParams({ model, messages, tools, tool_choice, thinkingLevel, thinkingParam });
+    const params = buildParams({ model, messages, tools, tool_choice, thinkingLevel, thinkingParam, providerRouting });
     throwIfAborted(signal);
 
-    const requestOptions = signal ? { signal } : undefined;
+    // headers: 요청마다 붙일 헤더(대화별 세션 id 등)
+    const requestOptions = signal || headers ? { signal, headers } : undefined;
 
     const requestNonStream = async () => completionPayload(await client.chat.completions.create({ ...params, stream: false }, requestOptions));
 
@@ -132,15 +187,17 @@ export async function chatCompletionsPing({
     signal,
     thinkingLevel,
     thinkingParam = "reasoning_effort",
+    providerRouting,
+    headers,
 }) {
-    const params = buildParams({ model, messages, tools, tool_choice, thinkingLevel, thinkingParam });
+    const params = buildParams({ model, messages, tools, tool_choice, thinkingLevel, thinkingParam, providerRouting });
     const id = `${client.baseURL}|${model}`;
     const fields =
         pingCapField.get(id) === "max_completion_tokens" ? ["max_completion_tokens", "max_tokens"] : ["max_tokens", "max_completion_tokens"];
     let lastErr = null;
     for (const field of fields) {
         try {
-            const completion = await client.chat.completions.create({ ...params, stream: false, [field]: 1 }, { signal, maxRetries: 0 });
+            const completion = await client.chat.completions.create({ ...params, stream: false, [field]: 1 }, { signal, headers, maxRetries: 0 });
             pingCapField.set(id, field);
             return completion.usage ?? undefined;
         } catch (err) {

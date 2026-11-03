@@ -111,3 +111,15 @@ export function resolveAgentPath(rawPath) {
     }
     return path.normalize(path.resolve(base));
 }
+
+// 한글 파일명은 macOS·iOS에서 올리면 자모가 분리된 형태(NFD)로, 모델이 적으면 합쳐진 형태(NFC)로 오는 일이 많다.
+// 눈으로는 같은 이름이라 모델이 "file not found"를 이해하지 못하므로, 그대로는 없으면 다른 정규화 형태로도 찾는다.
+export function resolveExistingAgentPath(rawPath) {
+    const resolved = resolveAgentPath(rawPath);
+    if (!resolved || fs.existsSync(resolved)) return resolved;
+    for (const form of ["NFC", "NFD"]) {
+        const alt = resolved.normalize(form);
+        if (alt !== resolved && fs.existsSync(alt)) return alt;
+    }
+    return resolved;
+}

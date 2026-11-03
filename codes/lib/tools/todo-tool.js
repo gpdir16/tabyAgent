@@ -2,7 +2,6 @@ import { addSuggestion, addTodo, completeTodo, getTodo, listTodos, offerHandoff,
 import { queueTodoNow } from "../todos/scheduler.js";
 import { findAgentOrDefault } from "../agents-store.js";
 import { isValidSessionKey } from "../agent-route.js";
-import { defaultTimeZone } from "../scheduling/time.js";
 import { loadUserConfig } from "../config-loader.js";
 import { postOfferCard, postSuggestionCard } from "../todos/telegram-ui.js";
 
@@ -24,7 +23,7 @@ const scheduleParams = {
     cron: { type: "string", description: "5-field cron in the item timezone, e.g. 0 0 * * * for daily midnight" },
     every: { type: "string", description: 'Interval like "2h" or "1d" (min 60s)' },
     at: { type: "string", description: 'One-shot ISO datetime, e.g. "2026-09-12T08:00"' },
-    timezone: { type: "string", description: `IANA timezone, e.g. Asia/Tokyo (default ${defaultTimeZone()})` },
+    timezone: { type: "string", description: "IANA timezone, e.g. Asia/Tokyo (default: the timezone in message timestamps)" },
 };
 
 export const todoToolDefinitions = [

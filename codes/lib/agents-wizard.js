@@ -11,6 +11,7 @@ import {
     DEFAULT_AGENT_ID,
     DEFAULT_AGENT_NAME,
     addAgent,
+    agentBackgroundEnabled,
     canAddAgent,
     findAgentByThread,
     getAgent,
@@ -38,6 +39,9 @@ function texts(lang) {
             detailTitle: "Agent: {name}",
             rename: "Rename",
             editPersona: "Edit role",
+            background: "Background work: {state}",
+            on: "On",
+            off: "Off",
             delete: "Delete",
             deleteConfirm: "Delete “{name}”? Its topic and private memory will be removed.",
             deleteYes: "Yes, delete",
@@ -61,6 +65,9 @@ function texts(lang) {
             detailTitle: "에이전트: {name}",
             rename: "이름 바꾸기",
             editPersona: "역할 바꾸기",
+            background: "백그라운드 작업: {state}",
+            on: "켜짐",
+            off: "꺼짐",
             delete: "삭제",
             deleteConfirm: "“{name}”을(를) 삭제할까요? 토픽과 전용 메모리가 제거됩니다.",
             deleteYes: "삭제",
@@ -84,6 +91,9 @@ function texts(lang) {
             detailTitle: "エージェント: {name}",
             rename: "名前を変更",
             editPersona: "役割を変更",
+            background: "バックグラウンド作業: {state}",
+            on: "オン",
+            off: "オフ",
             delete: "削除",
             deleteConfirm: "“{name}” を削除しますか？トピックと専用メモリが削除されます。",
             deleteYes: "削除する",
@@ -160,6 +170,7 @@ function detailKeyboard(agentId) {
     if (agentId !== DEFAULT_AGENT_ID) {
         kb.text(msg.rename, `ag:ren:${agentId}`).row();
         kb.text(msg.editPersona, `ag:per:${agentId}`).row();
+        kb.text(fill(msg.background, { state: agentBackgroundEnabled(getAgent(agentId)) ? msg.on : msg.off }), `ag:bg:${agentId}`).row();
         kb.text(msg.delete, `ag:del:${agentId}`).row();
     }
     kb.text(msg.backList, "ag:list");
@@ -174,7 +185,8 @@ function detailText(agentId) {
     const agent = getAgent(agentId);
     if (!agent) return msg.title;
     const role = agent.persona ? `\n\n${agent.persona}` : "";
-    return `${fill(msg.detailTitle, { name: agent.name })}${role}`;
+    const bg = `\n\n${fill(msg.background, { state: agentBackgroundEnabled(agent) ? msg.on : msg.off })}`;
+    return `${fill(msg.detailTitle, { name: agent.name })}${role}${bg}`;
 }
 
 async function showList(bot, chatId, state) {
@@ -288,6 +300,14 @@ export async function handleAgentsWizardCallback(ctx, bot) {
         state.editId = id;
         saveState(state);
         await replaceStep(bot, chatId, state, msg.personaEditPrompt);
+        return;
+    }
+    if (data.startsWith("ag:bg:")) {
+        const id = data.slice("ag:bg:".length);
+        const agent = getAgent(id);
+        if (!agent) return;
+        updateAgent(id, { backgroundTasks: !agentBackgroundEnabled(agent) });
+        await replaceStep(bot, chatId, state, detailText(id), detailKeyboard(id));
         return;
     }
     if (data.startsWith("ag:del:")) {

@@ -1,7 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getEncoding } from "js-tiktoken";
-import { sanitizeTextForLlm } from "../llm/sanitize-messages.js";
 import { CODES_DIR } from "../paths.js";
 import {
     readMemoryFile,
@@ -25,35 +23,18 @@ import {
 } from "../user-settings.js";
 import { formatTodosForPrompt } from "../todos/store.js";
 import { estimateContentTokens } from "../llm/vision.js";
-import { collectFilesFromHistory, formatAttachedFilesPrompt, hydrateUserContent } from "../attachments.js";
+import { estimateTextTokens, tokenScale } from "../llm/token-estimate.js";
+import { hydrateUserContent } from "../attachments.js";
 import { formatSkillsListForPrompt } from "../skills-catalog.js";
 import { formatSecretsForPrompt } from "../secrets/vault.js";
 import { buildEnvironmentPromptVars, buildFilesystemPromptBlock, buildRuntimeInfoLine, renderSystemPrompt } from "./system-prompt.js";
 import { formatPastSessionsForPrompt, turnToMessages, cloneStoredMessage } from "./chat-history.js";
 import { isStandalonePendingTurn } from "./history/messages.js";
+import { pickVolatileVars, resolvePromptState } from "./prompt-state.js";
 const SYSTEM_PATH = path.join(CODES_DIR, "lib", "prompts", "system.txt");
 
-let encoding;
-function getTokenizer() {
-    try {
-        if (!encoding) encoding = getEncoding("o200k_base");
-        return encoding;
-    } catch {
-        return null;
-    }
-}
-
 export function countTokens(text) {
-    const enc = getTokenizer();
-    const safe = sanitizeTextForLlm(typeof text === "string" ? text : (JSON.stringify(text) ?? ""));
-    if (enc) {
-        try {
-            return enc.encode(safe, undefined, []).length;
-        } catch {
-            return Math.ceil(safe.length / 4);
-        }
-    }
-    return Math.ceil(safe.length / 4);
+    return estimateTextTokens(typeof text === "string" ? text : (JSON.stringify(text) ?? ""));
 }
 
 export function countMessagesTokens(messages) {
@@ -67,6 +48,11 @@ export function countMessagesTokens(messages) {
         if (m.tool_calls) total += countTokens(JSON.stringify(m.tool_calls));
     }
     return total;
+}
+
+// 요청 하나의 입력 토큰 어림값. 메시지에 도구 정의를 더하고 그 모델의 배율로 보정한다.
+export function countRequestTokens(messages, { model = "", toolTokens = 0 } = {}) {
+    return Math.ceil((countMessagesTokens(messages) + toolTokens) * tokenScale(model));
 }
 
 function loadSystemPromptTemplate() {
@@ -114,7 +100,15 @@ function peerAgentsText(agentId) {
     return formatPeerAgentsForPrompt(agentId || DEFAULT_AGENT_ID) || "- (none)";
 }
 
-function buildSystemMessageContent({ truncateMemory = false, maxMemoryChars = 120000, runtimeInfo = {} } = {}) {
+// 시스템 프롬프트와 이번 사용자 메시지에 실을 갱신(stateUpdate). promptStateChatId가 있으면 세션 중에 바뀔 수 있는
+// 항목은 세션 스냅샷 값으로 넣고, 그 뒤 바뀐 항목만 갱신으로 돌려준다(prompt-state.js).
+function buildSystemMessageContent({
+    truncateMemory = false,
+    maxMemoryChars = 120000,
+    runtimeInfo = {},
+    promptStateChatId = null,
+    historyMessages = [],
+} = {}) {
     const template = loadSystemPromptTemplate();
     const rt = runtimeInfo || {};
     const pastSessions = formatPastSessionsForPrompt(rt.sessionKey);
@@ -124,7 +118,7 @@ function buildSystemMessageContent({ truncateMemory = false, maxMemoryChars = 12
         FILESYSTEM_BLOCK: buildFilesystemPromptBlock(),
         SKILLS_LIST: formatSkillsListForPrompt(),
         SECRETS_LIST: formatSecretsForPrompt(),
-        RUNTIME_INFO: buildRuntimeInfoLine(rt),
+        RUNTIME_INFO: buildRuntimeInfoLine({ ...rt, language: loadUserConfig().language }),
         MEMORY: loadMemoryForPrompt({ truncateMemory, maxMemoryChars }),
         AGENT_MEMORY_PATH: isScopedAgent(rt.agentId) ? agentMemoryFilePath(rt.agentId) : memoryFilePath(),
         AGENT_MEMORY_DIR: isScopedAgent(rt.agentId) ? agentMemoryDirPath(rt.agentId) : memoryDirPath(),
@@ -133,16 +127,15 @@ function buildSystemMessageContent({ truncateMemory = false, maxMemoryChars = 12
         AGENT_MEMORY: agentMemoryText(rt.agentId, { truncateMemory, maxMemoryChars }),
         PEER_AGENTS: peerAgentsText(rt.agentId),
         PAST_SESSIONS_LIST: pastSessions,
-        ATTACHED_FILES: formatAttachedFilesPrompt(rt.attachedFiles),
-        NSFW_LEVEL_LABEL: nsfwPolicyLabel(getNsfwLevel(loadUserConfig())),
-        NSFW_POLICY: buildNsfwPolicyText(getNsfwLevel(loadUserConfig())),
-        APPROVAL_LEVEL_LABEL: approvalPolicyLabel(getApprovalLevel(loadUserConfig())),
-        APPROVAL_POLICY: buildApprovalPolicyText(getApprovalLevel(loadUserConfig())),
+        // 단계 이름을 제목 대신 본문 첫 줄에 둔다. 설정을 바꾸면 이 절 전체가 갱신 블록으로 나간다.
+        NSFW_POLICY: `Current: ${nsfwPolicyLabel(getNsfwLevel(loadUserConfig()))}\n${buildNsfwPolicyText(getNsfwLevel(loadUserConfig()))}`,
+        APPROVAL_POLICY: `Current: ${approvalPolicyLabel(getApprovalLevel(loadUserConfig()))}\n${buildApprovalPolicyText(getApprovalLevel(loadUserConfig()))}`,
         TODO_LIST: todoBlocks.list,
         TODO_SUGGEST_LIST: todoBlocks.suggestions,
         SCHEDULE_JOBS: todoBlocks.jobs,
     };
-    return renderSystemPrompt(template, vars).trim();
+    const { systemVars, stateUpdate } = resolvePromptState(promptStateChatId, { ...vars, ...pickVolatileVars(vars) }, historyMessages);
+    return { systemContent: renderSystemPrompt(template, systemVars).trim(), stateUpdate };
 }
 
 // 이번 실행이 직접 다루는 메시지의 대기 턴은 프롬프트에서 뺀다. 지금 메시지는 맨 끝에 다시 붙고,
@@ -170,10 +163,10 @@ function toLlmMessage(message) {
     delete cloned.imageUrl;
     if (cloned.role === "user") {
         const text = typeof cloned.content === "string" ? cloned.content : "";
-        // 히스토리 메시지의 첨부 이미지를 매 턴 base64로 다시 싣지 않는다.
-        // 경로는 ATTACHED_FILES 목록에 남는다. 인라인 이미지는 현재 사용자
-        // 메시지에서만 붙인다.
+        // 히스토리 메시지의 첨부 이미지를 매 턴 base64로 다시 싣지 않는다. 인라인 이미지는 현재 사용자
+        // 메시지에서만 붙인다. attachments는 남겨 두면 API로 보낼 때 그 메시지의 첨부 안내 블록이 된다.
         cloned.content = hydrateUserContent(text, cloned.attachments, { visionEnabled: false });
+        return cloned;
     }
     delete cloned.attachments;
     return cloned;
@@ -189,28 +182,28 @@ export function buildInitialMessages(
         modelMeta = null,
         runtimeInfo = {},
         excludeMessageIds = [],
+        promptStateChatId = null,
     } = {},
 ) {
     const visionEnabled = modelMeta?.supportsVision === true;
     const currentFiles = Array.isArray(attachments) ? attachments : [];
     const historyForPrompt = dropPendingCurrent(dropOwnedPendingTurns(history, excludeMessageIds), userMessage);
-    const attachedFiles = collectFilesFromHistory(historyForPrompt, currentFiles);
-    const systemContent = buildSystemMessageContent({
+    const historyMessages = historyForPrompt.flatMap((turn) => turnToMessages(turn).map(toLlmMessage));
+    const { systemContent, stateUpdate } = buildSystemMessageContent({
         truncateMemory,
         maxMemoryChars,
-        runtimeInfo: { ...runtimeInfo, attachedFiles },
+        runtimeInfo,
+        promptStateChatId,
+        historyMessages,
     });
 
-    const messages = [{ role: "system", content: systemContent }];
-
-    for (const turn of historyForPrompt) {
-        for (const message of turnToMessages(turn)) {
-            messages.push(toLlmMessage(message));
-        }
-    }
+    const messages = [{ role: "system", content: systemContent }, ...historyMessages];
+    // stateUpdate는 이 메시지와 함께 저장되어, 다음 턴에 기록을 다시 만들 때도 같은 블록이 같은 자리에 붙는다.
     messages.push({
         role: "user",
         content: hydrateUserContent(userMessage, currentFiles, { visionEnabled }),
+        ...(currentFiles.length ? { attachments: currentFiles } : {}),
+        ...(stateUpdate ? { stateUpdate } : {}),
     });
     return messages;
 }
@@ -219,10 +212,11 @@ export function getContextWindow(modelMeta) {
     return modelMeta?.contextWindow || 128000;
 }
 
-export function getCompressTriggerTokens(modelMeta) {
+export function getCompressTriggerTokens(modelMeta, provider = null) {
     const agent = loadAgentConfig();
-    // 사용자 설정(설정의 모델 탭 고급 항목)이 우선, 없으면 agent.json 기본값을 쓴다.
-    const pct = normalizeContextTriggerPercent(loadUserConfig().contextTriggerPercent, agent.contextCompressTriggerPercent ?? 75);
+    // 모델 프리셋의 값이 우선이다. 없으면 예전 전역 설정(고급 설정에 있던 값, 이제 화면에서 고칠 수 없음), 그것도 없으면 agent.json 기본값을 쓴다.
+    const global = normalizeContextTriggerPercent(loadUserConfig().contextTriggerPercent, agent.contextCompressTriggerPercent ?? 75);
+    const pct = normalizeContextTriggerPercent(provider?.contextTriggerPercent, global);
     return Math.floor((getContextWindow(modelMeta) * pct) / 100);
 }
 

@@ -29,12 +29,9 @@ import { sendTelegramReply } from "./telegram-stats.js";
 import { sendTelegramFile } from "./telegram-send.js";
 import { t, formatAgentError } from "./i18n.js";
 import { cancelQueuedAgentWork, scheduleWork } from "./agent-queue.js";
-import { hasPendingAsk, resolvePendingAskByButton, resolvePendingAskByText } from "./agent/user-ask.js";
-import { beginAgentSession, endAgentSession, enqueueAgentMessage, isAgentSessionRunning, requestAgentStop } from "./agent/session.js";
-import { saveIncomingTelegramFile, formatFileUserMessage } from "./telegram-downloads.js";
-import { isVisionImageMime } from "./llm/vision.js";
-import { ensureModelMeta } from "./llm/model-meta.js";
-import { getMergedProvider } from "./config-loader.js";
+import { ASK_CANCEL_USER_MESSAGE, cancelPendingAsk, hasPendingAsk, resolvePendingAskByButton, resolvePendingAskByText } from "./agent/user-ask.js";
+import { beginAgentSession, endAgentSession, enqueueAgentMessage, requestAgentStop, restartOnQuickFollowup } from "./agent/session.js";
+import { saveIncomingTelegramFile } from "./telegram-downloads.js";
 import { setTodoHandlers, startTodoScheduler } from "./todos/scheduler.js";
 import { addUserTodo, handleTodoCallback, sendTodoList } from "./todos/telegram-ui.js";
 import { setProactiveRunner, CHECKIN_PROMPT, startProactiveScheduler } from "./proactive.js";
@@ -408,11 +405,21 @@ function setAutomationHandlers(bot) {
 // 턴이 끝날 때 세션을 닫고 남은 대기 메시지를 정리한다.
 // 끝나기 직전에 도착해 이번 실행에 합쳐지지 못한 메시지는 버리지 않고 다음 턴으로 넘긴다.
 // 실패한 턴 뒤에는 잇지 않는다(같은 오류를 되풀이한다). 기록에는 끊긴 턴으로 남아 있다.
-function finishAgentSession(bot, route, session, outcome) {
+function finishAgentSession(bot, route, session, outcome, { origin = null, finalResult = null } = {}) {
     const leftover = session.drainPendingMessages();
+    const restart = session.restartRequested;
     endAgentSession(route.sessionKey);
-    if (outcome === "stopped") settleStoppedSession(route.sessionKey);
+    if (outcome === "stopped" && restart) restartAfterQuickFollowup(bot, route, origin, finalResult?.turnMessages, leftover);
+    else if (outcome === "stopped") settleStoppedSession(route.sessionKey);
     else if (outcome === "done" && leftover.length) startUserTurn(bot, null, route, leftover);
+}
+
+// 바로 이어 보낸 메시지로 멈춘 실행을 다시 시작한다. 멈춘 실행이 시작 메시지를 기록하지 못했으면 함께 다시 보낸다.
+function restartAfterQuickFollowup(bot, route, origin, savedMessages, leftover) {
+    const saved = new Set(userMessageIdsOf(savedMessages));
+    const messages = origin?.id && !saved.has(origin.id) ? [origin, ...leftover] : leftover;
+    if (messages.length) startUserTurn(bot, null, route, messages);
+    else settleStoppedSession(route.sessionKey);
 }
 
 // 사용자가 멈춘 대화에 남은 대기 메시지는 다시 실행하지 않고 기록으로만 남긴다.
@@ -433,9 +440,11 @@ async function handleAgentTurn(bot, ctx, route, message) {
     const extra = telegramThreadOpts(route.threadId);
     const status = new TelegramStatusMessage(bot, route.chatId, lang, extra);
     const session = beginAgentSession(route.sessionKey);
+    session.lastUserMessageAt = Date.parse(message.at);
     const run = { turnId: newMessageId(), message, recoveryBase: null };
     // 턴이 어떻게 끝났는지: 남은 대기 메시지를 어떻게 할지 정한다.
     let outcome = "failed";
+    let finalResult = null;
 
     try {
         await status.start();
@@ -456,6 +465,7 @@ async function handleAgentTurn(bot, ctx, route, message) {
 
         if (isStoppedByUser(result)) outcome = "stopped";
         else if (!result?.error || result.error === "silent") outcome = "done";
+        finalResult = result;
 
         // 최종 결과도 실패면 턴을 interrupted로 남겨 다음 부팅 복구가 잡는다.
         if (result?.error && !isStoppedByUser(result)) markChatTurnInterrupted(route.sessionKey);
@@ -469,8 +479,9 @@ async function handleAgentTurn(bot, ctx, route, message) {
 
         if (isStoppedByUser(result)) {
             await status.completeSuccess();
-            const body = result.text?.trim() || t("stopped_by_user", lang);
-            await sendTelegramReply(bot, route.chatId, body, result.stats, extra);
+            // 바로 이어 보낸 메시지로 다시 시작할 때는 중지 안내와 부분 답변을 남기지 않는다.
+            const body = session.restartRequested ? null : result.text?.trim() || t("stopped_by_user", lang);
+            if (body) await sendTelegramReply(bot, route.chatId, body, result.stats, extra);
             saveChatTurn(route.sessionKey, result, run);
             return result;
         }
@@ -486,7 +497,7 @@ async function handleAgentTurn(bot, ctx, route, message) {
         return { error: "agent_turn_failed", text: null };
     } finally {
         status.dispose();
-        finishAgentSession(bot, route, session, outcome);
+        finishAgentSession(bot, route, session, outcome, { origin: message, finalResult });
     }
 }
 
@@ -523,7 +534,14 @@ function startUserTurn(bot, ctx, route, messages) {
 // 사용자 메시지 한 건을 받는다. 실행 중이면 현재 턴에 끼워 넣고(대기열), 아니면 새 턴을 예약한다.
 function dispatchUserMessage(bot, ctx, route, message) {
     recordUserMessage(route.sessionKey, message);
-    if (enqueueAgentMessage(route.sessionKey, message)) return;
+    if (enqueueAgentMessage(route.sessionKey, message)) {
+        // user_ask·secret_request가 답을 기다리는 중이면 기다림을 끝낸다. 도구가 바로 돌아와야 다음 라운드에서
+        // 이 메시지를 읽는다. 안 그러면 질문 시간이 끝날 때까지(최대 10분) 메시지가 대기열에만 머문다.
+        cancelPendingAsk(route.sessionKey, ASK_CANCEL_USER_MESSAGE);
+        // 직전 메시지에서 얼마 안 돼 보낸 메시지는 끼워 넣지 않고 실행을 멈춘 뒤 새 턴으로 다시 보낸다.
+        restartOnQuickFollowup(route.sessionKey, message.at);
+        return;
+    }
     startUserTurn(bot, ctx, route, [message]);
 }
 
@@ -913,13 +931,14 @@ export async function startTelegramBot() {
 
         try {
             const saved = await saveIncomingTelegramFile(ctx);
-            // 실행 중인 턴에 합쳐질 때는 그 턴의 모델 호출에 이미지 파트가 붙지 않는다.
-            let visionAttached = false;
-            if (!isAgentSessionRunning(route.sessionKey) && isVisionImageMime(saved?.mimeType)) {
-                const meta = await ensureModelMeta(getMergedProvider(loadUserConfig()));
-                visionAttached = Boolean(meta.supportsVision);
-            }
-            dispatchUserMessage(bot, ctx, route, newUserMessage(formatFileUserMessage(saved, { visionAttached }), [saved]));
+            // 첨부는 본문에 섞지 않고 파일 메타데이터로 넘긴다. 모델에 보낼 때 시각·경로와 함께 앞 블록에 붙는다.
+            const attachment = {
+                name: saved.fileName,
+                mime: saved.mimeType,
+                size: saved.sizeBytes,
+                filePath: saved.path,
+            };
+            dispatchUserMessage(bot, ctx, route, newUserMessage(saved.caption || "", [attachment]));
         } catch (err) {
             console.error("File message error:", err?.stack || err);
             await sendMessageSafe(ctx.api, route.chatId, formatAgentError(err, lang), telegramThreadOpts(route.threadId));

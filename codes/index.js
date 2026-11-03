@@ -1,3 +1,5 @@
+// 다른 모듈보다 먼저 설정한 시간대를 TZ로 맞춘다.
+import "./lib/process-timezone.js";
 import { ensureUserDir } from "./lib/bootstrap.js";
 import { initTools, shutdownTools } from "./lib/agent/tool-registry.js";
 import { startTelegramBot } from "./lib/telegram.js";
@@ -5,6 +7,8 @@ import { bootstrapBotTokenFromEnv, hasBotToken } from "./lib/readiness.js";
 import { runLegacyMigrations } from "./lib/migrate-legacy.js";
 import { isDockerRuntime } from "./lib/runtime.js";
 import { ensureSession, DISPLAY } from "./lib/computer/display.js";
+import { prepareAllProfiles } from "./lib/computer/camofox-profile.js";
+import { deleteOnceSecrets } from "./lib/secrets/store.js";
 import { flushUsageLog } from "./lib/llm/usage-log.js";
 
 const RETRY_MS = 10000;
@@ -35,6 +39,10 @@ function startSharedDisplay() {
 
 async function main() {
     ensureUserDir();
+    // 브라우저 프로필을 맞춘다. 실행을 멈추게 하는 예전 세션 복원 설정을 끄고, Camoufox가 업데이트된 뒤면 새 버전으로 열 수 있게 한다.
+    prepareAllProfiles();
+    // 지난 실행이 턴 도중에 끝나 남은 일회용 시크릿(인증 코드 등)을 지운다.
+    deleteOnceSecrets();
     bootstrapBotTokenFromEnv();
     runLegacyMigrations();
     initTools();

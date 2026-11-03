@@ -1,5 +1,5 @@
 import { sendTelegramFile } from "../telegram-send.js";
-import { resolveAgentPath } from "../paths.js";
+import { resolveExistingAgentPath } from "../paths.js";
 import { sendFileDescription } from "../path-labels.js";
 import { telegramThreadOpts } from "../agent-route.js";
 
@@ -27,7 +27,7 @@ export async function executeSendFileTool(_name, args, ctx) {
     if (!ctx?.bot || !ctx?.chatId) {
         return { error: "No active Telegram chat — file send only works during a user message turn" };
     }
-    const filePath = resolveAgentPath(raw);
+    const filePath = resolveExistingAgentPath(raw);
     if (!filePath) return { error: "path is required" };
     return await sendTelegramFile(ctx.bot, ctx.chatId, filePath, {
         caption: args?.caption,

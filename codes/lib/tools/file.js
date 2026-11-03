@@ -1,17 +1,20 @@
 import fs from "node:fs";
+import path from "node:path";
 import { writeFileAtomic } from "../atomic-file.js";
-import { countMessagesTokens, countTokens, getContextWindow } from "../agent/context.js";
-import { resolveAgentPath } from "../paths.js";
+import { countRequestTokens, countTokens, getContextWindow } from "../agent/context.js";
+import { tokenScale } from "../llm/token-estimate.js";
+import { resolveExistingAgentPath } from "../paths.js";
 import { filePathParamDescription, filePatchDescription, fileReadDescription } from "../path-labels.js";
 import { isSecretStorePath } from "../secrets/store.js";
 
 function resolveFilePath(rawPath) {
-    return resolveAgentPath(rawPath);
+    return resolveExistingAgentPath(rawPath);
 }
 
-function getMaxFileReadTokens(messages, modelMeta) {
-    const window = getContextWindow(modelMeta);
-    const used = countMessagesTokens(messages || []);
+function getMaxFileReadTokens(ctx) {
+    const window = getContextWindow(ctx.modelMeta);
+    // 루프가 주는 값은 마지막 호출에서 API가 센 입력 토큰이 기준이다. 없으면 메시지를 어림한다.
+    const used = ctx.contextTokens ? ctx.contextTokens() : countRequestTokens(ctx.messages || [], { model: ctx.modelMeta?.model });
     const remaining = Math.max(0, window - used);
     const half = Math.floor(remaining * 0.5);
     return Math.max(0, half - 1);
@@ -22,6 +25,23 @@ const fileReadCache = new Map();
 // file_read는 전체 파일을 메모리에 올리므로 상한을 둔다. 큰 파일은
 // terminal_run(sed/head/tail)으로 페이지 단위 읽기를 안내한다.
 const MAX_READ_BYTES = 8 * 1024 * 1024;
+
+// 이미지 파일은 글자 대신 그림으로 보여 준다. 브라우저(camofox) 스크린샷을 모델이 직접 확인하는 유일한
+// 길이라, 이게 없으면 접근성 스냅샷에 안 잡히는 것(다른 도메인 iframe, 캔버스, 덮개 창)을 못 본다.
+const VIEWABLE_IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+// Claude API가 받는 이미지 한 장의 상한(5MB)에 맞춘다.
+const MAX_VIEW_IMAGE_BYTES = 5 * 1024 * 1024;
+
+function readImageFile(resolved, stat, ctx) {
+    if (ctx?.modelMeta?.supportsVision !== true) return { error: "The current model cannot view images.", path: resolved };
+    if (stat.size > MAX_VIEW_IMAGE_BYTES) {
+        return {
+            error: `image too large to view (${(stat.size / 1048576).toFixed(1)} MB > 5 MB). Take a viewport screenshot instead of a full-page one, or shrink it first.`,
+            path: resolved,
+        };
+    }
+    return { ok: true, path: resolved, imageBytes: stat.size, note: "The image is attached right after this result.", __image: resolved };
+}
 
 function splitLines(text) {
     if (!text) return [];
@@ -49,7 +69,8 @@ function sliceByLineRange(lines, startLine, endLine) {
     return { start, end, slice: lines.slice(start - 1, end) };
 }
 
-function truncateToTokenBudget(text, maxTokens) {
+function truncateToTokenBudget(text, maxTokens, scale = 1) {
+    const count = (chunk) => Math.ceil(countTokens(chunk) * scale);
     if (maxTokens <= 0) {
         return { text: "", tokens: 0, truncated: true };
     }
@@ -59,13 +80,13 @@ function truncateToTokenBudget(text, maxTokens) {
     while (lo < hi) {
         const mid = Math.ceil((lo + hi) / 2);
         const chunk = lines.slice(0, mid).join("\n");
-        if (countTokens(chunk) <= maxTokens) lo = mid;
+        if (count(chunk) <= maxTokens) lo = mid;
         else hi = mid - 1;
     }
     const kept = lines.slice(0, lo).join("\n");
     return {
         text: kept,
-        tokens: countTokens(kept),
+        tokens: count(kept),
         truncated: lo < lines.length,
     };
 }
@@ -134,6 +155,7 @@ export function executeFileRead(args, ctx) {
     if (!fs.existsSync(resolved)) return { error: "file not found", path: resolved };
     const stat = fs.statSync(resolved);
     if (!stat.isFile()) return { error: "not a file", path: resolved };
+    if (VIEWABLE_IMAGE_EXTS.has(path.extname(resolved).toLowerCase())) return readImageFile(resolved, stat, ctx);
     if (stat.size > MAX_READ_BYTES) {
         return {
             error: `file too large for file_read (${(stat.size / 1048576).toFixed(1)} MB > 8 MB). Use terminal_run with 'sed -n "START,ENDp" <path>' or head/tail to page through it.`,
@@ -141,7 +163,7 @@ export function executeFileRead(args, ctx) {
         };
     }
 
-    const maxTokens = getMaxFileReadTokens(ctx.messages, ctx.modelMeta);
+    const maxTokens = getMaxFileReadTokens(ctx);
     if (maxTokens <= 0) {
         return {
             error: "No context budget left for file_read (must stay under 50% of remaining window)",
@@ -194,7 +216,7 @@ export function executeFileRead(args, ctx) {
     const { start, end, slice } = sliceByLineRange(lines, requestedStart, requestedEnd);
     const joined = formatLineNumbered(slice, start);
 
-    const { text, tokens, truncated } = truncateToTokenBudget(joined, maxTokens);
+    const { text, tokens, truncated } = truncateToTokenBudget(joined, maxTokens, tokenScale(ctx.modelMeta?.model));
     const returnedLineCount = text ? text.split("\n").length : 0;
 
     const notes = [];
@@ -222,25 +244,24 @@ export function clearFileReadCache() {
     fileReadCache.clear();
 }
 
+// @@ 머리의 줄 번호·줄 수는 위치를 찾는 힌트로만 쓴다. 모델은 줄 수를 자주 틀리게 적으므로 실제 적용은
+// 문맥(" ")·삭제("-") 줄의 내용으로 한다. 공백 없이 적힌 빈 줄은 빈 문맥 줄로 본다(모델이 흔히 이렇게 쓴다).
 function parseUnifiedDiff(diffText) {
     const lines = diffText.replace(/\r\n/g, "\n").split("\n");
+    while (lines.length && lines[lines.length - 1] === "") lines.pop();
     const hunks = [];
     let currentHunk = null;
     for (const line of lines) {
         if (line.startsWith("@@")) {
             if (currentHunk) hunks.push(currentHunk);
-            const m = line.match(/@@\s*-(\d+)(?:,(\d+))?\s*\+(\d+)(?:,(\d+))?\s*@@/);
-            if (!m) continue;
-            currentHunk = {
-                oldStart: parseInt(m[1], 10),
-                oldCount: m[2] ? parseInt(m[2], 10) : 1,
-                newStart: parseInt(m[3], 10),
-                newCount: m[4] ? parseInt(m[4], 10) : 1,
-                lines: [],
-            };
+            const m = line.match(/@@\s*-(\d+)(?:,\d+)?\s*\+\d+(?:,\d+)?\s*@@/);
+            currentHunk = { oldStart: m ? parseInt(m[1], 10) : null, lines: [] };
         } else if (currentHunk) {
             if (line === "\\ No newline at end of file") continue;
-            if (line === "") continue;
+            if (line === "") {
+                currentHunk.lines.push(" ");
+                continue;
+            }
             const prefix = line[0];
             if (prefix !== " " && prefix !== "+" && prefix !== "-") continue;
             currentHunk.lines.push(line);
@@ -250,17 +271,68 @@ function parseUnifiedDiff(diffText) {
     return hunks;
 }
 
-function applyHunk(fileLines, hunk, offset = 0) {
-    const result = [...fileLines];
-    const oldLines = hunk.lines.filter((l) => l.startsWith(" ") || l.startsWith("-")).map((l) => l.slice(1));
-    const newLines = hunk.lines.filter((l) => l.startsWith(" ") || l.startsWith("+")).map((l) => l.slice(1));
-    const startPos = hunk.oldStart - 1 + offset;
-    const oldSlice = result.slice(startPos, startPos + hunk.oldCount);
-    if (oldSlice.join("\n") !== oldLines.join("\n")) {
-        return { ok: false, error: "Context mismatch. The file changed since the last read. Re-read the file first." };
+// file_read가 붙이는 "  12|" 접두어. 모델이 diff에 그대로 베껴 오는 일이 있다.
+const LINE_NUMBER_PREFIX = /^\s*\d+\|/;
+
+function findBlock(fileLines, block, sameLine) {
+    const found = [];
+    for (let i = 0; i + block.length <= fileLines.length; i++) {
+        let ok = true;
+        for (let j = 0; j < block.length; j++) {
+            if (!sameLine(fileLines[i + j], block[j])) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) found.push(i);
     }
-    result.splice(startPos, hunk.oldCount, ...newLines);
-    return { ok: true, result, offset: offset + newLines.length - hunk.oldCount };
+    return found;
+}
+
+const exactLine = (a, b) => a === b;
+const looseLine = (a, b) => a.trimEnd() === b.trimEnd();
+
+function previewLines(lines) {
+    const shown = lines.slice(0, 3).map((l) => JSON.stringify(l.length > 120 ? `${l.slice(0, 120)}…` : l));
+    return shown.join(", ") + (lines.length > 3 ? ` … (${lines.length} lines)` : "");
+}
+
+function applyHunk(fileLines, hunk, index, offset) {
+    let oldLines = hunk.lines.filter((l) => l.startsWith(" ") || l.startsWith("-")).map((l) => l.slice(1));
+    let newLines = hunk.lines.filter((l) => l.startsWith(" ") || l.startsWith("+")).map((l) => l.slice(1));
+    const expected = hunk.oldStart == null ? null : Math.max(0, hunk.oldStart - 1 + offset);
+
+    // 삭제·문맥 줄이 없는 순수 추가(빈 파일 채우기 포함)는 머리의 위치에 넣는다.
+    if (!oldLines.length) {
+        const at = Math.min(fileLines.length, expected ?? fileLines.length);
+        return { ok: true, result: [...fileLines.slice(0, at), ...newLines, ...fileLines.slice(at)], offset: offset + newLines.length };
+    }
+
+    let found = findBlock(fileLines, oldLines, exactLine);
+    if (!found.length) found = findBlock(fileLines, oldLines, looseLine);
+    if (!found.length && oldLines.every((l) => l === "" || LINE_NUMBER_PREFIX.test(l))) {
+        const strip = (l) => l.replace(LINE_NUMBER_PREFIX, "");
+        oldLines = oldLines.map(strip);
+        newLines = newLines.map(strip);
+        found = findBlock(fileLines, oldLines, exactLine);
+        if (!found.length) found = findBlock(fileLines, oldLines, looseLine);
+    }
+    if (!found.length) {
+        return {
+            ok: false,
+            error: `Hunk ${index + 1}: its context/removed lines were not found in the file: ${previewLines(oldLines)}. Copy them exactly from the latest file_read, without the "N|" line-number prefix, and include a few unchanged lines around the change.`,
+        };
+    }
+    if (found.length > 1 && expected == null) {
+        return {
+            ok: false,
+            error: `Hunk ${index + 1}: its lines match ${found.length} places in the file. Add more unchanged context lines or a "@@ -LINE" header so the place is unique.`,
+        };
+    }
+    // 같은 내용이 여러 곳에 있으면 머리의 줄 번호에 가장 가까운 곳에 적용한다.
+    const at = expected == null ? found[0] : found.reduce((best, i) => (Math.abs(i - expected) < Math.abs(best - expected) ? i : best));
+    const result = [...fileLines.slice(0, at), ...newLines, ...fileLines.slice(at + oldLines.length)];
+    return { ok: true, result, offset: offset + (at - (expected ?? at)) + newLines.length - oldLines.length };
 }
 
 export function executeFilePatch(args, ctx = {}) {
@@ -272,8 +344,9 @@ export function executeFilePatch(args, ctx = {}) {
     const stat = fs.statSync(resolved);
     if (!stat.isFile()) return { error: "not a file", path: resolved };
 
+    // 빈 파일("")도 읽은 기록으로 친다. 예전에는 빈 내용이 거짓으로 걸려, touch로 만든 파일을 채울 수 없었다.
     const snapshot = ctx.fileSnapshots?.get(resolved);
-    if (!snapshot) {
+    if (snapshot === undefined) {
         return { error: "Must file_read this path in this turn before patching." };
     }
 
@@ -288,9 +361,10 @@ export function executeFilePatch(args, ctx = {}) {
     const fileLines = splitLines(currentContent);
     let resultLines = fileLines;
     let offset = 0;
-    const sorted = [...hunks].sort((a, b) => a.oldStart - b.oldStart);
-    for (const hunk of sorted) {
-        const applied = applyHunk(resultLines, hunk, offset);
+    // 줄 번호가 없는 머리(@@ 만 쓴 경우)는 적힌 순서대로 둔다.
+    const sorted = hunks.some((h) => h.oldStart == null) ? hunks : [...hunks].sort((a, b) => a.oldStart - b.oldStart);
+    for (const [index, hunk] of sorted.entries()) {
+        const applied = applyHunk(resultLines, hunk, index, offset);
         if (!applied.ok) return applied;
         resultLines = applied.result;
         offset = applied.offset;

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { skillsDirPath } from "../path-labels.js";
+import { agentBackgroundEnabled, getAgent } from "../agents-store.js";
 import { agentIdForSessionKey, activeSessionFilePath, loadChatHistory } from "../agent/chat-history.js";
 import { scheduleWork } from "../agent-queue.js";
 import { getReviewConfig } from "../self-improvement.js";
@@ -59,6 +60,8 @@ export function maybeScheduleSessionReview({ sessionKey, agentId, result, automa
     if (cfg.enabled === false) return;
     if (!result || result.error === "stopped_by_user") return;
     if (String(sessionKey || "").startsWith("dream:")) return;
+    // 백그라운드 작업을 끈 에이전트
+    if (!agentBackgroundEnabled(getAgent(agentIdForSessionKey(sessionKey) || agentId))) return;
 
     const minToolCalls = Number.isFinite(cfg.minToolCalls) ? cfg.minToolCalls : 5;
     if ((result.stats?.toolCallCount || 0) < minToolCalls) return;

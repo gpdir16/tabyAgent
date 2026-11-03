@@ -1,19 +1,15 @@
 import { loadUserConfig } from "./config-loader.js";
-import {
-    getThinkingLevelForUser,
-    normalizeThinkingLevel as normalizeThinkingForProvider,
-    thinkingLevelLabel,
-    getCachedProviderThinkingMeta,
-    getProviderThinkingMeta,
-} from "./thinking-levels.js";
+import { normalizeThinkingLevel, thinkingLevelLabel, getCachedProviderThinkingMeta, getProviderThinkingMeta } from "./thinking-levels.js";
 
-export {
-    getThinkingLevelForUser as getThinkingLevel,
-    normalizeThinkingForProvider as normalizeThinkingLevel,
-    thinkingLevelLabel,
-    getProviderThinkingMeta,
-    getCachedProviderThinkingMeta,
-};
+export { normalizeThinkingLevel, thinkingLevelLabel, getProviderThinkingMeta, getCachedProviderThinkingMeta };
+
+// 예전 전역 추론 깊이 설정. 모델 프리셋이 없을 때의 기본값으로 남겨 둔다.
+export function getThinkingLevelForUser(config = loadUserConfig()) {
+    const pid = config.provider?.id || "default";
+    return normalizeThinkingLevel(config.thinkingLevel ?? config.reasoningEffort, pid);
+}
+
+export const getThinkingLevel = getThinkingLevelForUser;
 
 export function isReplyFooterEnabled(config = loadUserConfig()) {
     if (config.showReplyFooter === false) return false;
@@ -33,6 +29,7 @@ export function providerKeyFromId(providerId, config = loadUserConfig()) {
     if (providerId === "ollama") return "ollama";
     if (providerId === "ollama-cloud") return "ollamaCloud";
     if (providerId === "zenmux") return "zenmux";
+    if (providerId === "opencode-go") return "opencodeGo";
     if (providerId === "upstage") return "upstage";
     if (providerId === "codex") return "codex";
     if (providerId === "grok") return "grok";

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { USER_DIR } from "../paths.js";
-import { DEFAULT_AGENT_ID, agentMemoryPath, getAgent, listAgents, mainAgentRef } from "../agents-store.js";
+import { DEFAULT_AGENT_ID, agentBackgroundEnabled, agentMemoryPath, getAgent, listAgents, mainAgentRef } from "../agents-store.js";
 import { agentIdForSessionKey, extractSessionTextLines, listSessionRoots } from "../agent/chat-history.js";
 import { createLlmClient } from "../llm/client.js";
 import { readJsonFile, writeFileAtomic } from "../atomic-file.js";
@@ -9,6 +9,11 @@ import { getDreamingConfig } from "../self-improvement.js";
 import { appendDreamDiary, dreamBackupDir, loadDreamingState, saveDreamingState } from "./state.js";
 
 const MEMORY_PATH = path.join(USER_DIR, "memory.md");
+
+// 백그라운드 작업을 끈 에이전트는 대화를 읽지도, 메모리를 고치지도 않는다.
+function sweptAgents() {
+    return listAgents().filter(agentBackgroundEnabled);
+}
 
 const PER_FILE_CHAR_CAP = 6000;
 const TOTAL_CHAR_CAP = 24000;
@@ -36,6 +41,7 @@ function collectCandidates(state) {
     for (const { sessionKey, dir: root } of listSessionRoots()) {
         const ownerId = agentIdForSessionKey(sessionKey);
         const owner = (ownerId && ownerId !== DEFAULT_AGENT_ID && getAgent(ownerId)) || mainAgentRef();
+        if (!agentBackgroundEnabled(owner)) continue;
         const manifest = readJsonFile(path.join(root, "manifest.json"));
         if (!manifest?.sessions?.length) continue;
 
@@ -115,7 +121,7 @@ Rules:
 
 function formatMemorySections() {
     const parts = [`### target "shared" (memory.md)\n\n${readText(MEMORY_PATH, MEMORY_INPUT_CAP) || "(empty)"}`];
-    for (const agent of listAgents()) {
+    for (const agent of sweptAgents()) {
         const body = readText(agentMemoryPath(agent.id), AGENT_MEMORY_INPUT_CAP) || "(empty)";
         parts.push(`### target "${agent.id}" (${agent.name} private memory)\n\n${body}`);
     }
@@ -241,7 +247,7 @@ function backupOnce(backupDir, filePath, label, done) {
 }
 
 function applyOps(ops, { maxOps, backupDir, resolveTarget = targetFileFor } = {}) {
-    const agentsById = new Map(listAgents().map((a) => [a.id, a]));
+    const agentsById = new Map(sweptAgents().map((a) => [a.id, a]));
     const results = [];
     const contents = new Map();
     const backedUp = new Set();
@@ -299,7 +305,7 @@ const ROUTINE_PROMOTE_CAP = 2;
 function accumulateRoutines(routines, state, { backupDir, diary = [] } = {}) {
     state.routineWatch = state.routineWatch || {};
     const now = Date.now();
-    const agents = new Set([DEFAULT_AGENT_ID, ...listAgents().map((a) => a.id)]);
+    const agents = new Set([DEFAULT_AGENT_ID, ...sweptAgents().map((a) => a.id)]);
     const promotions = [];
 
     for (const raw of Array.isArray(routines) ? routines : []) {

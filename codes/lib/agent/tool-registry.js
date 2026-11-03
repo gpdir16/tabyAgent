@@ -11,6 +11,8 @@ import { prepareToolSecrets, redactDeep, redactText } from "../secrets/vault.js"
 import { userSayToolDefinitions, executeUserSayTool } from "../tools/user-say-tool.js";
 import { vizToolDefinitions, executeVizTool } from "../tools/visualization.js";
 import { xvfbGuiToolDefinitions, executeXvfbGuiTool } from "../tools/xvfb-gui.js";
+import { browserToolDefinitions, BROWSER_TOOL_NAMES, executeBrowserTool } from "../tools/browser.js";
+import { withTerminalChallengeHint } from "../tools/browser-click.js";
 import { consultAgentToolDefinitions, executeConsultAgent } from "../tools/consult-agent.js";
 import { sessionSearchToolDefinitions, executeSessionSearchTool } from "../tools/session-search.js";
 import { listAgents } from "../agents-store.js";
@@ -51,6 +53,7 @@ export async function getAllToolDefinitions() {
         ...(listAgents().length ? consultAgentToolDefinitions : []),
         ...vizToolDefinitions,
         ...(isDockerRuntime() ? xvfbGuiToolDefinitions : []),
+        ...browserToolDefinitions,
         ...getDynamicMcpToolDefinitions(),
     ];
 }
@@ -75,7 +78,8 @@ async function runTool(name, args, ctx) {
         if (name.startsWith("skills_")) return await executeSkillsTool(name, args);
         if (name.startsWith("todo_")) return await executeTodoTool(name, args, ctx);
         if (name === "terminal_run" || name === "bg_status" || name === "bg_list" || name === "bg_kill") {
-            return await executeTerminalTool(name, args, ctx);
+            const result = await executeTerminalTool(name, args, ctx);
+            return isDockerRuntime() ? withTerminalChallengeHint(args, result) : result;
         }
         if (name === "telegram_send_file" || name === "send_file") return await executeSendFileTool(name, args, ctx);
         if (name === "user_ask") return await executeUserAskTool(name, args, ctx);
@@ -84,6 +88,7 @@ async function runTool(name, args, ctx) {
         if (name === "consult_agent") return await executeConsultAgent(name, args, ctx);
         if (name === "session_search") return await executeSessionSearchTool(name, args);
         if (name === "viz_create") return await executeVizTool(name, args);
+        if (BROWSER_TOOL_NAMES.has(name)) return await executeBrowserTool(name, args, ctx);
         if (name.startsWith("mcp__")) return await invokeMcpTool(name, args, ctx);
         if (name === "xvfb_gui") return await executeXvfbGuiTool(name, args, ctx);
         return { error: `Unknown tool: ${name}` };

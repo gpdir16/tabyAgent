@@ -214,7 +214,12 @@ export function canAddAgent() {
     return listAgents().length < MAX_AGENTS;
 }
 
-export function addAgent({ name, persona, threadId }) {
+// 자동 체크인, 세션 리뷰, 드림 스윕을 이 에이전트에서 돌리는지. 따로 끄지 않았으면 켜져 있다.
+export function agentBackgroundEnabled(agent) {
+    return agent?.backgroundTasks !== false;
+}
+
+export function addAgent({ name, persona, threadId, backgroundTasks }) {
     const named = normalizeAgentName(name);
     if (named.error) return named;
     const person = normalizeAgentPersona(persona);
@@ -234,6 +239,7 @@ export function addAgent({ name, persona, threadId }) {
         threadId: Number(threadId),
         createdAt: new Date().toISOString(),
     };
+    if (backgroundTasks === false) agent.backgroundTasks = false;
     store.agents.push(agent);
     saveAgentsStore(store);
     ensureAgentMemory(id);
@@ -256,6 +262,10 @@ export function updateAgent(id, patch) {
         current.persona = person.persona;
     }
     if (patch.threadId !== undefined) current.threadId = Number(patch.threadId);
+    if (patch.backgroundTasks !== undefined) {
+        if (patch.backgroundTasks === false) current.backgroundTasks = false;
+        else delete current.backgroundTasks;
+    }
     store.agents[idx] = current;
     saveAgentsStore(store);
     return { agent: current };

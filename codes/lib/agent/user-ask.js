@@ -4,11 +4,33 @@ import { deleteMessageSafe, sendMessageSafe, editMessageTextSafe } from "../tele
 import { t } from "../i18n.js";
 import { telegramThreadOpts } from "../agent-route.js";
 import { clearTodoWaiting, markTodoWaiting } from "../todos/store.js";
-import { createSecret, findSecretIdByName, updateSecret } from "../secrets/store.js";
+import { createSecret, deleteOnceSecrets, findSecretIdByName, updateSecret } from "../secrets/store.js";
 import { placeholderFor } from "../secrets/vault.js";
 
 // sessionKey -> { key, id, bot, lang, question, options, messageId, resolve, timer, settled, todoId, secret }
 const pendingAsks = new Map();
+
+// 질문에 답하는 대신 채팅을 보냈을 때의 취소 사유. 그 메시지가 바로 다음에 대화에 들어간다.
+export const ASK_CANCEL_USER_MESSAGE = "user_sent_message";
+const USER_MESSAGE_NOTE =
+    "The user did not answer. They sent a new chat message instead, which follows. Read it and follow it; it may change or cancel what you were doing. Do not re-ask the same question unless that message still needs it.";
+
+// 일회용 시크릿(인증 코드 등). 세션별로 모아 두었다가 그 턴이 끝나면 금고에서 지운다(loop.js의 runAgent).
+const onceSecretsBySession = new Map();
+const ONCE_SUFFIX = " (one-time)";
+
+// 같은 이름의 오래 쓰는 시크릿을 덮어쓰지 않게 일회용은 이름 뒤에 표시를 붙여 따로 둔다. 금고 이름 상한(60자)에 맞춘다.
+function onceSecretName(name) {
+    return `${name.slice(0, 60 - ONCE_SUFFIX.length).trim()}${ONCE_SUFFIX}`;
+}
+
+export function purgeOnceSecrets(sessionKey) {
+    const key = String(sessionKey);
+    const ids = onceSecretsBySession.get(key);
+    if (!ids?.size) return 0;
+    onceSecretsBySession.delete(key);
+    return deleteOnceSecrets([...ids]);
+}
 
 function trimLabel(label, max = 60) {
     const s = String(label);
@@ -61,11 +83,17 @@ export function resolvePendingAskByButton(sessionKey, askId, optionIndex) {
 // 값이 담긴 사용자 메시지는 채팅에 남지 않게 바로 지운다. 값이 잘못되면 SecretError를 던진다.
 function settleSecretAsk(entry, value, userMessageId) {
     if (userMessageId) void deleteMessageSafe(entry.bot, entry.chatId || entry.key, userMessageId);
-    const existing = findSecretIdByName(entry.secret.name);
+    const once = entry.secret.once === true;
+    const name = once ? onceSecretName(entry.secret.name) : entry.secret.name;
+    const existing = findSecretIdByName(name);
     if (existing) updateSecret(existing, { value });
-    const id = existing || createSecret({ name: entry.secret.name, value });
-    settle(entry, { ok: true, saved: true, name: entry.secret.name, placeholder: placeholderFor(id) });
-    void finishAskMessage(entry, `🔐 ${t("secret_ask_saved", entry.lang, { name: entry.secret.name })}`);
+    const id = existing || createSecret({ name, value, once });
+    if (once) {
+        if (!onceSecretsBySession.has(entry.key)) onceSecretsBySession.set(entry.key, new Set());
+        onceSecretsBySession.get(entry.key).add(id);
+    }
+    settle(entry, { ok: true, saved: true, name, placeholder: placeholderFor(id) });
+    void finishAskMessage(entry, `🔐 ${t("secret_ask_saved", entry.lang, { name })}`);
     return true;
 }
 
@@ -96,7 +124,7 @@ export function resolvePendingAskByText(sessionKey, text, { messageId = null } =
 export function cancelPendingAsk(sessionKey, reason = "aborted") {
     const entry = pendingAsks.get(String(sessionKey));
     if (!entry) return false;
-    settle(entry, { error: reason });
+    settle(entry, { error: reason, ...(reason === ASK_CANCEL_USER_MESSAGE ? { note: USER_MESSAGE_NOTE } : {}) });
     void finishAskMessage(entry, `${entry.question}\n\n✖️ ${t("user_ask_cancelled", entry.lang)}`);
     return true;
 }
@@ -149,7 +177,7 @@ export async function askUser({ bot, chatId, sessionKey, threadId, question, opt
             timer: null,
             settled: false,
             todoId: todoId || null,
-            secret: secret ? { name: secret.name } : null,
+            secret: secret ? { name: secret.name, id: null, once: secret.once === true } : null,
         };
         entry.timer = setTimeout(() => {
             settle(entry, { error: "timeout" });

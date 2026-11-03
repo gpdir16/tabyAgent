@@ -6,7 +6,7 @@ import { getSecretValues, listSecrets } from "./store.js";
 const PLACEHOLDER_RE = /\{\{secret:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}/g;
 
 // 값을 직접 치환해 넣는 도구. terminal_run은 셸 인용 문제 때문에 환경 변수로 넘긴다.
-const INJECT_TOOLS = (name) => name === "xvfb_gui" || name === "file_patch" || name.startsWith("mcp__");
+const INJECT_TOOLS = (name) => name === "xvfb_gui" || name === "file_patch" || name === "browser_type" || name.startsWith("mcp__");
 
 export const placeholderFor = (id) => `{{secret:${id}}}`;
 
@@ -133,7 +133,8 @@ export function redactDeep(value, depth = 0) {
 
 // 시스템 프롬프트의 "Stored secrets" 본문. 사용자가 붙인 이름과 id만 싣는다.
 export function formatSecretsForPrompt() {
-    const list = listSecrets();
+    // 일회용 값은 요청한 턴에서 도구 결과로 자리표시자를 받고 턴이 끝나면 지워지므로 목록에 싣지 않는다.
+    const list = listSecrets().filter((s) => !s.once);
     if (!list.length) return "- (none)";
     return list.map((s) => `- ${s.name}: \`${placeholderFor(s.id)}\``).join("\n");
 }

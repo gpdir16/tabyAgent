@@ -79,13 +79,23 @@ RUN apt-get update \
 # camoufox-js postinstall이 브라우저를 $HOME/.cache에 받는다. HOME=/app/user는
 # 런타임에 볼륨이 마운트되는 경로라 이미지에 넣으면 그대로 가려진다.
 # 볼륨 밖 /opt에 두고 심볼릭 링크로 연결한다(엔트리포인트가 없으면 다시 만든다).
+# 번들 폰트 2GB 중 리눅스 지문이 쓰는 것만 남긴다(CAMOFOX_OS를 리눅스 밖으로 바꾸면 그 OS 폰트가 없다).
+# 지운 파일이 아래 레이어에 남지 않게 설치와 같은 RUN에서 지운다.
+# Firefox는 탭마다 웹 콘텐츠 프로세스를 8개까지 나눠 띄운다. 2개로 묶으면 탭 6개 기준 메모리가 3분의 1쯤 준다.
+# camoufox.cfg 기본값이라 에이전트가 따로 만든 프로필에도 적용된다.
+# 새 페이지는 창 대신 탭으로 연다(scripts/camoufox-tabs.cfg). 뒤에 있는 탭은 그리기를 멈춰 CPU가 크게 준다.
+# juggler 코드 모양이 바뀌었으면 패치 스크립트가 빌드를 멈춘다.
+COPY scripts/prune-camoufox-fonts.mjs scripts/patch-camoufox-tabs.mjs scripts/camoufox-tabs.cfg /tmp/
 RUN mkdir -p /app/user \
     && npm install --global "camofox-browser@${CAMOFOX_VERSION}" \
     && npm cache clean --force \
     && mv /app/user/.cache/camoufox /opt/camoufox \
+    && node /tmp/prune-camoufox-fonts.mjs /opt/camoufox "$(npm root --global)/camofox-browser/node_modules/camoufox-js" \
+    && printf '\ndefaultPref("dom.ipc.processCount", 2);\n' >> /opt/camoufox/camoufox.cfg \
+    && node /tmp/patch-camoufox-tabs.mjs /opt/camoufox \
     && mkdir -p /app/user/.cache \
     && ln -s /opt/camoufox /app/user/.cache/camoufox \
-    && rm -rf /tmp/camoufox-* /tmp/node-compile-cache
+    && rm -rf /tmp/camoufox-* /tmp/node-compile-cache /tmp/prune-camoufox-fonts.mjs /tmp/patch-camoufox-tabs.mjs /tmp/camoufox-tabs.cfg
 
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev && npm cache clean --force

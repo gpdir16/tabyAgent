@@ -54,11 +54,11 @@ export function terminalCwdParamDescription() {
 }
 
 export function fileReadDescription() {
-    return `Read a text file. Default: paths relative to \`${USER_DIR}\`.${workspaceSuffix()} Optional line range; output capped below 50% of remaining context.`;
+    return `Read a text file, or look at an image file (png/jpg/webp/gif, e.g. a screenshot): the image itself is shown to you. Default: paths relative to \`${USER_DIR}\`.${workspaceSuffix()} Optional line range; output capped below 50% of remaining context.`;
 }
 
 export function filePatchDescription() {
-    return `Patch a text file (unified diff). Default \`${USER_DIR}\`.${workspaceSuffix()} Call file_read on the same path in this turn first; disk must still match that read.`;
+    return `Patch a text file (unified diff). Default \`${USER_DIR}\`.${workspaceSuffix()} Call file_read on the same path in this turn first; disk must still match that read. Hunks are placed by their context and removed lines, which must match the file exactly (leave out file_read's "N|" line-number prefixes); the @@ line numbers only break ties. Include 2-3 unchanged lines around each change.`;
 }
 
 export function filePathParamDescription() {
@@ -67,7 +67,7 @@ export function filePathParamDescription() {
 }
 
 export function sendFileDescription() {
-    return `Send a file to Telegram. Default \`${USER_DIR}\`.${workspaceSuffix()}`;
+    return `Send a file to Telegram. Default \`${USER_DIR}\`.${workspaceSuffix()} Max 50 MB per file: check the size first and split or compress anything larger.`;
 }
 
 export function mcpConfigEditHint(serverName) {
@@ -84,7 +84,6 @@ function buildSkillContentVars() {
         MCP_CONFIG_PATH: mcpConfigPath(),
         SCHEDULING_PATH: todosConfigPath(),
         DOWNLOAD_DIR: downloadDirPath(),
-        CAMOFOX_DIR: path.join(CODES_DIR, "skills", "camofox"),
         CAMOFOX_DATA_DIR: path.join(USER_DIR, "camofox"),
     };
 }

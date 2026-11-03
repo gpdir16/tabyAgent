@@ -1,6 +1,7 @@
 import {
     buildInitialMessages,
     countMessagesTokens,
+    countRequestTokens,
     countTokens,
     getCompressTriggerTokens,
     getContextLimit,
@@ -16,6 +17,7 @@ import {
 } from "./chat-history.js";
 import { isAgentSessionRunning } from "./session.js";
 import { createLlmClient } from "../llm/client.js";
+import { tokenScale } from "../llm/token-estimate.js";
 
 const COMPRESS_SYSTEM = `You compress chat transcripts for long-term context storage.
 
@@ -53,10 +55,6 @@ const TOOL_OUTPUT_KEEP_TAIL = 200;
 
 function buildWithHistory(userMessage, history, opts = {}) {
     return buildInitialMessages(userMessage, { history, ...opts });
-}
-
-function tokenCount(messages) {
-    return countMessagesTokens(messages);
 }
 
 function contentToText(content) {
@@ -161,12 +159,25 @@ function oldItemsToTranscript(oldItems) {
     return `## Earlier conversation (compressed summary)\n\n${summaryPrefix}\n\n---\n\n${transcript}`;
 }
 
+// 새 세션으로 넘기는 최근 턴. 사용자 메시지의 stateUpdate(지난 세션 스냅샷 기준 갱신)는 뺀다. 새 세션은
+// 지금 값으로 스냅샷을 다시 잡으므로, 남겨 두면 시스템 프롬프트보다 오래된 값이 뒤에 보인다.
 function recentItemsToHistory(recentItems) {
     const history = [];
     for (const item of recentItems) {
-        if (item.kind === "turn") {
+        if (item.kind !== "turn") continue;
+        const messages = item.turn?.messages;
+        if (!Array.isArray(messages) || !messages.some((m) => m?.stateUpdate)) {
             history.push(item.turn);
+            continue;
         }
+        history.push({
+            ...item.turn,
+            messages: messages.map((m) => {
+                if (!m?.stateUpdate) return m;
+                const { stateUpdate: _dropped, ...rest } = m;
+                return rest;
+            }),
+        });
     }
     return history;
 }
@@ -242,7 +253,8 @@ async function applyIntelligentCompression(
     { signal, runtimeInfo = {}, chatId = null, archiveReason = "context_compression", excludeMessageIds = [] } = {},
 ) {
     const recentBudget = getKeepRecentTokenBudget(modelMeta);
-    const { oldItems, recentItems } = splitHistoryForCompression(fullHistory, userMessage, recentBudget);
+    // 기록은 배율 없이 어림하므로 예산을 같은 단위로 바꿔 나눈다.
+    const { oldItems, recentItems } = splitHistoryForCompression(fullHistory, userMessage, recentBudget / tokenScale(modelMeta?.model));
 
     if (!oldItems.length) {
         return null;
@@ -268,6 +280,7 @@ async function applyIntelligentCompression(
         attachments,
         runtimeInfo,
         excludeMessageIds,
+        promptStateChatId: chatId,
     });
     return repairToolPairIntegrity(rebuilt);
 }
@@ -276,13 +289,15 @@ export async function ensureWithinContextLimit(
     llm,
     userMessage,
     modelMeta,
-    { chatId, onStatusPhase, attachments = [], session = null, runtimeInfo = {}, history = null, excludeMessageIds = [] } = {},
+    { chatId, onStatusPhase, attachments = [], session = null, runtimeInfo = {}, history = null, excludeMessageIds = [], toolTokens = 0 } = {},
 ) {
     const fullHistory = history ?? (chatId ? loadChatHistory(chatId) : []);
-    const trigger = getCompressTriggerTokens(modelMeta);
+    const tokenCount = (messages) => countRequestTokens(messages, { model: modelMeta?.model, toolTokens });
+    const trigger = getCompressTriggerTokens(modelMeta, llm?.provider);
     const hardLimit = getContextLimit(modelMeta);
 
-    const buildOpts = { attachments, modelMeta, runtimeInfo, excludeMessageIds };
+    // chatId가 없는 실행(드리밍 리뷰처럼 기록을 남기지 않는 실행)은 세션 스냅샷을 쓰지 않는다.
+    const buildOpts = { attachments, modelMeta, runtimeInfo, excludeMessageIds, promptStateChatId: chatId };
     let messages = buildWithHistory(userMessage, fullHistory, buildOpts);
     let tokens = tokenCount(messages);
 

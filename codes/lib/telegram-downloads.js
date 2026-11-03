@@ -84,20 +84,3 @@ export async function saveIncomingTelegramFile(ctx) {
         caption: msg.caption?.trim() || "",
     };
 }
-
-export function formatFileUserMessage(saved, { visionAttached = false } = {}) {
-    const lines = [
-        "[User sent a file]",
-        `Path: ${saved.path}`,
-        `Name: ${saved.fileName}`,
-        `Type: ${saved.mimeType} (${saved.kind})`,
-        `Size: ${saved.sizeBytes} bytes`,
-    ];
-    if (saved.caption) lines.push(`Caption: ${saved.caption}`);
-    if (visionAttached) {
-        lines.push("", "The image is attached for vision in this turn — describe or answer from what you see.");
-    } else {
-        lines.push("", `The file is stored under ${DOWNLOAD_DIR}. Use terminal_run to inspect if needed.`);
-    }
-    return lines.join("\n");
-}
