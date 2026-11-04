@@ -1,5 +1,6 @@
 {
     "name": "tabyagent",
+    "version": "1.4.0",
     "description": "AI Agent for Telegram",
     "type": "module",
     "scripts": {
