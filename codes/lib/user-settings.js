@@ -81,7 +81,7 @@ export function approvalLevelLabel(lang, level) {
 
 // 컨텍스트 윈도우의 몇 %가 찼을 때 오래된 대화를 요약으로 압축할지.
 // UI에는 프리셋 드롭다운으로 노출하고, 실제 값은 10–95 범위로 정규화한다.
-export const CONTEXT_TRIGGER_PRESETS = [50, 60, 70, 75, 80, 85, 90];
+export const CONTEXT_TRIGGER_OPTIONS = [50, 60, 70, 75, 80, 85, 90];
 const DEFAULT_CONTEXT_TRIGGER_PERCENT = 75;
 
 export function normalizeContextTriggerPercent(value, fallback = DEFAULT_CONTEXT_TRIGGER_PERCENT) {

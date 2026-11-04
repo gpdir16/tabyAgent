@@ -62,6 +62,11 @@ export function loadAgentsStore() {
             a.uuid = newUuid();
             mutated = true;
         }
+        // 제거된 모델 프리셋 필드가 예전 agents.json에 남아 있으면 지운다.
+        if ("modelPreset" in a) {
+            delete a.modelPreset;
+            mutated = true;
+        }
     }
     const store = { agents, mainThreadId: normalizeThreadId(raw?.mainThreadId) };
     if (mutated) writeJson(AGENTS_PATH, { agents, ...(store.mainThreadId ? { mainThreadId: store.mainThreadId } : {}) });

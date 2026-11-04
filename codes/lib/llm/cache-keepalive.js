@@ -85,11 +85,11 @@ const clampNumber = (value, min, max, fallback) => {
     return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 };
 
-// 모델 프리셋별 설정: { mode: "auto" } | { mode: "off" } | { mode: "custom", ttlMinutes, keepHours }.
-// 저장하지 않은 프리셋은 자동이다(예전의 false는 끔). 예전에는 프로바이더 종류(id)로 저장했으므로 그 값도 읽는다.
+// 프로필별 설정: { mode: "auto" } | { mode: "off" } | { mode: "custom", ttlMinutes, keepHours }.
+// 저장하지 않은 프로필은 자동이다(예전의 false는 끔). 예전에는 프로바이더 종류(id)로 저장했으므로 그 값도 읽는다.
 function cacheKeepAliveSettings(provider, config = loadUserConfig()) {
     const all = config.cacheKeepAlive || {};
-    const raw = (provider.presetUid && all[provider.presetUid]) ?? all[provider.id || "default"];
+    const raw = all[provider.profileUid || provider.id || "default"];
     if (raw === false || raw?.mode === "off") return { mode: "off" };
     if (raw?.mode === "custom") {
         return {
@@ -468,9 +468,8 @@ function schedule(entry) {
 function worthPinging(entry) {
     let current = null;
     try {
-        // 이 대화가 쓰는 프리셋의 지금 설정. 프리셋 대신 예전 모델 오버라이드를 쓰는 봇은 모델을 그 봇의 것으로 맞춘다.
-        const fresh = getMergedProvider(loadUserConfig(), entry.provider.presetUid);
-        current = entry.provider.modelOverride ? { ...fresh, model: entry.provider.model, openRouterPins: {} } : fresh;
+        // 이 대화가 쓰는 현재 모델 설정.
+        current = getMergedProvider(loadUserConfig());
     } catch {
         return false; // 설정을 읽을 수 없으면 보내지 않는다
     }

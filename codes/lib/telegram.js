@@ -886,7 +886,8 @@ export async function startTelegramBot() {
         await sendMessageSafe(ctx.api, chatId, result.message, telegramThreadOpts(route.threadId));
     });
 
-    bot.callbackQuery(/^cfg:/, async (ctx) => {
+    // c: 접두사는 프리셋·프로필 목록의 짧은 콜백이다(텔레그램 callback_data 64바이트 제한).
+    bot.callbackQuery(/^(cfg|c):/, async (ctx) => {
         await handleConfigWizardCallback(ctx, bot);
     });
 

@@ -31,7 +31,6 @@ function parseToolArgs(raw) {
 
 function providerKey(provider) {
     return [
-        provider.presetUid || "",
         provider.profileUid || "",
         provider.id,
         provider.type,

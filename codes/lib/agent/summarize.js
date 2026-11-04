@@ -386,7 +386,7 @@ export async function compressBotSessions(chatIds = null, onProgress = null) {
     if (!candidates.length) return result;
     let done = 0;
     onProgress?.(done, candidates.length);
-    // 에이전트별 모델 오버라이드가 없으므로 클라이언트 하나로 모두 요약한다.
+    // 요약은 현재 모델 설정으로 한 번만 만든 클라이언트를 쓴다.
     const llm = await createLlmClient();
     for (const chatId of candidates) {
         try {

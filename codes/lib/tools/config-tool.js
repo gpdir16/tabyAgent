@@ -1,5 +1,4 @@
 import { getMergedProvider, loadUserConfig, saveUserConfig } from "../config-loader.js";
-import { defaultPreset } from "../model-presets.js";
 import { normalizeThinkingLevel } from "../user-settings.js";
 import { restartUpdateScheduler } from "../update/scheduler.js";
 
@@ -47,10 +46,7 @@ export function executeConfigTool(name, args, ctx = {}) {
         updated = true;
     }
     if (a.thinkingLevel !== undefined) {
-        // 추론 깊이는 기본 모델 프리셋이 있으면 그 값, 없으면 예전 전역 값을 쓴다.
-        const level = normalizeThinkingLevel(a.thinkingLevel, getMergedProvider(config).id);
-        config.thinkingLevel = level;
-        if (Array.isArray(config.modelPresets) && config.modelPresets.length) defaultPreset(config).thinkingLevel = level;
+        config.thinkingLevel = normalizeThinkingLevel(a.thinkingLevel, getMergedProvider(config).id);
         updated = true;
     }
     if (a.showReplyFooter !== undefined) {
@@ -67,7 +63,7 @@ export function executeConfigTool(name, args, ctx = {}) {
     return {
         ok: true,
         language: config.language,
-        thinkingLevel: defaultPreset(config).thinkingLevel,
+        thinkingLevel: config.thinkingLevel,
         showReplyFooter: config.showReplyFooter,
         updateCheckEnabled: config.updateCheckEnabled,
         nsfwLevel: config.nsfwLevel,

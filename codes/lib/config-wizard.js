@@ -22,11 +22,19 @@ import { fetchGithubCopilotModels } from "./llm/github-copilot-client.js";
 import { getClaudeAuthStatus } from "./llm/claude-agent-client.js";
 import { cancelClaudeLogin, startClaudeLogin, submitClaudeLoginCode } from "./llm/claude-login.js";
 import { cacheKeepAliveSummary, normalizeCacheKeepAlive } from "./llm/cache-keepalive.js";
-import { defaultPreset } from "./model-presets.js";
+import {
+    activateProfile,
+    addProfile,
+    ensureProfiles,
+    normalizeProfileName,
+    removeProfile,
+    syncActiveProfile,
+    uniqueProfileName,
+} from "./provider-profiles.js";
 import { usageSummary } from "./llm/usage-log.js";
 import { createSecret, deleteSecret, listSecrets } from "./secrets/store.js";
 import { compressBotSessions } from "./agent/summarize.js";
-import { CONTEXT_TRIGGER_PRESETS, getCompressOnModelChange, getContextTriggerPercent, normalizeContextTriggerPercent } from "./user-settings.js";
+import { CONTEXT_TRIGGER_OPTIONS, getCompressOnModelChange, getContextTriggerPercent, normalizeContextTriggerPercent } from "./user-settings.js";
 import {
     getThinkingLevel,
     normalizeThinkingLevel,
@@ -118,18 +126,17 @@ function clearState() {
     }
 }
 
-async function clearActivePrompt(bot, chatId, state) {
-    await deleteMessageSafe(bot, chatId, state.activeMessageId);
-    state.activeMessageId = null;
-    saveState(state);
-}
-
 async function replaceStep(bot, chatId, state, text, keyboard) {
-    await clearActivePrompt(bot, chatId, state);
+    // 새 화면을 먼저 띄우고, 성공한 뒤에 이전 화면을 지운다(지우고 뜸 사이의 빈 화면 방지).
+    const previous = state.activeMessageId;
+    state.activeMessageId = null;
     const opts = keyboard ? { reply_markup: keyboard } : {};
     const sent = await sendMessageSafe(bot, chatId, text, opts);
-    state.activeMessageId = sent.messageIds[0] ?? null;
+    state.activeMessageId = sent.messageIds[0] ?? previous ?? null;
     saveState(state);
+    if (sent.ok && previous && previous !== state.activeMessageId) {
+        await deleteMessageSafe(bot, chatId, previous);
+    }
     return sent;
 }
 
@@ -171,6 +178,8 @@ function applyConfig(partial) {
     const config = loadUserConfig();
     if (!config.telegram) config.telegram = {};
     if (!config.provider) config.provider = { id: "default" };
+    // 프로필 기능을 쓰기 전에 지금 설정을 첫 프로필로 만든다.
+    ensureProfiles(config, { isCustom: isCustomProvider, labelOf: profileLabelOf });
 
     if (partial.language) config.language = partial.language;
     if (partial.providerId) config.provider.id = partial.providerId;
@@ -208,14 +217,13 @@ function applyConfig(partial) {
     if (partial.compressOnModelChange !== undefined) {
         config.compressOnModelChange = Boolean(partial.compressOnModelChange);
     }
-    // 캐시 유지는 지금 프로바이더에 대해 따로 둔다. 자동이 기본이라 끔이나 사용자 지정만 적는다.
+    // 캐시 유지는 지금 프로필에 대해 따로 둔다. 자동이 기본이라 끔이나 사용자 지정만 적는다.
     if (partial.cacheKeepAlive !== undefined) {
-        const pid = config.provider?.id || "default";
-        const presetUid = getMergedProvider(config).presetUid || pid;
+        const key = config.activeProviderProfile || config.provider?.id || "default";
         config.cacheKeepAlive = { ...config.cacheKeepAlive };
         const value = normalizeCacheKeepAlive(partial.cacheKeepAlive);
-        if (value) config.cacheKeepAlive[presetUid] = value;
-        else delete config.cacheKeepAlive[presetUid];
+        if (value) config.cacheKeepAlive[key] = value;
+        else delete config.cacheKeepAlive[key];
         if (!Object.keys(config.cacheKeepAlive).length) delete config.cacheKeepAlive;
     }
     if (partial.timezone !== undefined) {
@@ -231,8 +239,8 @@ function applyConfig(partial) {
         else console.warn(`tabyAgent: selfImprovement patch rejected: ${err}`);
     }
 
-    // 모델 프리셋이 있는 설정은 그 기본 프리셋의 값도 함께 맞춘다.
-    if (Array.isArray(config.modelPresets) && config.modelPresets.length) defaultPreset(config).thinkingLevel = config.thinkingLevel;
+    // 고른 프로필에 바꾼 값(주소·키)을 옮겨 적는다.
+    syncActiveProfile(config);
     saveUserConfig(config);
     if (partial.timezone !== undefined) applyConfiguredTimeZone(config.timezone);
     // proactive는 매 틱 설정을 다시 읽으므로 재시작 불필요. dreaming 크론은 재등록이 필요하다(시간대 포함).
@@ -312,6 +320,17 @@ function texts(lang) {
             catSelfImprove: "Self-improvement",
             catEfficiency: "Efficiency",
             catSecrets: "Secret vault",
+            catProfiles: "Provider profiles",
+            profilesMenuTitle: "Provider profiles",
+            profilesMenuDesc: "Save several provider accounts or endpoints and pick one. The active profile is used by the current model settings.",
+            profilesAdd: "➕ Add from current",
+            profilesUse: "Use",
+            profilesRename: "Rename",
+            profilesDelete: "Delete",
+            profilesDeleteConfirm: 'Delete profile "{name}"?',
+            profilesDeleteYes: "Delete",
+            profilesLastOnly: "The last profile cannot be deleted.",
+            profilesAskName: "Send a name for this profile.",
             secMenuText:
                 "🔐 Secret vault\n\nPasswords and API keys are stored encrypted. Agents use them through placeholders and never see the values.\nTap a secret to delete it.",
             secEmpty: "No secrets stored yet.",
@@ -449,6 +468,17 @@ function texts(lang) {
             catSelfImprove: "자기 개선",
             catEfficiency: "효율적인 운영",
             catSecrets: "시크릿 금고",
+            catProfiles: "프로바이더 프로필",
+            profilesMenuTitle: "프로바이더 프로필",
+            profilesMenuDesc: "같은 프로바이더의 여러 계정이나 주소를 저장해 두고 하나를 골라 씁니다. 현재 모델 설정은 고른 프로필을 씁니다.",
+            profilesAdd: "➕ 지금 설정으로 추가",
+            profilesUse: "사용",
+            profilesRename: "이름 바꾸기",
+            profilesDelete: "삭제",
+            profilesDeleteConfirm: '"{name}" 프로필을 삭제할까요?',
+            profilesDeleteYes: "삭제",
+            profilesLastOnly: "마지막 프로필은 삭제할 수 없습니다.",
+            profilesAskName: "이 프로필의 이름을 보내주세요.",
             secMenuText:
                 "🔐 시크릿 금고\n\n비밀번호와 API 키를 암호화해 보관합니다. 에이전트는 자리표시자로만 쓰고 값은 보지 못합니다.\n지우려면 시크릿을 누르세요.",
             secEmpty: "아직 저장된 시크릿이 없습니다.",
@@ -586,6 +616,17 @@ function texts(lang) {
             catSelfImprove: "自己改善",
             catEfficiency: "効率的な運用",
             catSecrets: "シークレット保管庫",
+            catProfiles: "プロバイダプロファイル",
+            profilesMenuTitle: "プロバイダプロファイル",
+            profilesMenuDesc: "同じプロバイダの複数アカウントや接続先を保存して選べます。現在のモデル設定は選択中のプロファイルを使います。",
+            profilesAdd: "➕ 現在の設定から追加",
+            profilesUse: "使用",
+            profilesRename: "名前を変更",
+            profilesDelete: "削除",
+            profilesDeleteConfirm: "「{name}」プロファイルを削除しますか？",
+            profilesDeleteYes: "削除",
+            profilesLastOnly: "最後のプロファイルは削除できません。",
+            profilesAskName: "このプロファイルの名前を送ってください。",
             secMenuText:
                 "🔐 シークレット保管庫\n\nパスワードやAPIキーを暗号化して保管します。エージェントはプレースホルダー経由で使い、値は見えません。\n削除するにはシークレットを押してください。",
             secEmpty: "まだシークレットは保存されていません。",
@@ -665,6 +706,42 @@ function isReconfig(state) {
     return state.mode === "reconfig";
 }
 
+// ── 프로바이더 프로필·모델 프리셋 ──────────────────────────────
+const PROVIDER_BY_ID = Object.fromEntries(
+    Object.values(PROVIDERS)
+        .filter((p) => !p.custom)
+        .map((p) => [p.id, p]),
+);
+
+function providerLabelOf(provider) {
+    const p = provider || {};
+    const base = PROVIDER_BY_ID[p.id]?.label || p.id || "Provider";
+    const url = String(p.baseURL || "").trim();
+    if (!url) return base;
+    try {
+        return `${base} · ${new URL(url).host}`;
+    } catch {
+        return base;
+    }
+}
+
+function isCustomProvider(provider) {
+    const p = provider || {};
+    if (PROVIDER_BY_ID[p.id]) return false;
+    return Boolean(String(p.baseURL || "").trim());
+}
+
+function profileLabelOf(profile) {
+    return providerLabelOf(profile?.provider);
+}
+
+// 프로필 목록을 읽기 전에 지금 설정을 첫 프로필로 만든다. UI는 항상 프로필 기준으로 움직인다.
+function ensureProfileConfig(config = loadUserConfig()) {
+    const changed = ensureProfiles(config, { isCustom: isCustomProvider, labelOf: profileLabelOf });
+    if (changed) saveUserConfig(config);
+    return config;
+}
+
 function onOffLabel(lang, on) {
     if (lang === "ko") return on ? "켜짐" : "꺼짐";
     if (lang === "ja") return on ? "オン" : "オフ";
@@ -680,6 +757,7 @@ function menuKeyboard(state) {
     kb.text(`${msg.catThinking}: ${thinkingLevelLabel(lang, getThinkingLevel(cfg))}`, "cfg:cat:thinking").row();
     kb.text(`${msg.catModel}: ${cfg.provider?.model || "—"}`, "cfg:cat:model").row();
     kb.text(`${msg.catProvider}: ${PROVIDERS[state.data.providerKey]?.label || cfg.provider?.id || "—"}`, "cfg:cat:provider").row();
+    kb.text(`${msg.catProfiles}: ${cfg.providerProfiles?.length || 1}`, "cfg:cat:profiles").row();
     kb.text(`${msg.catFooter}: ${onOffLabel(lang, state.data.showReplyFooter !== false)}`, "cfg:cat:footer").row();
     kb.text(`${msg.catUpdate}: ${onOffLabel(lang, state.data.updateCheckEnabled !== false)}`, "cfg:cat:update").row();
     kb.text(`${msg.catNsfw}: ${nsfwLevelLabel(lang, getNsfwLevel(cfg))}`, "cfg:cat:nsfw").row();
@@ -948,7 +1026,7 @@ async function showThinkingStep(bot, chatId, state) {
 
 // ── 효율적인 운영: 사용 기록, 프롬프트 캐시 유지, 컨텍스트 압축 ──
 
-const KEEP_ALIVE_CUSTOM_PRESETS = [
+const KEEP_ALIVE_CUSTOM_OPTIONS = [
     { ttlMinutes: 5, keepHours: 1 },
     { ttlMinutes: 60, keepHours: 4 },
 ];
@@ -1044,7 +1122,7 @@ function effMenuKeyboard(state) {
 function keepAlivePickerKeyboard(state) {
     const msg = texts(uiLang(state));
     const kb = new InlineKeyboard().text(msg.effKaAuto, "cfg:eff:kaset:auto").row().text(msg.effKaOff, "cfg:eff:kaset:off").row();
-    KEEP_ALIVE_CUSTOM_PRESETS.forEach((p, i) => {
+    KEEP_ALIVE_CUSTOM_OPTIONS.forEach((p, i) => {
         kb.text(fmt(msg.effKaCustom, { ttl: p.ttlMinutes, hours: p.keepHours }), `cfg:eff:kaset:c${i}`).row();
     });
     kb.text(msg.backMenu, "cfg:cat:eff");
@@ -1055,7 +1133,7 @@ function triggerPickerKeyboard(state) {
     const msg = texts(uiLang(state));
     const cur = getContextTriggerPercent();
     const kb = new InlineKeyboard();
-    for (const pct of CONTEXT_TRIGGER_PRESETS) kb.text(`${pct === cur ? "✓ " : ""}${pct}%`, `cfg:eff:trig:${pct}`).row();
+    for (const pct of CONTEXT_TRIGGER_OPTIONS) kb.text(`${pct === cur ? "✓ " : ""}${pct}%`, `cfg:eff:trig:${pct}`).row();
     kb.text(msg.backMenu, "cfg:cat:eff");
     return kb;
 }
@@ -1110,6 +1188,68 @@ async function runSessionCompression(bot, chatId, lang) {
     }
 }
 
+/* ── 프로바이더 프로필 GUI ─────────────────────────────────── */
+function profileAt(config, index) {
+    return (config.providerProfiles || [])[Number(index)];
+}
+
+function profilesMenuKeyboard(state, config) {
+    const msg = texts(uiLang(state));
+    const kb = new InlineKeyboard();
+    (config.providerProfiles || []).forEach((profile, index) => {
+        const mark = profile.uid === config.activeProviderProfile ? "✓ " : "• ";
+        kb.text(`${mark}${profile.name} — ${profileLabelOf(profile)}`, `c:fv:${index}`).row();
+    });
+    kb.text(msg.profilesAdd, "cfg:prof:add").row();
+    kb.text(msg.backMenu, "cfg:menu");
+    return kb;
+}
+
+async function showProfilesMenu(bot, chatId, state) {
+    const msg = texts(uiLang(state));
+    const config = ensureProfileConfig();
+    state.step = "profiles";
+    delete state.data.profileUid;
+    saveState(state);
+    await replaceStep(bot, chatId, state, `${msg.profilesMenuTitle}\n\n${msg.profilesMenuDesc}`, profilesMenuKeyboard(state, config));
+}
+
+function profileDetailText(config, profile) {
+    const msg = texts(loadUserConfig().language || "en");
+    return [
+        `${msg.profilesMenuTitle}: ${profile.name}`,
+        "",
+        `${msg.catProvider}: ${profileLabelOf(profile)}`,
+        `${msg.catModel}: ${config.provider?.model || "—"}`,
+        `${msg.catApiKey}: ${profile.provider?.apiKey ? "✓" : "—"}`,
+    ].join("\n");
+}
+
+function profileDetailKeyboard(state, profile) {
+    const msg = texts(uiLang(state));
+    const config = loadUserConfig();
+    const index = (config.providerProfiles || []).findIndex((p) => p.uid === profile.uid);
+    const kb = new InlineKeyboard();
+    if (profile.uid !== config.activeProviderProfile) kb.text(msg.profilesUse, `c:fu:${index}`).row();
+    kb.text(msg.profilesRename, `c:fr:${index}`).row();
+    kb.text(msg.profilesDelete, `c:fx:${index}`).row();
+    kb.text(msg.backMenu, "cfg:cat:profiles");
+    return kb;
+}
+
+async function showProfileDetail(bot, chatId, state, uid) {
+    const config = ensureProfileConfig();
+    const profile = (config.providerProfiles || []).find((p) => p.uid === uid);
+    if (!profile) {
+        await showProfilesMenu(bot, chatId, state);
+        return;
+    }
+    state.step = "profile_detail";
+    state.data.profileUid = uid;
+    saveState(state);
+    await replaceStep(bot, chatId, state, profileDetailText(config, profile), profileDetailKeyboard(state, profile));
+}
+
 async function showMenuStep(bot, chatId, state) {
     const lang = uiLang(state);
     state.step = "menu";
@@ -1124,7 +1264,6 @@ async function completeModelSelection(bot, chatId, state, { userMessageId } = {}
     if (isReconfig(state)) {
         const prevModel = loadUserConfig().provider?.model || "";
         await applyConfig({ model: state.data.model });
-        await clearActivePrompt(bot, chatId, state);
         await deleteMessageSafe(bot, chatId, userMessageId);
         await returnToMenu(bot, chatId, state);
         // 모델이 바뀌면 묻기만 하고, 사용자가 버튼을 눌러야 압축한다.
@@ -1310,9 +1449,7 @@ export function resetOnboarding(chatId) {
 export async function openConfigWizard(ctx, bot) {
     const chatId = String(ctx.chat.id);
     const prev = loadState();
-    if (prev?.activeMessageId) {
-        await deleteMessageSafe(bot, chatId, prev.activeMessageId);
-    }
+    const previousMessageId = prev?.activeMessageId ?? null;
 
     if (isConfigReady()) {
         const seeded = seedWizardDataFromConfig();
@@ -1321,7 +1458,7 @@ export async function openConfigWizard(ctx, bot) {
             step: "menu",
             data: { ...seeded },
             adminChatId: String(chatId),
-            activeMessageId: null,
+            activeMessageId: previousMessageId,
         };
         saveState(state);
         await showMenuStep(bot, chatId, state);
@@ -1330,6 +1467,8 @@ export async function openConfigWizard(ctx, bot) {
 
     resetOnboarding(chatId);
     const state = loadState();
+    state.activeMessageId = previousMessageId;
+    saveState(state);
     const lang = "en";
     await replaceStep(bot, chatId, state, texts(lang).welcome, languageKeyboard(lang));
 }
@@ -1337,10 +1476,11 @@ export async function openConfigWizard(ctx, bot) {
 async function finishWizard(bot, chatId, state, { userMessageId } = {}) {
     if (hasOwner() && !isApproved(chatId)) {
         const lang = state.data.language || "en";
-        await clearActivePrompt(bot, chatId, state);
-        await deleteMessageSafe(bot, chatId, userMessageId);
+        const previous = state.activeMessageId;
         clearState();
         await sendMessageSafe(bot, chatId, t("auth_denied_command", lang));
+        await deleteMessageSafe(bot, chatId, previous);
+        await deleteMessageSafe(bot, chatId, userMessageId);
         return;
     }
 
@@ -1365,17 +1505,20 @@ async function finishWizard(bot, chatId, state, { userMessageId } = {}) {
     });
 
     const doneText = texts(state.data.language).done;
-    await clearActivePrompt(bot, chatId, state);
-    await deleteMessageSafe(bot, chatId, userMessageId);
+    const previous = state.activeMessageId;
     clearState();
     if (!isApproved(chatId)) {
         const claimed = claimOwnerIfNone(chatId);
         if (!claimed.ok) {
             await sendMessageSafe(bot, chatId, t("auth_denied_command", state.data.language || "en"));
+            await deleteMessageSafe(bot, chatId, previous);
+            await deleteMessageSafe(bot, chatId, userMessageId);
             return;
         }
     }
     await sendMessageSafe(bot, chatId, doneText);
+    await deleteMessageSafe(bot, chatId, previous);
+    await deleteMessageSafe(bot, chatId, userMessageId);
     // 첫 실행 후 한 번 — tabyBot 이전 안내 (선택 사항이지만 장기적으로 권장).
     await maybeSendMigrateNotice(bot, chatId, { lang: state.data.language });
 }
@@ -1523,8 +1666,11 @@ async function startCodexLogin(bot, chatId, state) {
             delete state.data.codexAbort;
             delete state.data.codexFlow;
             saveState(state);
-            await clearActivePrompt(bot, chatId, state);
+            const previous = state.activeMessageId;
+            state.activeMessageId = null;
+            saveState(state);
             await sendMessageSafe(bot, chatId, msg.codexLoginSuccess);
+            await deleteMessageSafe(bot, chatId, previous);
             await sendModelStep(bot, chatId, state);
         })
         .catch(async (err) => {
@@ -1561,8 +1707,11 @@ async function startClaudeLoginFlow(bot, chatId, state) {
                 const current = loadState();
                 if (current?.step !== "claude_login") return;
                 if (result.ok) {
-                    await clearActivePrompt(bot, chatId, current);
+                    const previous = current.activeMessageId;
+                    current.activeMessageId = null;
+                    saveState(current);
                     await sendMessageSafe(bot, chatId, msg.claudeLoginSuccess);
+                    await deleteMessageSafe(bot, chatId, previous);
                     await sendModelStep(bot, chatId, current);
                 } else {
                     await replaceStep(bot, chatId, current, msg.claudeLoginFailed.replace("{error}", result.detail || "unknown"), failKb());
@@ -1618,8 +1767,11 @@ async function startGrokLogin(bot, chatId, state) {
             grokLoginAbort = null;
             delete state.data.grokFlow;
             saveState(state);
-            await clearActivePrompt(bot, chatId, state);
+            const previous = state.activeMessageId;
+            state.activeMessageId = null;
+            saveState(state);
             await sendMessageSafe(bot, chatId, msg.grokLoginSuccess);
+            await deleteMessageSafe(bot, chatId, previous);
             await sendModelStep(bot, chatId, state);
         })
         .catch(async (err) => {
@@ -1673,8 +1825,11 @@ async function startGithubCopilotLogin(bot, chatId, state) {
             copilotLoginAbort = null;
             delete state.data.copilotFlow;
             saveState(state);
-            await clearActivePrompt(bot, chatId, state);
+            const previous = state.activeMessageId;
+            state.activeMessageId = null;
+            saveState(state);
             await sendMessageSafe(bot, chatId, msg.copilotLoginSuccess);
+            await deleteMessageSafe(bot, chatId, previous);
             await sendModelStep(bot, chatId, state);
         })
         .catch(async (err) => {
@@ -1705,10 +1860,10 @@ function assertWizardChat(ctx, state) {
 
 async function dismissCallbackPrompt(ctx, bot, chatId, state) {
     const promptId = ctx.callbackQuery?.message?.message_id;
-    if (promptId && state.activeMessageId === promptId) {
-        state.activeMessageId = null;
-        saveState(state);
-    }
+    if (!promptId) return;
+    // 다음 화면이 이 메시지를 대체하는 경우에는 여기서 지우지 않는다.
+    // replaceStep이 새 화면을 먼저 띄운 뒤 이전 메시지를 지운다.
+    if (promptId === state.activeMessageId) return;
     await deleteMessageSafe(bot, chatId, promptId);
 }
 
@@ -1725,8 +1880,9 @@ export async function handleConfigWizardCallback(ctx, bot) {
 
     if (data === "cfg:done") {
         await ctx.answerCallbackQuery();
-        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        const previous = state.activeMessageId;
         clearState();
+        await deleteMessageSafe(bot, chatId, previous);
         return;
     }
 
@@ -1767,6 +1923,120 @@ export async function handleConfigWizardCallback(ctx, bot) {
         saveState(state);
         const lang = uiLang(state);
         await replaceStep(bot, chatId, state, texts(lang).provider, providerKeyboard(lang, state));
+        return;
+    }
+
+    if (data === "cfg:cat:profiles") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await showProfilesMenu(bot, chatId, state);
+        return;
+    }
+
+    if (data.startsWith("c:fv:")) {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        const profile = profileAt(ensureProfileConfig(), data.slice("c:fv:".length));
+        if (profile) await showProfileDetail(bot, chatId, state, profile.uid);
+        else await showProfilesMenu(bot, chatId, state);
+        return;
+    }
+
+    if (data === "cfg:prof:add") {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        const config = ensureProfileConfig();
+        const created = addProfile(config, {
+            name: uniqueProfileName(config.providerProfiles || [], providerLabelOf(config.provider)),
+            provider: config.provider,
+            custom: isCustomProvider(config.provider),
+        });
+        activateProfile(config, created.uid);
+        syncActiveProfile(config);
+        saveUserConfig(config);
+        await showProfileDetail(bot, chatId, state, created.uid);
+        return;
+    }
+
+    if (data.startsWith("c:fu:")) {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        const config = ensureProfileConfig();
+        const profile = profileAt(config, data.slice("c:fu:".length));
+        if (!profile) {
+            await showProfilesMenu(bot, chatId, state);
+            return;
+        }
+        if (activateProfile(config, profile.uid)) saveUserConfig(config);
+        await showProfileDetail(bot, chatId, state, config.activeProviderProfile);
+        return;
+    }
+
+    if (data.startsWith("c:fr:")) {
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        const config = ensureProfileConfig();
+        const profile = profileAt(config, data.slice("c:fr:".length));
+        if (!profile) {
+            await showProfilesMenu(bot, chatId, state);
+            return;
+        }
+        const index = (config.providerProfiles || []).findIndex((p) => p.uid === profile.uid);
+        state.step = "profile_rename";
+        state.data.profileUid = profile.uid;
+        saveState(state);
+        await replaceStep(
+            bot,
+            chatId,
+            state,
+            texts(uiLang(state)).profilesAskName,
+            new InlineKeyboard().text(texts(uiLang(state)).backMenu, `c:fv:${index}`),
+        );
+        return;
+    }
+
+    if (data.startsWith("c:fx:")) {
+        const index = data.slice("c:fx:".length);
+        const config = ensureProfileConfig();
+        const profile = profileAt(config, index);
+        if (!profile) {
+            await ctx.answerCallbackQuery();
+            await showProfilesMenu(bot, chatId, state);
+            return;
+        }
+        const msg = texts(uiLang(state));
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        await replaceStep(
+            bot,
+            chatId,
+            state,
+            fmt(msg.profilesDeleteConfirm, { name: profile.name }),
+            new InlineKeyboard().text(msg.profilesDeleteYes, `c:fo:${index}`).row().text(msg.backMenu, `c:fv:${index}`),
+        );
+        return;
+    }
+
+    if (data.startsWith("c:fo:")) {
+        const config = ensureProfileConfig();
+        const profile = profileAt(config, data.slice("c:fo:".length));
+        if (!profile) {
+            await ctx.answerCallbackQuery();
+            await showProfilesMenu(bot, chatId, state);
+            return;
+        }
+        const result = removeProfile(config, profile.uid);
+        if (result.error === "last_profile") {
+            await ctx.answerCallbackQuery({ text: texts(uiLang(state)).profilesLastOnly });
+            await showProfilesMenu(bot, chatId, state);
+            return;
+        }
+        await ctx.answerCallbackQuery();
+        await dismissCallbackPrompt(ctx, bot, chatId, state);
+        if (result.nextUid) activateProfile(config, result.nextUid);
+        syncActiveProfile(config);
+        saveUserConfig(config);
+        await showProfilesMenu(bot, chatId, state);
         return;
     }
 
@@ -1865,11 +2135,11 @@ export async function handleConfigWizardCallback(ctx, bot) {
     }
     if (data.startsWith("cfg:eff:kaset:")) {
         const value = data.slice("cfg:eff:kaset:".length);
-        const preset = value.startsWith("c") ? KEEP_ALIVE_CUSTOM_PRESETS[Number(value.slice(1))] : null;
+        const option = value.startsWith("c") ? KEEP_ALIVE_CUSTOM_OPTIONS[Number(value.slice(1))] : null;
         await ctx.answerCallbackQuery();
-        if (value.startsWith("c") && !preset) return;
+        if (value.startsWith("c") && !option) return;
         await dismissCallbackPrompt(ctx, bot, chatId, state);
-        await applyConfig({ cacheKeepAlive: preset ? { mode: "custom", ...preset } : { mode: value === "off" ? "off" : "auto" } });
+        await applyConfig({ cacheKeepAlive: option ? { mode: "custom", ...option } : { mode: value === "off" ? "off" : "auto" } });
         await showEffMenu(bot, chatId, state);
         return;
     }
@@ -2236,6 +2506,12 @@ export async function handleConfigWizardCallback(ctx, bot) {
             return;
         }
     }
+
+    // 알 수 없는 짧은 콜백(예전 메시지)은 조용히 무시하지 않고 설정 메뉴로 돌아간다.
+    if (data.startsWith("c:")) {
+        await ctx.answerCallbackQuery();
+        await showMenuStep(bot, chatId, state);
+    }
 }
 
 export async function handleConfigWizardText(ctx, bot) {
@@ -2316,6 +2592,26 @@ export async function handleConfigWizardText(ctx, bot) {
         case "si_pick": {
             await deleteMessageSafe(bot, chatId, userMessageId);
             await showSiMenu(bot, chatId, state);
+            return;
+        }
+        case "profiles": {
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            await showProfilesMenu(bot, chatId, state);
+            return;
+        }
+        case "profile_rename": {
+            await deleteMessageSafe(bot, chatId, userMessageId);
+            const config = ensureProfileConfig();
+            const profile = (config.providerProfiles || []).find((p) => p.uid === state.data.profileUid);
+            const name = normalizeProfileName(text);
+            if (!profile || !name) {
+                await showProfileDetail(bot, chatId, state, state.data.profileUid);
+                return;
+            }
+            profile.name = name;
+            profile.named = true;
+            saveUserConfig(config);
+            await showProfileDetail(bot, chatId, state, profile.uid);
             return;
         }
         case "language": {

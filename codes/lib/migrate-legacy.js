@@ -95,8 +95,28 @@ function listExistingTodos() {
     }
 }
 
+// 제거된 모델 프리셋 기능의 설정 흔적을 지운다. 현재 모델·추론 값은 config.provider/thinkingLevel에 이미 있다.
+function stripRemovedModelConfig() {
+    const configPath = path.join(USER_DIR, "config.json");
+    if (!fs.existsSync(configPath)) return false;
+    const config = readJson(configPath, null);
+    if (!config || typeof config !== "object") return false;
+    if (!("modelPresets" in config) && !("defaultModelPreset" in config)) return false;
+    delete config.modelPresets;
+    delete config.defaultModelPreset;
+    // 예전 프리셋 uid로 저장된 캐시 유지 설정도 함께 지운다.
+    delete config.cacheKeepAlive;
+    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    return true;
+}
+
 export function runLegacyMigrations() {
     const report = { cron: { migrated: 0, skipped: 0 } };
+    try {
+        report.legacyModelConfigRemoved = stripRemovedModelConfig();
+    } catch (err) {
+        console.error("tabyAgent: legacy model config cleanup failed:", err?.message || err);
+    }
     try {
         report.cron = migrateCronToTodos();
         if (report.cron.migrated) {

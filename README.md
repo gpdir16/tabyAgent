@@ -6,47 +6,50 @@ A more autonomous, more persistent, and easier alternative to OpenClaw/Hermes.
 
 Give it a task and it will do it, even if it takes hours or things go wrong.
 
-Memory, skills, self-improvement, scheduled tasks, todos, web browsing, GUI apps, and multiple agents work out of the box. No extra setup.
+Memory, skills, self-improvement, scheduled tasks, todos, web browsing, and GUI apps work out of the box. No extra setup.
+
+> [!IMPORTANT]
+> **tabyAgent is no longer under active development.** It will receive occasional maintenance only, and no new features are planned.
+>
+> - **If you must use a Telegram bot:** keep using tabyAgent as it is, or choose an actively maintained Telegram agent such as Hermes.
+> - **If a web UI is fine instead:** migrate to tabyBot. Send `/migrate` to the bot, then upload the generated package to tabyBot. See [Migrating to tabyBot](#migrating-to-tabybot) for details.
 
 ## What it can do
 
-- **Everyday chat**: Get answers in Telegram. Almost every format is supported — text, images, files, and more.
-- **Inference providers**: Connect OpenAI, OpenRouter, Upstage, OrcaRouter, Synthetic, Ollama (local and Cloud), ZenMux, OpenCode Go, Codex OAuth, Grok OAuth, GitHub Copilot OAuth, Claude OAuth (Pro/Max), or your own API endpoint.
-- **Skills, MCP**: Add the capabilities and tools you want to the agent. Even if you don't install anything yourself, the agent finds and installs what it needs.
-- **Scheduled tasks**: Recurring jobs run on a schedule, report when they finish, and skip when they are not needed.
-- **Todos**: Manages todo lists for both you and the agents. You manage yours with `/todo` or the approve buttons in chat, while agents automatically watch the list, schedule work, and handle your tasks for you.
-- **Multiple agents**: Create specialist agents for different roles — each with its own memory, persona, and Telegram topic — and have them work together.
-- **Run it anywhere**: Docker container or local Node.js. Native support is macOS and Linux. Windows can work through Docker, but that is not guaranteed.
-- **Self-improvement**: tabyAgent can improve itself. It learns from how problems were solved and from your corrections, and it gets sharper the more you use it. It also learns the things you regularly do, and can remind you when you forget.
-- **Secret vault**: Keep passwords and API keys in an encrypted vault. Agents use them without ever seeing the values. When they need a new one, they ask in chat and delete your reply right after storing it.
-- **Cost efficiency**: Keeps the prompt cache warm during short breaks only when that saves money, and shows token usage and cache hit rate by day and model in the settings menu.
+- **Everyday chat.** Get answers in Telegram. It accepts text, images, files, and almost any other format.
+- **Inference providers.** Connect OpenAI, OpenRouter, Upstage, OrcaRouter, Synthetic, Ollama (local and Cloud), ZenMux, OpenCode Go, Codex OAuth, Grok OAuth, GitHub Copilot OAuth, Claude OAuth (Pro/Max), or your own API endpoint.
+- **Skills, MCP.** Add the capabilities and tools you want to the agent. Even if you don't install anything yourself, the agent finds and installs what it needs.
+- **Scheduled tasks.** Recurring jobs run on a schedule, report when they finish, and skip when they are not needed.
+- **Todos.** Manages todo lists for both you and the agents. You manage yours with `/todo` or the buttons in chat, while agents watch the list, schedule work, and handle your tasks for you.
+- **Multiple agents.** Create specialist agents for different roles — each with its own memory, persona, and Telegram topic.
+- **Run it anywhere.** Run it in a Docker container or on local Node.js. It supports macOS and Linux natively. Windows can work through Docker, but that is not guaranteed.
+- **Self-improvement.** tabyAgent learns from how it solved past problems and from your corrections. It also learns what you do regularly and reminds you when you forget.
+- **Secret vault.** Keep passwords and API keys in an encrypted vault. Agents use them without ever seeing the values. When they need a new one, they ask in chat and delete your reply right after storing it.
+- **Cost efficiency.** Keeps the prompt cache warm during short breaks only when that saves money, and shows token usage and cache hit rate by day and model.
 
 ## Differences
 
-- Differences between tabyAgent and tabyBot: (1) tabyAgent runs on Telegram while [tabyBot](https://github.com/gpdir16/tabyBot) runs in its own web UI. (2) Both share the same core features — pick whichever interface fits you better. (3) tabyBot is ahead on the latest features, improvements, and convenience, so I recommend starting with tabyBot if you're new. If you already use tabyAgent there's no need to migrate right away, but it's worth planning one.
-- To migrate to tabyBot, send `/migrate` to your bot on Telegram — you'll get a txt file with the converted data and instructions; upload it to tabyBot and the agent will handle the restore.
+- Differences between tabyAgent and tabyBot: (1) tabyAgent runs on Telegram while [tabyBot](https://github.com/gpdir16/tabyBot) runs in its own web UI. (2) tabyBot is actively developed, while tabyAgent is in maintenance mode and will receive very few updates. (3) Both share the same core, but new features and improvements land in tabyBot first.
 
-| Feature            | tabyAgent                      | Grok Bot         | OpenClaw         | Hermes           | ChatGPT (Chat)  |
-| ------------------ | ------------------------------ | ---------------- | ---------------- | ---------------- | --------------- |
-| Everyday chat      | ✅ Yes                         | ✅ Yes           | ✅ Yes           | ✅ Yes           | ✅ Yes          |
-| Multiple agents    | ✅ Yes                         | ✅ Yes           | ✅ Yes           | ✅ Yes           | ❌ No           |
-| Search             | ✅ Yes                         | ✅ Yes           | ✅ Yes           | ✅ Yes           | ✅ Yes          |
-| Multiple providers | ✅ Yes                         | ❌ No            | ✅ Yes           | ✅ Yes           | ❌ No           |
-| Smart todo list    | ✅ User + agents               | ❌ No            | ❌ No            | ❌ No            | ❌ No           |
-| Proactive outreach | ✅ Yes                         | ❌ No            | ❌ No            | ❌ No            | ❌ No           |
-| Skills             | ✅ Yes                         | ✅ Yes           | ✅ Yes           | ✅ Yes           | ❌ No           |
-| MCP                | ✅ Yes                         | ✅ Yes           | ✅ Yes           | ✅ Yes           | ✅ Dev mode     |
-| Scheduled tasks    | ✅ Yes                         | ✅ Yes           | ✅ Yes           | ✅ Yes           | ✅ Yes          |
-| Self-improvement   | ✅ Yes                         | ✅ Yes           | ✅ Yes           | ✅ Yes           | ❌ No           |
-| Terminal           | ✅ Yes                         | ✅ Yes           | ✅ Yes           | ✅ Yes           | ❌ Sandbox only |
-| Browser            | ✅ Yes                         | ✅ Yes           | ✅ Yes           | ✅ Yes           | ❌ No           |
-| GUI apps           | ✅ Yes                         | ✅ Yes           | ✅ Yes           | ✅ Yes           | ❌ No           |
-| Local execution    | ✅ Yes                         | ❌ No            | ✅ Yes           | ✅ Yes           | ❌ No           |
-| Persistence        | ✅ Disk                        | ❌ No            | ❌ No            | ❌ No            | ❌ No           |
-| Refusal            | ✅ Never                       | ✅ Never         | ❌ Sometimes     | ❌ Sometimes     | ❌ Sometimes    |
-| Memory usage       | ✅ ~800MB                      | ✅ Unknown       | ❌ ~10GB         | ❌ ~2GB          | ✅ Cloud        |
-| NSFW level         | ✅ Allow, indirect only, block | ❌ Not available | ❌ Not available | ❌ Not available | ❌ Block        |
-| License            | ✅ AGPL-3.0                    | ❌ Proprietary   | ✅ MIT           | ✅ MIT           | ❌ Proprietary  |
+| Feature                 | tabyAgent                      | Grok Bot             | OpenClaw         | Hermes           | ChatGPT (Chat)  |
+| ----------------------- | ------------------------------ | -------------------- | ---------------- | ---------------- | --------------- |
+| Everyday chat           | ✅ Yes                         | ✅ Yes               | ✅ Yes           | ✅ Yes           | ✅ Yes          |
+| Multiple agents         | ✅ Yes                         | ✅ Yes               | ✅ Yes           | ✅ Yes           | ❌ No           |
+| Search                  | ✅ Yes                         | ✅ Yes               | ✅ Yes           | ✅ Yes           | ✅ Yes          |
+| Multiple providers      | ✅ Yes                         | ❌ No                | ✅ Yes           | ✅ Yes           | ❌ No           |
+| Smart todo list         | ✅ User + agents               | ❌ No                | ❌ No            | ❌ No            | ❌ No           |
+| Remote computer control | ✅ Browser, files, terminal    | ✅ Browser, terminal | ❌ No            | ❌ No            | ❌ No           |
+| Proactive outreach      | ✅ Yes                         | ❌ No                | ❌ No            | ❌ No            | ❌ No           |
+| Skills                  | ✅ Yes                         | ✅ Yes               | ✅ Yes           | ✅ Yes           | ❌ No           |
+| MCP                     | ✅ Yes                         | ✅ Yes               | ✅ Yes           | ✅ Yes           | ✅ Dev mode     |
+| Scheduled tasks         | ✅ Yes                         | ✅ Yes               | ✅ Yes           | ✅ Yes           | ✅ Yes          |
+| Self-improvement        | ✅ Yes                         | ✅ Yes               | ✅ Yes           | ✅ Yes           | ❌ No           |
+| Terminal                | ✅ Yes                         | ✅ Yes               | ✅ Yes           | ✅ Yes           | ❌ Sandbox only |
+| Browser                 | ✅ Yes                         | ✅ Yes               | ✅ Yes           | ✅ Yes           | ❌ No           |
+| GUI apps                | ✅ Yes                         | ✅ Yes               | ✅ Yes           | ✅ Yes           | ❌ No           |
+| Local execution         | ✅ Yes                         | ❌ No                | ✅ Yes           | ✅ Yes           | ❌ No           |
+| NSFW level              | ✅ Allow, indirect only, block | ❌ Not available     | ❌ Not available | ❌ Not available | ❌ Block        |
+| License                 | ✅ AGPL-3.0                    | ❌ Proprietary       | ✅ MIT           | ✅ MIT           | ❌ Proprietary  |
 
 > Tests used the Ollama Cloud provider and the Kimi-K2.6 model.
 
@@ -92,16 +95,17 @@ Paste the line below into a terminal and press Enter. Installation can take a wh
 
 You can choose Docker or a local run. Docker is recommended for security and isolation.
 
-The automated script does not support Windows. If you are on Windows, consider switching your main OS to a Linux-based distribution. In many cases it is faster, more privacy-friendly, and more freedom-preserving.
-**Requirements:** If you pick Docker, everything you need is installed for you. If you pick local, Node.js 22 or later must already be installed.
+**Requirements.** With Docker, the installer sets up everything you need. For a local run, install Node.js 22 or later first.
+
+The installer does not support Windows. If you are on Windows, consider switching your main OS to a Linux-based distribution. In most cases it is faster and more private, and it leaves you more freedom.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gpdir16/tabyAgent/main/scripts/install.sh | bash
 ```
 
-To update tabyAgent later, run the same command again. Settings and memory are kept.
+To update tabyAgent later, run the command above again. Settings and memory are kept.
 
-The installer also adds a `tabyagent` command to manage the instance: `tabyagent start`, `stop`, `restart`, `status`, `logs`, `approve`, and `uninstall`.
+The installer adds a `tabyagent` command to manage the instance: `tabyagent start`, `stop`, `restart`, `status`, `logs`, `approve`, and `uninstall`.
 
 #### 3. Set up in Telegram
 
@@ -109,7 +113,7 @@ The installer also adds a `tabyagent` command to manage the instance: `tabyagent
 2. The setup wizard walks you through language, LLM provider, API key, and model.
 3. When setup is done, you can start chatting.
 
-You can change language, model, thinking level, and more with `/config` at any time. Use `/todo` for the shared todo list and `/agents` to manage additional agents.
+You can change language, model, thinking level, provider profiles, and more with `/config` at any time. Use `/todo` for the shared todo list and `/agents` to manage additional agents.
 
 ### Option B: Docker Compose (not recommended)
 
@@ -119,6 +123,20 @@ cd tabyAgent
 cp .env.example .env # Edit .env and set TELEGRAM_BOT_TOKEN
 docker compose up -d
 ```
+
+## Migrating to tabyBot
+
+tabyBot is built on tabyAgent, is similar to Grok Bot but more capable, and is still actively developed.
+
+If you do not specifically need a Telegram bot, migrating to tabyBot is recommended.
+
+1. Install and set up [tabyBot](https://github.com/gpdir16/tabyBot).
+2. Send `/migrate` to your existing tabyAgent bot and download the generated migration package.
+3. Attach the package to the "tabyBot" agent and ask it to migrate.
+
+Settings, agents, memories, todos, and related data are included in the package.
+
+> Warning: the package may contain sensitive data such as provider API keys, OAuth tokens, and chat history. Delete it immediately after migration and take care not to leak it. Values in the secret vault (`secrets.json`) are not included, so register them again in tabyBot.
 
 ## Third-party licenses
 

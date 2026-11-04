@@ -13,34 +13,19 @@ import { isOpenRouterAlias, recordOpenRouterAlias } from "./openrouter-aliases.j
 
 const OAUTH_PROVIDER_TYPES = new Set(["codex-oauth", "grok-oauth", "github-copilot-oauth"]);
 
-// 봇이 쓸 요청 설정. 봇이 고른 모델 프리셋(없으면 기본 프리셋)을 풀고,
-// 프리셋을 고르지 않은 예전 봇은 예전 모델 오버라이드를 그 위에 얹는다.
-// providerKey 비교에도 같은 함수를 써야 설정 핫리로드 감지가 매 라운드 클라이언트를 재생성하지 않는다.
-export function agentProvider(userConfig, overrides = {}) {
-    const provider = getMergedProvider(userConfig, overrides.preset || "");
-    if (overrides.preset) return provider;
-    return applyAgentOverrides(provider, overrides);
-}
-
-function applyAgentOverrides(provider, { model, thinkingLevel } = {}) {
-    if (model) {
-        provider.model = model;
-        provider.modelOverride = true;
-        provider.autoMode = false;
-        provider.openRouterPins = {};
-    }
-    if (thinkingLevel) provider.thinkingLevel = thinkingLevel;
-    return provider;
+// 봇이 쓸 요청 설정. providerKey 비교에도 같은 함수를 써서 설정 핫리로드 감지가 매 라운드 클라이언트를 재생성하지 않게 한다.
+export function agentProvider(userConfig) {
+    return getMergedProvider(userConfig);
 }
 
 // 모든 요청의 토큰 사용량을 기록한다(설정 > 효율적인 운영의 사용 기록).
-export async function createLlmClient(overrides = {}) {
-    return withUsageLog(await buildLlmClient(overrides));
+export async function createLlmClient() {
+    return withUsageLog(await buildLlmClient());
 }
 
-async function buildLlmClient(overrides) {
+async function buildLlmClient() {
     const userConfig = loadUserConfig();
-    const provider = agentProvider(userConfig, overrides);
+    const provider = agentProvider(userConfig);
     // 추론 깊이는 실제로 쓰는 프로바이더의 단계로 맞춘다.
     const thinkingLevel = normalizeThinkingLevel(provider.thinkingLevel, provider.id);
 

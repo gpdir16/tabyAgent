@@ -144,12 +144,16 @@ export function isAgentsWizardActive(chatId) {
 }
 
 async function replaceStep(bot, chatId, state, text, keyboard) {
-    await deleteMessageSafe(bot, chatId, state.activeMessageId);
+    // 새 화면을 먼저 띄우고, 성공한 뒤에 이전 화면을 지운다.
+    const previous = state.activeMessageId;
     state.activeMessageId = null;
     const opts = { ...telegramThreadOpts(state.threadId), ...(keyboard ? { reply_markup: keyboard } : {}) };
     const sent = await sendMessageSafe(bot, chatId, text, opts);
-    state.activeMessageId = sent.messageIds[0] ?? null;
+    state.activeMessageId = sent.messageIds[0] ?? previous ?? null;
     saveState(state);
+    if (sent.ok && previous && previous !== state.activeMessageId) {
+        await deleteMessageSafe(bot, chatId, previous);
+    }
 }
 
 function listKeyboard() {
@@ -206,15 +210,11 @@ export async function openAgentsWizard(ctx, bot) {
     }
 
     const prev = loadState();
-    if (prev?.activeMessageId) {
-        await deleteMessageSafe(bot, chatId, prev.activeMessageId);
-    }
-
     const state = {
         step: "list",
         adminChatId: chatId,
         threadId: findAgentByThread(extractThreadId(ctx))?.threadId ?? null,
-        activeMessageId: null,
+        activeMessageId: prev?.activeMessageId ?? null,
     };
     saveState(state);
     await refreshTopicsEnabled(bot);

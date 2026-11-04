@@ -1,7 +1,6 @@
 import path from "node:path";
 import { CONFIG_DIR, USER_DIR } from "./paths.js";
 import { readJsonFile, writeJsonAtomic } from "./atomic-file.js";
-import { findPreset } from "./model-presets.js";
 
 // 깨진 파일은 경로와 함께 오류로 남기고 fallback을 쓴다.
 const readJson = (filePath, fallback = null) => readJsonFile(filePath, fallback, { label: `JSON in ${filePath}` });
@@ -49,7 +48,7 @@ export function saveMcpConfig(config) {
 
 export function loadUserConfig() {
     const filePath = path.join(USER_DIR, "config.json");
-    return readJson(filePath, {
+    const config = readJson(filePath, {
         language: "en",
         telegram: { botToken: "" },
         provider: { id: "default", apiKey: "", model: "" },
@@ -59,6 +58,11 @@ export function loadUserConfig() {
         nsfwLevel: "moderate",
         approvalLevel: "model",
     });
+    if (config && typeof config === "object") {
+        delete config.modelPresets;
+        delete config.defaultModelPreset;
+    }
+    return config;
 }
 
 export function saveUserConfig(config) {
@@ -112,25 +116,24 @@ export function getProfileProvider(userConfig, profileUid = "") {
     return out;
 }
 
-// 모델 프리셋 하나를 실제 요청 설정으로 푼다. presetUid를 비우면 기본 프리셋.
-// 주소와 키는 프리셋이 가리키는 프로바이더 프로필에서, 모델과 추론 깊이, 고정은 프리셋에서 온다.
-export function getMergedProvider(userConfig, presetUid = "") {
-    const preset = findPreset(userConfig || {}, presetUid);
-    const base = getProfileProvider(userConfig, preset.profile);
-    const model = String(preset.model || "").trim();
-    const pin = base.id === "openrouter" && model ? String(preset.openRouterPin || "").trim() : "";
+// 지금 활성 프로필의 접속 정보에 현재 모델·추론·고정 설정을 얹어 실제 요청 설정을 만든다.
+export function getMergedProvider(userConfig) {
+    const config = userConfig || {};
+    const base = getProfileProvider(config, config.activeProviderProfile || "");
+    const provider = config.provider || {};
+    const model = String(provider.model || "").trim();
+    const pins = provider.openRouterPins && typeof provider.openRouterPins === "object" ? provider.openRouterPins : {};
+    const pin = base.id === "openrouter" && model ? String(pins[model] || provider.openRouterProvider || "").trim() : "";
     return {
         ...base,
-        // 이 설정을 만든 프리셋. 캐시 유지 설정을 프리셋마다 따로 두는 데 쓴다.
-        presetUid: preset.uid,
         model,
-        thinkingLevel: String(preset.thinkingLevel || ""),
-        // GitHub Copilot의 자동 모델은 프리셋의 모델을 "auto"로 고른 것이다.
+        thinkingLevel: String(config.thinkingLevel || ""),
+        // GitHub Copilot의 자동 모델은 모델을 "auto"로 고른 것이다.
         autoMode: base.id === "github-copilot" && model === "auto",
-        autoModelCandidates: Array.isArray(preset.autoModelCandidates) ? preset.autoModelCandidates.map(String).filter(Boolean) : [],
+        autoModelCandidates: Array.isArray(provider.autoModelCandidates) ? provider.autoModelCandidates.map(String).filter(Boolean) : [],
         // OpenRouter 전용: 이 모델을 서빙할 업스트림 프로바이더 고정.
         openRouterPins: pin ? { [model]: pin } : {},
-        // 이 프리셋의 압축 시점(%). 0이면 기본값을 쓴다.
-        contextTriggerPercent: Number(preset.contextTriggerPercent) || 0,
+        // 컨텍스트 압축 시점(%). 0이면 기본값을 쓴다.
+        contextTriggerPercent: Number(config.contextTriggerPercent) || 0,
     };
 }
